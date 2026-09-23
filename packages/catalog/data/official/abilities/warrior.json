@@ -1,0 +1,119 @@
+{
+  "setId": "official.abilities.warrior",
+  "cards": [
+    {
+      "id": "warrior.brutal-attack",
+      "name": "Ataque Brutal",
+      "type": "ABILITY",
+      "heroClass": "WARRIOR",
+      "copies": 2,
+      "printedAttack": 3,
+      "effects": [
+        { "type": "LOSE_CARDS", "amount": { "kind": "CONSTANT", "value": 1 } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "warrior.shield-charge",
+      "name": "Carga con Escudo",
+      "type": "ABILITY",
+      "heroClass": "WARRIOR",
+      "copies": 1,
+      "printedAttack": 2,
+      "effects": [
+        { "type": "PREVENT_DAMAGE", "amount": { "kind": "CONSTANT", "value": 2 }, "duration": "HORDE_ATTACK" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "warrior.double-slash",
+      "name": "Doble Espadazo",
+      "type": "ABILITY",
+      "heroClass": "WARRIOR",
+      "copies": 2,
+      "printedAttack": 2,
+      "effects": [
+        { "type": "LOSE_CARDS", "amount": { "kind": "CONSTANT", "value": 1 } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "warrior.shield",
+      "name": "Escudo",
+      "type": "ABILITY",
+      "heroClass": "WARRIOR",
+      "copies": 2,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "PREVENT_ENEMY_DAMAGE", "target": { "kind": "SELECTED_ENEMY" }, "duration": "HORDE_ATTACK" },
+        { "type": "END_ATTACK" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "warrior.sword-strike",
+      "name": "Espadazo",
+      "type": "ABILITY",
+      "heroClass": "WARRIOR",
+      "copies": 4,
+      "printedAttack": 1,
+      "effects": [
+        {
+          "type": "CONDITIONAL",
+          "condition": { "kind": "FIRST_CARD_OF_NAME_THIS_TURN", "name": "Espadazo" },
+          "then": [
+            { "type": "DRAW_CARDS", "amount": { "kind": "CONSTANT", "value": 1 }, "source": "ABILITY_DECK" }
+          ]
+        }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "warrior.step-back",
+      "name": "Paso Atrás",
+      "type": "ABILITY",
+      "heroClass": "WARRIOR",
+      "copies": 2,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "DRAW_CARDS", "amount": { "kind": "CONSTANT", "value": 2 }, "source": "ABILITY_DECK" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "warrior.all-or-nothing",
+      "name": "Todo o Nada",
+      "type": "ABILITY",
+      "heroClass": "WARRIOR",
+      "copies": 1,
+      "printedAttack": 1,
+      "effects": [
+        { "type": "DRAW_AND_ADD_ATTACK", "amount": { "kind": "CONSTANT", "value": 1 }, "source": "ABILITY_DECK" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR",
+      "_note": "Roba 1 carta, suma su dano al ataque de esta carta, y recupera la carta robada al fondo del mazo"
+    },
+    {
+      "id": "warrior.voice-of-encouragement",
+      "name": "Voz de Aliento",
+      "type": "ABILITY",
+      "heroClass": "WARRIOR",
+      "copies": 1,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "ALL_HEROES_RECOVER", "amount": { "kind": "CONSTANT", "value": 2 } },
+        { "type": "DRAW_CARDS", "amount": { "kind": "CONSTANT", "value": 1 }, "source": "ABILITY_DECK" },
+        { "type": "GAIN_GLORY", "amount": { "kind": "CONSTANT", "value": 1 } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "INFERRED"
+    }
+  ]
+}

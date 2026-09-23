@@ -1,0 +1,133 @@
+{
+  "setId": "official.market",
+  "cards": [
+    {
+      "id": "market.elven-dagger",
+      "name": "Daga Élfica",
+      "type": "MARKET",
+      "copies": 2,
+      "printedCost": 3,
+      "printedAttack": 2,
+      "requiredCapabilities": ["RANGED"],
+      "penaltyCapabilities": [
+        { "icon": "EXPERTISE", "damagePenalty": 1 }
+      ],
+      "effects": [
+        {
+          "type": "CONDITIONAL",
+          "condition": { "kind": "HAS_CAPABILITY", "icon": "RANGED" },
+          "then": [
+            { "type": "RECOVER_THIS_CARD", "to": "HAND" }
+          ]
+        }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "REVISAR"
+    },
+    {
+      "id": "market.healing-potion",
+      "name": "Poción Curativa",
+      "type": "MARKET",
+      "copies": 3,
+      "printedCost": 8,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "HEAL_WOUNDS", "amount": { "kind": "CONSTANT", "value": 1 } }
+      ],
+      "destinationAfterUse": "REMOVED_FROM_GAME",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "market.whetstone",
+      "name": "Piedra de Amolar",
+      "type": "MARKET",
+      "copies": 1,
+      "printedCost": 4,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "MODIFY_DAMAGE", "modifier": { "kind": "CONSTANT", "value": 1 }, "scope": "THIS_TURN" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "REVISAR"
+    },
+    {
+      "id": "market.conjuration-vial",
+      "name": "Vial de Conjuración",
+      "type": "MARKET",
+      "copies": 2,
+      "printedCost": 5,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "SEARCH_WEAR_PILE_PUT_IN_HAND", "amount": { "kind": "CONSTANT", "value": 1 } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "REVISAR"
+    },
+    {
+      "id": "market.concentration-elixir",
+      "name": "Elixir de Concentración",
+      "type": "MARKET",
+      "copies": 2,
+      "printedCost": 3,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "DRAW_CARDS", "amount": { "kind": "CONSTANT", "value": 3 }, "source": "ABILITY_DECK" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "REVISAR"
+    },
+    {
+      "id": "market.elven-cloak",
+      "name": "Capa Élfica",
+      "type": "MARKET",
+      "copies": 1,
+      "printedCost": 3,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "DISABLE_ENEMY_DAMAGE", "target": { "kind": "SELECTED_ENEMY" }, "duration": "UNTIL_END_OF_TURN" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "REVISAR"
+    },
+    {
+      "id": "market.plate-armor",
+      "name": "Armadura de Placas",
+      "type": "MARKET",
+      "copies": 1,
+      "printedCost": 4,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "RECOVER_CARDS", "amount": { "kind": "CONSTANT", "value": 4 }, "from": "WEAR_PILE", "to": "BOTTOM_OF_DECK" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "REVISAR"
+    },
+    {
+      "id": "market.orc-halberd",
+      "name": "Alabarda Orca",
+      "type": "MARKET",
+      "copies": 1,
+      "printedCost": 5,
+      "printedAttack": 4,
+      "requiredCapabilities": ["MELEE"],
+      "effects": [],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "REVISAR"
+    },
+    {
+      "id": "market.composite-bow",
+      "name": "Arco Compuesto",
+      "type": "MARKET",
+      "copies": 1,
+      "printedCost": 5,
+      "printedAttack": 4,
+      "requiredCapabilities": ["RANGED"],
+      "penaltyCapabilities": [
+        { "icon": "EXPERTISE", "damagePenalty": 1 }
+      ],
+      "effects": [],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "REVISAR"
+    }
+  ]
+}

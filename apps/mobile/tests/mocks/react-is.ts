@@ -1,0 +1,27 @@
+// Mock de react-is para evitar problemas de resolución ESM/CJS
+export const isValidElementType = () => true;
+export const typeOf = (obj: any) => (obj && obj.type ? obj.type : null);
+export const AsyncMode = 'AsyncMode';
+export const ContextConsumer = 'ContextConsumer';
+export const ContextProvider = 'ContextProvider';
+export const Element = 'Element';
+export const ForwardRef = 'ForwardRef';
+export const Fragment = 'Fragment';
+export const Lazy = 'Lazy';
+export const Memo = 'Memo';
+export const Portal = 'Portal';
+export const Profiler = 'Profiler';
+export const StrictMode = 'StrictMode';
+export const Suspense = 'Suspense';
+export const isAsyncMode = () => false;
+export const isContextConsumer = () => false;
+export const isContextProvider = () => false;
+export const isElement = () => true;
+export const isForwardRef = () => false;
+export const isFragment = () => false;
+export const isLazy = () => false;
+export const isMemo = () => false;
+export const isPortal = () => false;
+export const isProfiler = () => false;
+export const isStrictMode = () => false;
+export const isSuspense = () => false;

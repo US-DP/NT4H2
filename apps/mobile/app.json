@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "No Time for Heroes",
+    "slug": "nt4h-digital",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "nt4h",
+    "userInterfaceStyle": "dark",
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

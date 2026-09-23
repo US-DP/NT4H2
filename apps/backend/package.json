@@ -1,0 +1,11 @@
+{
+  "name": "@nt4h/backend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "python manage.py runserver",
+    "test": "echo 'Backend tests pending Django setup' && exit 0",
+    "lint": "ruff check .",
+    "typecheck": "echo 'Python backend - no typecheck'"
+  }
+}

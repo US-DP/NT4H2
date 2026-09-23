@@ -1,0 +1,429 @@
+{
+  "explorer.companion-wolf": {
+    "front": "assets/cards/abilities/explorer.companion-wolf-front.png",
+    "thumbnail": "assets/cards/abilities/explorer.companion-wolf-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "explorer.precise-shot": {
+    "front": "assets/cards/abilities/explorer.precise-shot-front.png",
+    "thumbnail": "assets/cards/abilities/explorer.precise-shot-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "explorer.rapid-shot": {
+    "front": "assets/cards/abilities/explorer.rapid-shot-front.png",
+    "thumbnail": "assets/cards/abilities/explorer.rapid-shot-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "explorer.bullseye": {
+    "front": "assets/cards/abilities/explorer.bullseye-front.png",
+    "thumbnail": "assets/cards/abilities/explorer.bullseye-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "explorer.arrow-volley": {
+    "front": "assets/cards/abilities/explorer.arrow-volley-front.png",
+    "thumbnail": "assets/cards/abilities/explorer.arrow-volley-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "explorer.collect-arrows": {
+    "front": "assets/cards/abilities/explorer.collect-arrows-front.png",
+    "thumbnail": "assets/cards/abilities/explorer.collect-arrows-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "explorer.survival": {
+    "front": "assets/cards/abilities/explorer.survival-front.png",
+    "thumbnail": "assets/cards/abilities/explorer.survival-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "warrior.brutal-attack": {
+    "front": "assets/cards/abilities/warrior.brutal-attack-front.png",
+    "thumbnail": "assets/cards/abilities/warrior.brutal-attack-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "warrior.shield-charge": {
+    "front": "assets/cards/abilities/warrior.shield-charge-front.png",
+    "thumbnail": "assets/cards/abilities/warrior.shield-charge-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "warrior.double-slash": {
+    "front": "assets/cards/abilities/warrior.double-slash-front.png",
+    "thumbnail": "assets/cards/abilities/warrior.double-slash-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "warrior.shield": {
+    "front": "assets/cards/abilities/warrior.shield-front.png",
+    "thumbnail": "assets/cards/abilities/warrior.shield-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "warrior.sword-strike": {
+    "front": "assets/cards/abilities/warrior.sword-strike-front.png",
+    "thumbnail": "assets/cards/abilities/warrior.sword-strike-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "warrior.step-back": {
+    "front": "assets/cards/abilities/warrior.step-back-front.png",
+    "thumbnail": "assets/cards/abilities/warrior.step-back-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "warrior.all-or-nothing": {
+    "front": "assets/cards/abilities/warrior.all-or-nothing-front.png",
+    "thumbnail": "assets/cards/abilities/warrior.all-or-nothing-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "warrior.voice-of-encouragement": {
+    "front": "assets/cards/abilities/warrior.voice-of-encouragement-front.png",
+    "thumbnail": "assets/cards/abilities/warrior.voice-of-encouragement-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "mage.protective-aura": {
+    "front": "assets/cards/abilities/mage.protective-aura-front.png",
+    "thumbnail": "assets/cards/abilities/mage.protective-aura-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "mage.fireball": {
+    "front": "assets/cards/abilities/mage.fireball-front.png",
+    "thumbnail": "assets/cards/abilities/mage.fireball-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "mage.ice-shot": {
+    "front": "assets/cards/abilities/mage.ice-shot-front.png",
+    "thumbnail": "assets/cards/abilities/mage.ice-shot-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "mage.corrosive-arrow": {
+    "front": "assets/cards/abilities/mage.corrosive-arrow-front.png",
+    "thumbnail": "assets/cards/abilities/mage.corrosive-arrow-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "mage.staff-strike": {
+    "front": "assets/cards/abilities/mage.staff-strike-front.png",
+    "thumbnail": "assets/cards/abilities/mage.staff-strike-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "mage.healing-orb": {
+    "front": "assets/cards/abilities/mage.healing-orb-front.png",
+    "thumbnail": "assets/cards/abilities/mage.healing-orb-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "mage.fire-bolt": {
+    "front": "assets/cards/abilities/mage.fire-bolt-front.png",
+    "thumbnail": "assets/cards/abilities/mage.fire-bolt-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "mage.reconstitution": {
+    "front": "assets/cards/abilities/mage.reconstitution-front.png",
+    "thumbnail": "assets/cards/abilities/mage.reconstitution-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "mage.light-torrent": {
+    "front": "assets/cards/abilities/mage.light-torrent-front.png",
+    "thumbnail": "assets/cards/abilities/mage.light-torrent-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "rogue.to-the-heart": {
+    "front": "assets/cards/abilities/rogue.to-the-heart-front.png",
+    "thumbnail": "assets/cards/abilities/rogue.to-the-heart-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "rogue.sneak-attack": {
+    "front": "assets/cards/abilities/rogue.sneak-attack-front.png",
+    "thumbnail": "assets/cards/abilities/rogue.sneak-attack-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "rogue.precise-crossbow": {
+    "front": "assets/cards/abilities/rogue.precise-crossbow-front.png",
+    "thumbnail": "assets/cards/abilities/rogue.precise-crossbow-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "rogue.in-the-shadows": {
+    "front": "assets/cards/abilities/rogue.in-the-shadows-front.png",
+    "thumbnail": "assets/cards/abilities/rogue.in-the-shadows-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "rogue.deceive": {
+    "front": "assets/cards/abilities/rogue.deceive-front.png",
+    "thumbnail": "assets/cards/abilities/rogue.deceive-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "rogue.pickpocket": {
+    "front": "assets/cards/abilities/rogue.pickpocket-front.png",
+    "thumbnail": "assets/cards/abilities/rogue.pickpocket-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "rogue.plunder-b": {
+    "front": "assets/cards/abilities/rogue.plunder-b-front.png",
+    "thumbnail": "assets/cards/abilities/rogue.plunder-b-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "rogue.trap": {
+    "front": "assets/cards/abilities/rogue.trap-front.png",
+    "thumbnail": "assets/cards/abilities/rogue.trap-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "market.elven-dagger": {
+    "front": "assets/cards/market/market.elven-dagger-front.png",
+    "thumbnail": "assets/cards/market/market.elven-dagger-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "market.healing-potion": {
+    "front": "assets/cards/market/market.healing-potion-front.png",
+    "thumbnail": "assets/cards/market/market.healing-potion-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "market.whetstone": {
+    "front": "assets/cards/market/market.whetstone-front.png",
+    "thumbnail": "assets/cards/market/market.whetstone-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "market.conjuration-vial": {
+    "front": "assets/cards/market/market.conjuration-vial-front.png",
+    "thumbnail": "assets/cards/market/market.conjuration-vial-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "market.concentration-elixir": {
+    "front": "assets/cards/market/market.concentration-elixir-front.png",
+    "thumbnail": "assets/cards/market/market.concentration-elixir-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "market.elven-cloak": {
+    "front": "assets/cards/market/market.elven-cloak-front.png",
+    "thumbnail": "assets/cards/market/market.elven-cloak-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "market.plate-armor": {
+    "front": "assets/cards/market/market.plate-armor-front.png",
+    "thumbnail": "assets/cards/market/market.plate-armor-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "market.orc-halberd": {
+    "front": "assets/cards/market/market.orc-halberd-front.png",
+    "thumbnail": "assets/cards/market/market.orc-halberd-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "market.composite-bow": {
+    "front": "assets/cards/market/market.composite-bow-front.png",
+    "thumbnail": "assets/cards/market/market.composite-bow-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "warlord.gurdrug": {
+    "front": "assets/cards/warlords/warlord.gurdrug-front.png",
+    "thumbnail": "assets/cards/warlords/warlord.gurdrug-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "warlord.roghkiller": {
+    "front": "assets/cards/warlords/warlord.roghkiller-front.png",
+    "thumbnail": "assets/cards/warlords/warlord.roghkiller-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "warlord.shriekknifer": {
+    "front": "assets/cards/warlords/warlord.shriekknifer-front.png",
+    "thumbnail": "assets/cards/warlords/warlord.shriekknifer-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "hero.aranel": {
+    "front": "assets/cards/heroes/hero.aranel-front.png",
+    "thumbnail": "assets/cards/heroes/hero.aranel-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "hero.beleth-il": {
+    "front": "assets/cards/heroes/hero.beleth-il-front.png",
+    "thumbnail": "assets/cards/heroes/hero.beleth-il-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "hero.neddia": {
+    "front": "assets/cards/heroes/hero.neddia-front.png",
+    "thumbnail": "assets/cards/heroes/hero.neddia-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "horde.001": {
+    "front": "assets/cards/horde/horde.001-front.png",
+    "thumbnail": "assets/cards/horde/horde.001-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.001-back.png"
+  },
+  "horde.002": {
+    "front": "assets/cards/horde/horde.002-front.png",
+    "thumbnail": "assets/cards/horde/horde.002-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.002-back.png"
+  },
+  "horde.003": {
+    "front": "assets/cards/horde/horde.003-front.png",
+    "thumbnail": "assets/cards/horde/horde.003-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.003-back.png"
+  },
+  "horde.004": {
+    "front": "assets/cards/horde/horde.004-front.png",
+    "thumbnail": "assets/cards/horde/horde.004-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.004-back.png"
+  },
+  "horde.005": {
+    "front": "assets/cards/horde/horde.005-front.png",
+    "thumbnail": "assets/cards/horde/horde.005-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.005-back.png"
+  },
+  "horde.006": {
+    "front": "assets/cards/horde/horde.006-front.png",
+    "thumbnail": "assets/cards/horde/horde.006-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.006-back.png"
+  },
+  "horde.007": {
+    "front": "assets/cards/horde/horde.007-front.png",
+    "thumbnail": "assets/cards/horde/horde.007-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.007-back.png"
+  },
+  "horde.008": {
+    "front": "assets/cards/horde/horde.008-front.png",
+    "thumbnail": "assets/cards/horde/horde.008-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.008-back.png"
+  },
+  "horde.009": {
+    "front": "assets/cards/horde/horde.009-front.png",
+    "thumbnail": "assets/cards/horde/horde.009-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.009-back.png"
+  },
+  "horde.010": {
+    "front": "assets/cards/horde/horde.010-front.png",
+    "thumbnail": "assets/cards/horde/horde.010-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.010-back.png"
+  },
+  "horde.011": {
+    "front": "assets/cards/horde/horde.011-front.png",
+    "thumbnail": "assets/cards/horde/horde.011-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.011-back.png"
+  },
+  "horde.012": {
+    "front": "assets/cards/horde/horde.012-front.png",
+    "thumbnail": "assets/cards/horde/horde.012-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.012-back.png"
+  },
+  "horde.013": {
+    "front": "assets/cards/horde/horde.013-front.png",
+    "thumbnail": "assets/cards/horde/horde.013-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.013-back.png"
+  },
+  "horde.014": {
+    "front": "assets/cards/horde/horde.014-front.png",
+    "thumbnail": "assets/cards/horde/horde.014-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.014-back.png"
+  },
+  "horde.015": {
+    "front": "assets/cards/horde/horde.015-front.png",
+    "thumbnail": "assets/cards/horde/horde.015-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.015-back.png"
+  },
+  "horde.016": {
+    "front": "assets/cards/horde/horde.016-front.png",
+    "thumbnail": "assets/cards/horde/horde.016-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.016-back.png"
+  },
+  "horde.017": {
+    "front": "assets/cards/horde/horde.017-front.png",
+    "thumbnail": "assets/cards/horde/horde.017-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.017-back.png"
+  },
+  "horde.018": {
+    "front": "assets/cards/horde/horde.018-front.png",
+    "thumbnail": "assets/cards/horde/horde.018-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.018-back.png"
+  },
+  "horde.019": {
+    "front": "assets/cards/horde/horde.019-front.png",
+    "thumbnail": "assets/cards/horde/horde.019-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.019-back.png"
+  },
+  "horde.020": {
+    "front": "assets/cards/horde/horde.020-front.png",
+    "thumbnail": "assets/cards/horde/horde.020-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.020-back.png"
+  },
+  "horde.021": {
+    "front": "assets/cards/horde/horde.021-front.png",
+    "thumbnail": "assets/cards/horde/horde.021-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.021-back.png"
+  },
+  "horde.022": {
+    "front": "assets/cards/horde/horde.022-front.png",
+    "thumbnail": "assets/cards/horde/horde.022-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.022-back.png"
+  },
+  "horde.023": {
+    "front": "assets/cards/horde/horde.023-front.png",
+    "thumbnail": "assets/cards/horde/horde.023-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.023-back.png"
+  },
+  "horde.024": {
+    "front": "assets/cards/horde/horde.024-front.png",
+    "thumbnail": "assets/cards/horde/horde.024-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.024-back.png"
+  },
+  "horde.025": {
+    "front": "assets/cards/horde/horde.025-front.png",
+    "thumbnail": "assets/cards/horde/horde.025-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.025-back.png"
+  },
+  "horde.026": {
+    "front": "assets/cards/horde/horde.026-front.png",
+    "thumbnail": "assets/cards/horde/horde.026-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.026-back.png"
+  },
+  "horde.027": {
+    "front": "assets/cards/horde/horde.027-front.png",
+    "thumbnail": "assets/cards/horde/horde.027-front.png",
+    "status": "READY_FOR_GAME",
+    "back": "assets/cards/horde/horde.027-back.png"
+  },
+  "scenario.battlefield": {
+    "front": "assets/cards/scenarios/scenario.battlefield-front.png",
+    "thumbnail": "assets/cards/scenarios/scenario.battlefield-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "scenario.tears-of-aradiel": {
+    "front": "assets/cards/scenarios/scenario.tears-of-aradiel-front.png",
+    "thumbnail": "assets/cards/scenarios/scenario.tears-of-aradiel-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "scenario.ur-mountains": {
+    "front": "assets/cards/scenarios/scenario.ur-mountains-front.png",
+    "thumbnail": "assets/cards/scenarios/scenario.ur-mountains-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "scenario.umbrous-swamp": {
+    "front": "assets/cards/scenarios/scenario.umbrous-swamp-front.png",
+    "thumbnail": "assets/cards/scenarios/scenario.umbrous-swamp-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "scenario.eque-port": {
+    "front": "assets/cards/scenarios/scenario.eque-port-front.png",
+    "thumbnail": "assets/cards/scenarios/scenario.eque-port-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "scenario.brunmar-ruins": {
+    "front": "assets/cards/scenarios/scenario.brunmar-ruins-front.png",
+    "thumbnail": "assets/cards/scenarios/scenario.brunmar-ruins-front.png",
+    "status": "READY_FOR_GAME"
+  }
+}

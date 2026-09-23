@@ -1,0 +1,48 @@
+{
+  "setId": "official.warlords",
+  "cards": [
+    {
+      "id": "warlord.gurdrug",
+      "name": "Gurdrug",
+      "type": "WARLORD",
+      "copies": 1,
+      "printedFortitude": 8,
+      "isOrc": true,
+      "effects": [],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "CONFIRMED",
+      "_peritia": "Cada carta que dañe a este Jefe provocará la pérdida de una carta adicional.",
+      "_peritiaTrigger": "DAMAGE_DEALT",
+      "_peritiaEffect": { "type": "LOSE_CARDS", "amount": { "kind": "CONSTANT", "value": 1 } }
+    },
+    {
+      "id": "warlord.roghkiller",
+      "name": "Roghkiller",
+      "type": "WARLORD",
+      "copies": 1,
+      "printedFortitude": 9,
+      "isOrc": true,
+      "effects": [],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "CONFIRMED",
+      "_peritia": "Añade 1 punto de Fortaleza a cada orco que haya en el campo de batalla.",
+      "_peritiaTrigger": "CONTINUOUS",
+      "_peritiaEffect": { "type": "MODIFY_FORTITUDE", "modifier": { "kind": "CONSTANT", "value": 1 }, "target": { "kind": "ALL_ENEMIES", "filter": { "isOrc": true } }, "duration": "WHILE_SOURCE_ACTIVE" }
+    },
+    {
+      "id": "warlord.shriekknifer",
+      "name": "Shriekknifer",
+      "type": "WARLORD",
+      "copies": 1,
+      "printedFortitude": 10,
+      "isOrc": true,
+      "effects": [],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "CONFIRMED",
+      "_peritia": "Cada ataque con cartas de 1 punto de daño permitirá al héroe recuperar una carta.",
+      "_peritiaTrigger": "CARD_PLAYED",
+      "_peritiaCondition": "printedAttack == 1",
+      "_peritiaEffect": { "type": "RECOVER_CARDS", "amount": { "kind": "CONSTANT", "value": 1 }, "from": "WEAR_PILE", "to": "BOTTOM_OF_DECK" }
+    }
+  ]
+}

@@ -1,0 +1,160 @@
+{
+  "setId": "official.abilities.rogue",
+  "cards": [
+    {
+      "id": "rogue.to-the-heart",
+      "name": "Al Corazón",
+      "type": "ABILITY",
+      "heroClass": "ROGUE",
+      "copies": 2,
+      "printedAttack": 4,
+      "effects": [
+        {
+          "type": "ON_DEFEAT",
+          "effects": [
+            {
+              "type": "CONDITIONAL",
+              "condition": { "kind": "FIRST_CARD_OF_NAME_THIS_TURN", "name": "Al Corazón" },
+              "then": [
+                { "type": "GAIN_COINS", "amount": { "kind": "CONSTANT", "value": 1 } }
+              ]
+            }
+          ]
+        },
+        { "type": "LOSE_CARDS", "amount": { "kind": "CONSTANT", "value": 1 } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "rogue.sneak-attack",
+      "name": "Ataque Furtivo",
+      "type": "ABILITY",
+      "heroClass": "ROGUE",
+      "copies": 3,
+      "printedAttack": 2,
+      "effects": [
+        {
+          "type": "ON_DEFEAT",
+          "effects": [
+            {
+              "type": "CONDITIONAL",
+              "condition": { "kind": "FIRST_CARD_OF_NAME_THIS_TURN", "name": "Ataque Furtivo" },
+              "then": [
+                { "type": "GAIN_COINS", "amount": { "kind": "CONSTANT", "value": 1 } }
+              ]
+            }
+          ]
+        }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "rogue.precise-crossbow",
+      "name": "Ballesta Precisa",
+      "type": "ABILITY",
+      "heroClass": "ROGUE",
+      "copies": 3,
+      "printedAttack": 2,
+      "effects": [
+        {
+          "type": "CONDITIONAL",
+          "condition": { "kind": "ALREADY_USED_AGAINST_THIS_ENEMY", "name": "Ballesta Precisa" },
+          "then": []
+        }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR",
+      "_note": "Si ya utilizaste Ballesta Precisa contra el mismo enemigo, el dano es 3. Logica de dano variable en el motor."
+    },
+    {
+      "id": "rogue.in-the-shadows",
+      "name": "En las Sombras",
+      "type": "ABILITY",
+      "heroClass": "ROGUE",
+      "copies": 2,
+      "printedAttack": 1,
+      "effects": [
+        { "type": "PREVENT_DAMAGE", "amount": { "kind": "CONSTANT", "value": 2 }, "duration": "HORDE_ATTACK" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "rogue.deceive",
+      "name": "Engañar",
+      "type": "ABILITY",
+      "heroClass": "ROGUE",
+      "copies": 1,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "COST", "resource": "COINS", "amount": { "kind": "CONSTANT", "value": 2 } },
+        { "type": "DISABLE_ENEMY_DAMAGE", "target": { "kind": "SELECTED_ENEMY" }, "duration": "UNTIL_END_OF_TURN" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "rogue.pickpocket",
+      "name": "Robar Bolsillos",
+      "type": "ABILITY",
+      "heroClass": "ROGUE",
+      "copies": 1,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "STEAL_COINS", "amount": { "kind": "CONSTANT", "value": 1 }, "from": { "kind": "EACH_OTHER" } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "rogue.plunder-a",
+      "name": "Saqueo",
+      "type": "ABILITY",
+      "heroClass": "ROGUE",
+      "copies": 1,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "GAIN_COINS", "amount": { "kind": "SUM", "of": [ { "kind": "COUNT_LIVING_ENEMIES" }, { "kind": "COUNT_LIVING_ENEMIES" } ] } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR",
+      "_note": "Ganas 2 Monedas por cada enemigo vivo. SUM de 2x COUNT_LIVING_ENEMIES = 2 * count."
+    },
+    {
+      "id": "rogue.plunder-b",
+      "name": "Saqueo",
+      "type": "ABILITY",
+      "heroClass": "ROGUE",
+      "copies": 1,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "GAIN_COINS", "amount": { "kind": "COUNT_LIVING_ENEMIES" } },
+        { "type": "GAIN_GLORY", "amount": { "kind": "CONSTANT", "value": 1 } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR",
+      "_note": "Variante B: 1 Moneda por enemigo vivo + 1 Gloria."
+    },
+    {
+      "id": "rogue.trap",
+      "name": "Trampa",
+      "type": "ABILITY",
+      "heroClass": "ROGUE",
+      "copies": 1,
+      "printedAttack": 0,
+      "effects": [
+        {
+          "type": "PLACE_PERSISTENT",
+          "trigger": "HORDE_ATTACK",
+          "effects": [
+            { "type": "DEFEAT_ENEMY", "target": { "kind": "ENEMY_WITH_MAX_FORTITUDE" }, "loot": false }
+          ]
+        }
+      ],
+      "destinationAfterUse": "IN_FRONT_OF_PLAYER",
+      "verificationStatus": "OCR"
+    }
+  ]
+}

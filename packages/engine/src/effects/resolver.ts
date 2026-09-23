@@ -1,0 +1,1346 @@
+/**
+ * CardResolver — motor de resolucion de cartas que integra EffectRegistry
+ * con EventBus y maneja efectos especiales que requieren logica de cadena.
+ *
+ * Efectos especiales:
+ * - DRAW_AND_CHECK: Disparo Rapido encadenado (robar y comprobar si es la misma carta)
+ * - PLAY_IMMEDIATELY: jugar la carta robada inmediatamente
+ * - PLACE_PERSISTENT: Trampa (carta permanente con disparador)
+ * - ON_DEFEAT: efectos al derrotar un enemigo
+ * - ON_HORDE_ATTACK: efectos reactivos al ataque de la Horda
+ * - MODIFY_DAMAGE: Piedra de Amolar (modificador de dano del turno)
+ * - MODIFY_FORTITUDE: Ruinas de Brunmar, Roghkiller (modificadores continuos)
+ */
+
+import type {
+  GameState,
+  GameEvent,
+  CardEffect,
+  CardDefinition,
+  ResolutionContext,
+  CardInstance,
+  Zone,
+  PlayerState,
+  PendingChoice,
+} from '@nt4h/schema';
+import type { DeterministicRng } from '../rng/index.js';
+import type { EffectRegistry} from '../effects/registry.js';
+import { evalValue, resolveTarget, applyHeroDamage, drawCardsWithReshuffle } from '../effects/registry.js';
+import { EventBus, MAX_CHAIN_DEPTH, MAX_EFFECT_RECURSION } from '../triggers/index.js';
+import { applyEvent, checkFortitudeDefeats } from '../events/applyEvent.js';
+import { getEffectiveFortitude, getEnemyDamageBonus } from '../modifiers/index.js';
+import { onEnemyDefeated as scenarioOnEnemyDefeated } from '../scenarios/index.js';
+import { nextSeq, resetSeq } from '../seq.js';
+import type { CatalogLoadResult } from '@nt4h/catalog';
+
+// D426: alias por compatibilidad — resetSeq ahora es global (§51.12)
+export function resetResolveSeq(): void {
+  resetSeq();
+}
+
+/**
+ * Helper: emitir ENEMY_DEFEATED + invocar efectos del escenario.
+ * Usa enemiesDefeated como Set para evitar dobles.
+ * Devuelve el estado actualizado y añade eventos a allEvents.
+ */
+function emitEnemyDefeated(
+  currentState: GameState,
+  enemyInstanceId: string,
+  defeatingPlayerId: string,
+  enemiesDefeated: string[],
+  allEvents: GameEvent[],
+  catalog: CatalogLoadResult,
+  ctx?: ResolutionContext,
+): GameState {
+  if (enemiesDefeated.includes(enemyInstanceId)) return currentState;
+  const enemy = currentState.battlefield.find(e => e.instanceId === enemyInstanceId);
+  if (!enemy) return currentState;
+
+  enemiesDefeated.push(enemyInstanceId);
+  const finalReward = { ...(enemy.reward ?? { coins: 0, glory: 0 }) };
+  if (currentState.ignoreCoinRewards) finalReward.coins = 0;
+  if (currentState.ignoreGloryRewards) finalReward.glory = 0;
+
+  allEvents.push({
+    type: 'ENEMY_DEFEATED',
+    enemyInstanceId,
+    enemyDefinitionId: enemy.definitionId,
+    defeatingPlayerId,
+    reward: finalReward,
+    seq: nextSeq(),
+  });
+
+  // Establecer lastDefeatedEnemyFortitude y defeatingPlayerId en el contexto para ON_ENEMY_DEFEATED
+  const enemyFortitude = getEffectiveFortitude(enemy, currentState);
+  if (ctx) {
+    (ctx as any).lastDefeatedEnemyFortitude = enemyFortitude;
+    (ctx as any).defeatingPlayerId = defeatingPlayerId;
+  }
+
+  // Ejecutar efectos ON_ENEMY_DEFEATED del escenario activo
+  const scenarioDefId = currentState.scenario?.definitionId;
+  if (scenarioDefId) {
+    const scenarioEvents = scenarioOnEnemyDefeated(
+      currentState,
+      scenarioDefId,
+      defeatingPlayerId,
+      enemyFortitude,
+      catalog,
+    );
+    allEvents.push(...scenarioEvents);
+    for (const ev of scenarioEvents) {
+      currentState = applyEventInline(currentState, ev);
+    }
+  }
+
+  // Pericia de Roghkiller: al ser derrotado, eliminar su modificador de +1 a orcos
+  // D428: identificar por definitionId estable, no por nombre localizado
+  if (enemy.definitionId === 'warlord.roghkiller') {
+    currentState = {
+      ...currentState,
+      battlefield: currentState.battlefield.map(e => ({
+        ...e,
+        modifiers: e.modifiers.filter(m => m.sourceId !== 'roghkiller'),
+      })),
+    };
+  }
+
+  return currentState;
+}
+
+/**
+ * Detectar empates en selectores que requieren eleccion del jugador.
+ * Si hay empate, devuelve un PendingChoice para que el jugador decida.
+ */
+function detectTieForChoice(
+  state: GameState,
+  cardDef: CardDefinition,
+  player: PlayerState,
+): PendingChoice | null {
+  const effects = cardDef.effects ?? [];
+  for (const eff of effects) {
+    // HERO_WITH_FEWEST_WOUNDS: empate en menos heridas
+    if (eff.type === 'DEAL_DAMAGE_TO_HERO' && 'target' in eff && eff.target?.kind === 'HERO_WITH_FEWEST_WOUNDS') {
+      const all = state.playerOrder;
+      if (all.length === 0) continue;
+      const minWounds = Math.min(...all.map(id => state.players[id].wounds));
+      const candidates = all.filter(id => state.players[id].wounds === minWounds);
+      if (candidates.length > 1) {
+        return {
+          choiceId: `tie-hero-${cardDef.id}-${nextSeq()}`,
+          playerId: player.playerId,
+          type: 'SELECT_HERO',
+          prompt: `${cardDef.name}: Elige el héroe con menos Heridas (empate)`,
+          options: candidates,
+          minSelections: 1,
+          maxSelections: 1,
+        };
+      }
+    }
+    // ENEMY_WITH_MAX_FORTITUDE: empate en fortaleza
+    if ('target' in eff && eff.target && typeof eff.target === 'object' && eff.target.kind === 'ENEMY_WITH_MAX_FORTITUDE') {
+      if (state.battlefield.length === 0) continue;
+      const maxFort = Math.max(...state.battlefield.map(e => getEffectiveFortitude(e, state)));
+      const candidates = state.battlefield.filter(e => getEffectiveFortitude(e, state) === maxFort);
+      if (candidates.length > 1) {
+        return {
+          choiceId: `tie-enemy-${cardDef.id}-${nextSeq()}`,
+          playerId: player.playerId,
+          type: 'SELECT_ENEMY',
+          prompt: `${cardDef.name}: Elige el enemigo con más Fortaleza (empate)`,
+          options: candidates.map(e => e.instanceId),
+          minSelections: 1,
+          maxSelections: 1,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+export interface ResolveResult {
+  events: GameEvent[];
+  newState: GameState;
+  /** Enemigos derrotados durante esta resolucion */
+  enemiesDefeated: string[];
+  /** Cartas adicionales jugadas (para Disparo Rapido) */
+  additionalCardsPlayed: string[];
+  /** Eleccion pendiente si se detecto un empate que requiere decision del jugador */
+  pendingChoice?: PendingChoice;
+}
+
+/**
+ * Resolver una carta jugada: ejecutar todos sus efectos en orden,
+ * procesar disparadores reactivos, y aplicar los eventos al estado.
+ */
+export function resolveCard(
+  state: GameState,
+  card: CardInstance,
+  cardDef: CardDefinition,
+  targetEnemyId: string | null,
+  player: PlayerState,
+  rng: DeterministicRng,
+  registry: EffectRegistry,
+  catalog: CatalogLoadResult,
+  chosenHeroTarget?: string | null,
+  chosenEnemyTarget?: string | null,
+  chosenWearCardId?: string | null,
+): ResolveResult {
+  const allEvents: GameEvent[] = [];
+  const enemiesDefeated: string[] = [];
+  const additionalCardsPlayed: string[] = [];
+  let currentState = state;
+
+  // Contexto de resolucion (construido temprano para pendingChoice)
+  const ctx: ResolutionContext = {
+    activePlayerId: player.playerId,
+    currentCardId: card.definitionId,
+    currentCardName: cardDef.name,
+    currentCardInstanceId: card.instanceId,
+    selectedEnemyId: targetEnemyId,
+    cardsPlayedThisTurn: { ...player.cardsPlayedThisTurn },
+    cardsPlayedAgainstEnemy: { ...player.cardsPlayedAgainstEnemy },
+    drawnCardInstanceId: null,
+    sourceZone: 'HAND',
+    enemiesDefeatedThisResolution: enemiesDefeated,
+    depth: 0,
+    chosenHeroTarget: chosenHeroTarget ?? null,
+    chosenEnemyTarget: chosenEnemyTarget ?? null,
+  };
+
+  // Pre-escanear empates en selectores que requieren eleccion del jugador
+  if (chosenHeroTarget === undefined && chosenEnemyTarget === undefined) {
+    const tieChoice = detectTieForChoice(state, cardDef, player);
+    if (tieChoice) {
+      tieChoice.resolutionContext = ctx;
+      return {
+        events: [],
+        newState: state,
+        enemiesDefeated,
+        additionalCardsPlayed,
+        pendingChoice: tieChoice,
+      };
+    }
+  }
+
+  // Pre-escanear SEARCH_WEAR_PILE_PUT_IN_HAND: si hay mas de 1 carta en desgaste,
+  // el jugador debe elegir (spec: "Busca una carta en tu pila de Desgaste")
+  if (chosenWearCardId === undefined) {
+    const hasSearchWear = cardDef.effects?.some(e => e.type === 'SEARCH_WEAR_PILE_PUT_IN_HAND');
+    if (hasSearchWear) {
+      const wearPile = player.wearPile;
+      if (wearPile.length > 1) {
+        const wearChoice: PendingChoice = {
+          choiceId: `wear-${nextSeq()}`,
+          playerId: player.playerId,
+          type: 'SELECT_CARD_FROM_WEAR',
+          prompt: `Elige una carta de tu pila de Desgaste para ${cardDef.name}`,
+          options: wearPile.map(c => c.instanceId),
+          minSelections: 1,
+          maxSelections: 1,
+          resolutionContext: ctx,
+        };
+        return {
+          events: [],
+          newState: state,
+          enemiesDefeated,
+          additionalCardsPlayed,
+          pendingChoice: wearChoice,
+        };
+      }
+    }
+  } else {
+    ctx.chosenWearCardId = chosenWearCardId;
+  }
+
+  // Evento: carta jugada
+  allEvents.push({
+    type: 'CARD_PLAYED',
+    playerId: player.playerId,
+    cardInstanceId: card.instanceId,
+    cardDefinitionId: card.definitionId,
+    cardName: cardDef.name,
+    targetEnemyInstanceId: targetEnemyId ?? undefined,
+    seq: nextSeq(),
+  });
+
+  // Bus: configurar con el estado actual
+  const bus = new EventBus(registry, rng);
+  bus.setState(currentState);
+
+  // 1. Dano impreso de la carta (si tiene printedAttack > 0)
+  // Excepcion: si la carta define su dano mediante efectos (SPLIT, ALL, TO_HERO),
+  // no aplicar printedAttack al target unico (se aplicaria dos veces)
+  const hasSpecialDamageEffect = cardDef.effects.some(
+    e => e.type === 'DEAL_DAMAGE_SPLIT' || e.type === 'DEAL_DAMAGE_ALL_ENEMIES' || e.type === 'DEAL_DAMAGE_TO_HERO' || e.type === 'DEAL_DAMAGE_TO_OTHER_HEROES'
+  );
+  if (cardDef.printedAttack && cardDef.printedAttack > 0 && targetEnemyId && !hasSpecialDamageEffect) {
+    let damage = cardDef.printedAttack;
+
+    // Golpe de Baston: si ya se uso contra este enemigo, dano base = 2
+    // D428: identificar por definitionId estable (cardsPlayedAgainstEnemy indexa por definitionId)
+    if (cardDef.id === 'mage.staff-strike' && targetEnemyId) {
+      const usedAgainst = ctx.cardsPlayedAgainstEnemy[targetEnemyId]?.['mage.staff-strike']
+        ?? ctx.cardsPlayedAgainstEnemy[targetEnemyId]?.['Golpe de Bastón'] ?? 0;
+      if (usedAgainst > 0) {
+        damage = 2;
+      }
+    }
+
+    // Ballesta Precisa: si ya se uso contra este enemigo, dano base = 3
+    if (cardDef.id === 'rogue.precise-crossbow' && targetEnemyId) {
+      const usedAgainst = ctx.cardsPlayedAgainstEnemy[targetEnemyId]?.['rogue.precise-crossbow']
+        ?? ctx.cardsPlayedAgainstEnemy[targetEnemyId]?.['Ballesta Precisa'] ?? 0;
+      if (usedAgainst > 0) {
+        damage = 3;
+      }
+    }
+
+    // Aplicar modificadores de dano del turno (Piedra de Amolar)
+    damage = applyDamageModifiers(damage, cardDef.name, player);
+
+    // Aplicar penalizacion de capacidad (especificacion 3.5)
+    // Si el heroe tiene un icono con penalizacion, restar del dano
+    // Ej: Picaro con armas a distancia resta 1
+    // No se aplica la penalizacion si el heroe posee otro icono requerido sin penalizacion
+    if (cardDef.penaltyCapabilities && cardDef.penaltyCapabilities.length > 0) {
+      for (const penalty of cardDef.penaltyCapabilities) {
+        if (player.capabilities.includes(penalty.icon)) {
+          // Verificar si el heroe tiene algun capability requerido que NO este en penaltyCapabilities
+          const hasNonPenaltyMatch = player.capabilities.some(cap =>
+            cardDef.requiredCapabilities?.includes(cap) &&
+            !cardDef.penaltyCapabilities?.some(p => p.icon === cap)
+          );
+          if (!hasNonPenaltyMatch) {
+            damage = Math.max(0, damage - penalty.damagePenalty);
+          }
+        }
+      }
+    }
+
+    // Aplicar vulnerabilidad del enemigo
+    const enemy = currentState.battlefield.find(e => e.instanceId === targetEnemyId);
+    if (enemy) {
+      const vulnMods = enemy.modifiers.filter(m => m.layer === 'DAMAGE_BONUS');
+      for (const mod of vulnMods) {
+        damage += mod.amount;
+      }
+    }
+
+    allEvents.push({
+      type: 'DAMAGE_DEALT',
+      targetId: targetEnemyId,
+      amount: damage,
+      sourceCardInstanceId: card.instanceId,
+      seq: nextSeq(),
+    });
+
+    // Aplicar el dano al estado intermedio para que los efectos posteriores
+    // (como Todo o Nada) vean las heridas actualizadas al reevaluar derrota
+    currentState = applyEventInline(currentState, {
+      type: 'DAMAGE_DEALT',
+      targetId: targetEnemyId,
+      amount: damage,
+      sourceCardInstanceId: card.instanceId,
+      seq: nextSeq(),
+    });
+
+    // (La Gloria especial del Señor y las pericias de Gurdrug/Shriekknifer
+    // se procesan tras todos los efectos en el bloque post-efectos)
+
+    // Comprobar si el enemigo es derrotado (currentState ya tiene el daño aplicado)
+    const enemyAfter = currentState.battlefield.find(e => e.instanceId === targetEnemyId);
+    if (enemyAfter && enemyAfter.wounds >= getEffectiveFortitude(enemyAfter, currentState)) {
+      // Emitir ENEMY_DEFEATED + invocar escenario
+      currentState = emitEnemyDefeated(
+        currentState, targetEnemyId, player.playerId, enemiesDefeated, allEvents, catalog, ctx,
+      );
+
+      // Ejecutar efectos ON_DEFEAT de la carta
+      for (const effect of cardDef.effects) {
+        if (effect.type === 'ON_DEFEAT') {
+          const onDefeatEvents = executeEffectChain(
+            effect.effects,
+            ctx,
+            currentState,
+            rng,
+            registry,
+            catalog,
+            0,
+          );
+          allEvents.push(...onDefeatEvents.events);
+          currentState = onDefeatEvents.state;
+        }
+      }
+    }
+  }
+
+  // 2. Ejecutar efectos de la carta (excluyendo ON_DEFEAT que ya se procesaron)
+  for (const effect of cardDef.effects) {
+    if (effect.type === 'ON_DEFEAT' || effect.type === 'ON_HORDE_ATTACK') continue;
+
+    if (effect.type === 'DRAW_AND_ADD_ATTACK') {
+      // Todo o Nada: robar 1 carta, sumar su dano al ataque, recuperar al fondo
+      // D434: si el mazo se agota, Herida + reciclaje de Desgaste (spec §3.10)
+      const drawCount = evalValue(effect.amount, ctx, currentState);
+      const drawResult = drawCardsWithReshuffle(player.playerId, drawCount, currentState, rng, nextSeq);
+      allEvents.push(...drawResult.events);
+      // Aplicar el robo (y posible reciclaje) al estado intermedio
+      for (const ev of drawResult.events) {
+        currentState = applyEventInline(currentState, ev);
+      }
+      for (const drawnCard of drawResult.drawn) {
+        const drawnDef = catalog.byId.get(drawnCard.definitionId);
+        const extraDamage = drawnDef?.printedAttack ?? 0;
+        // Sumar dano al objetivo actual
+        if (extraDamage > 0 && targetEnemyId) {
+          allEvents.push({
+            type: 'DAMAGE_DEALT',
+            targetId: targetEnemyId,
+            amount: extraDamage,
+            sourceCardInstanceId: drawnCard.instanceId,
+            seq: nextSeq(),
+          });
+          // NOTA: La carta robada por Todo o Nada NO se juega, solo suma su ataque.
+          // Por tanto NO genera Gloria del Señor de la Guerra (§3.7: 1 Gloria por carta jugada).
+          // Aplicar al estado intermedio
+          currentState = applyEventInline(currentState, {
+            type: 'DAMAGE_DEALT',
+            targetId: targetEnemyId,
+            amount: extraDamage,
+            sourceCardInstanceId: drawnCard.instanceId,
+            seq: nextSeq(),
+          });
+          // Comprobar derrota (applyEventInline ya sumó extraDamage a wounds)
+          currentState = emitEnemyDefeated(
+            currentState, targetEnemyId, player.playerId, enemiesDefeated, allEvents, catalog, ctx,
+          );
+        }
+        // Recuperar la carta robada al fondo del mazo
+        allEvents.push({
+          type: 'CARD_MOVED',
+          cardInstanceId: drawnCard.instanceId,
+          from: 'HAND',
+          to: 'ABILITY_DECK',
+          seq: nextSeq(),
+        });
+        currentState = {
+          ...currentState,
+          players: {
+            ...currentState.players,
+            [player.playerId]: {
+              ...currentState.players[player.playerId],
+              abilityDeck: [
+                ...currentState.players[player.playerId].abilityDeck,
+                { ...drawnCard, zone: 'ABILITY_DECK' as Zone },
+              ],
+            },
+          },
+        };
+      }
+      continue;
+    }
+
+    if (effect.type === 'DRAW_AND_CHECK') {
+      // Disparo Rapido: logica especial de cadena
+      const chainResult = resolveRapidShot(
+        currentState,
+        card,
+        cardDef,
+        targetEnemyId,
+        player,
+        rng,
+        registry,
+        catalog,
+        ctx,
+        0,
+        enemiesDefeated, // heredar enemigos ya derrotados
+      );
+      allEvents.push(...chainResult.events);
+      currentState = chainResult.state;
+      additionalCardsPlayed.push(...chainResult.additionalCardsPlayed);
+      enemiesDefeated.push(...chainResult.enemiesDefeated);
+      // D434: propagar eleccion pendiente (opt-in de Beleth-Il)
+      if (chainResult.pendingChoice) {
+        return {
+          events: allEvents,
+          newState: currentState,
+          enemiesDefeated,
+          additionalCardsPlayed,
+          pendingChoice: chainResult.pendingChoice,
+        };
+      }
+      continue;
+    }
+
+    if (effect.type === 'PLACE_PERSISTENT') {
+      // Trampa: colocar carta persistente
+      allEvents.push({
+        type: 'PERSISTENT_CARD_PLACED',
+        playerId: player.playerId,
+        cardInstanceId: card.instanceId,
+        cardDefinitionId: card.definitionId,
+        trigger: effect.trigger,
+        seq: nextSeq(),
+      });
+      // No mover a desgaste; queda frente al jugador
+      continue;
+    }
+
+    if (effect.type === 'SWAP_ENEMY') {
+      // Supervivencia: intercambiar enemigo en campo por el del fondo del mazo de la Horda
+      const targetId = effect.target.kind === 'SELECTED_ENEMY' ? targetEnemyId : null;
+      if (!targetId || currentState.hordeDeck.length === 0) continue;
+      const newEnemyCard = currentState.hordeDeck[currentState.hordeDeck.length - 1];
+      const newEnemyDef = catalog.byId.get(newEnemyCard.definitionId);
+      if (!newEnemyDef) continue;
+      allEvents.push({
+        type: 'ENEMY_SWAPPED',
+        oldEnemyInstanceId: targetId,
+        newEnemyInstanceId: newEnemyCard.instanceId,
+        newEnemyDefinitionId: newEnemyCard.definitionId,
+        newEnemyFortitude: newEnemyDef.printedFortitude ?? 1,
+        newEnemyReward: newEnemyDef.reward ?? null,
+        newEnemyIsOrc: newEnemyDef.isOrc ?? false,
+        newEnemyIsWarlord: newEnemyDef.type === 'WARLORD',
+        newEnemySpecialIcons: newEnemyDef.specialIcons ?? [],
+        seq: nextSeq(),
+      });
+      continue;
+    }
+
+    if (effect.type === 'MODIFY_DAMAGE') {
+      // Piedra de Amolar: anadir modificador de dano al jugador
+      const modifierAmount = evalValue(effect.modifier, ctx, currentState);
+      // El modificador se aplica via PlayerState.modifiers
+      // Lo manejamos anadiendolo al estado del jugador
+      const modId = `mod-${nextSeq()}`;
+      allEvents.push({
+        type: 'MODIFIER_ADDED',
+        modifierId: modId,
+        targetId: player.playerId,
+        layer: 'DAMAGE_BONUS',
+        amount: modifierAmount,
+        sourceId: card.instanceId,
+        duration: 'UNTIL_END_OF_TURN',
+        filter: effect.filter,
+        scope: effect.scope,
+        seq: nextSeq(),
+      });
+      // Actualizar estado: anadir modificador al jugador
+      currentState = {
+        ...currentState,
+        players: {
+          ...currentState.players,
+          [player.playerId]: {
+            ...currentState.players[player.playerId],
+            modifiers: [
+              ...currentState.players[player.playerId].modifiers,
+              {
+                id: modId,
+                sourceId: card.instanceId,
+                layer: 'DAMAGE_BONUS',
+                timestamp: nextSeq(),
+                duration: 'UNTIL_END_OF_TURN',
+                amount: modifierAmount,
+                filter: effect.filter,
+                scope: effect.scope,
+              },
+            ],
+          },
+        },
+      };
+      continue;
+    }
+
+    if (effect.type === 'MODIFY_FORTITUDE') {
+      // Ruinas de Brunmar / Roghkiller: modificar fortaleza de enemigos
+      const modifierAmount = evalValue(effect.modifier, ctx, currentState);
+      // Manejar ALL_ENEMIES: aplicar a todos los enemigos del campo,
+      // respetando el filtro si el target lo lleva (p.ej. Roghkiller: solo orcos)
+      let targetIds: string[];
+      if (effect.target.kind === 'ALL_ENEMIES') {
+        const filter = (effect.target as { filter?: { isOrc?: boolean; isWarlord?: boolean } }).filter;
+        targetIds = currentState.battlefield
+          .filter(e => {
+            if (!filter) return true;
+            if (filter.isOrc !== undefined && e.isOrc !== filter.isOrc) return false;
+            if (filter.isWarlord !== undefined && e.isWarlord !== filter.isWarlord) return false;
+            return true;
+          })
+          .map(e => e.instanceId);
+      } else {
+        targetIds = [resolveTarget(effect.target, ctx, currentState)].filter((id): id is string => id !== null);
+      }
+      for (const targetId of targetIds) {
+        const modId = `fort-mod-${nextSeq()}`;
+        allEvents.push({
+          type: 'MODIFIER_ADDED',
+          modifierId: modId,
+          targetId,
+          layer: 'FORTITUDE_MODIFIERS',
+          amount: modifierAmount,
+          sourceId: card.instanceId,
+          duration: effect.duration,
+          seq: nextSeq(),
+        });
+        // Aplicar al estado intermedio: solo añadir el modificador, NO mutar baseFortitude
+        currentState = {
+          ...currentState,
+          battlefield: currentState.battlefield.map(e =>
+            e.instanceId === targetId
+              ? {
+                  ...e,
+                  modifiers: [
+                    ...e.modifiers,
+                    {
+                      id: modId,
+                      sourceId: card.instanceId,
+                      layer: 'FORTITUDE_MODIFIERS',
+                      timestamp: nextSeq(),
+                      duration: effect.duration,
+                      amount: modifierAmount,
+                      targetId,
+                    },
+                  ],
+                }
+              : e
+          ),
+        };
+      }
+      continue;
+    }
+
+    if (effect.type === 'MODIFY_MARKET_COST') {
+      // Mercado de Lotharion: reducir coste de mercado
+      const modifierAmount = evalValue(effect.modifier, ctx, currentState);
+      const modId = `market-cost-${nextSeq()}`;
+      allEvents.push({
+        type: 'MODIFIER_ADDED',
+        modifierId: modId,
+        targetId: 'market',
+        layer: 'MARKET_COST',
+        amount: modifierAmount,
+        sourceId: card.instanceId,
+        duration: 'WHILE_SOURCE_ACTIVE',
+        seq: nextSeq(),
+      });
+      currentState = {
+        ...currentState,
+        marketCostModifier: currentState.marketCostModifier + modifierAmount,
+      };
+      continue;
+    }
+
+    if (effect.type === 'END_ATTACK') {
+      // Escudo: terminar el enfrentamiento y pasar al ataque de la Horda
+      allEvents.push({
+        type: 'PHASE_CHANGED',
+        phase: 'HORDE_ATTACK',
+        seq: nextSeq(),
+      });
+      continue;
+    }
+
+    // Efecto normal: delegar al registry
+    const effectEvents = registry.execute(effect, ctx, currentState, rng, bus);
+    allEvents.push(...effectEvents);
+
+    // Aplicar eventos al estado
+    for (const ev of effectEvents) {
+      // Si el registry emitió ENEMY_DEFEATED (ej: DEFEAT_ENEMY), capturar enemigo ANTES de aplicar
+      const enemyBeforeApply = ev.type === 'ENEMY_DEFEATED'
+        ? currentState.battlefield.find(e => e.instanceId === ev.enemyInstanceId)
+        : null;
+      currentState = applyEventInline(currentState, ev);
+      if (ev.type === 'ENEMY_DEFEATED' && enemyBeforeApply && !enemiesDefeated.includes(ev.enemyInstanceId)) {
+        enemiesDefeated.push(ev.enemyInstanceId);
+        const scenarioDefId = currentState.scenario?.definitionId;
+        if (scenarioDefId) {
+          const enemyFortitude = getEffectiveFortitude(enemyBeforeApply, currentState);
+          (ctx as any).lastDefeatedEnemyFortitude = enemyFortitude;
+          const scenarioEvents = scenarioOnEnemyDefeated(
+            currentState, scenarioDefId, ev.defeatingPlayerId, enemyFortitude, catalog,
+          );
+          allEvents.push(...scenarioEvents);
+          for (const sev of scenarioEvents) {
+            currentState = applyEventInline(currentState, sev);
+          }
+        }
+      }
+    }
+  }
+
+  // Tras ejecutar todos los efectos, comprobar si los daños genéricos
+  // (DEAL_DAMAGE_SPLIT, DEAL_DAMAGE_ALL, etc.) han derrotado algún enemigo
+  for (const enemy of currentState.battlefield) {
+    if (enemy.wounds >= getEffectiveFortitude(enemy, currentState)) {
+      currentState = emitEnemyDefeated(
+        currentState, enemy.instanceId, player.playerId, enemiesDefeated, allEvents, catalog, ctx,
+      );
+    }
+  }
+
+  // Pericias de Señores de la Guerra: procesar tras todos los efectos
+  // Buscar DAMAGE_DEALT emitidos contra Señores por esta carta o sus copias (Disparo Rápido)
+  const allSourceCardIds = new Set([card.instanceId, ...additionalCardsPlayed]);
+  const damageEventsVsWarlord = allEvents.filter(
+    (e): e is { type: 'DAMAGE_DEALT'; targetId: string; amount: number; sourceCardInstanceId: string; seq: number } =>
+      e.type === 'DAMAGE_DEALT' &&
+      allSourceCardIds.has(e.sourceCardInstanceId) &&
+      e.amount >= 1
+  );
+  // Agrupar por Señor (pericias se activan una vez por Señor por carta)
+  const warlordsHit = new Set<string>();
+  // Gloria: 1 por carta que dañe a cualquier Señor (no por Señor)
+  const gloryCards = new Set<string>();
+  for (const dmgEv of damageEventsVsWarlord) {
+    // Buscar el enemigo en el estado actual O en el original (puede haber sido derrotado)
+    let warlord = currentState.battlefield.find(e => e.instanceId === dmgEv.targetId);
+    if (!warlord) {
+      // Buscar en el estado original (antes de aplicar eventos)
+      warlord = state.battlefield.find(e => e.instanceId === dmgEv.targetId);
+    }
+    if (!warlord?.isWarlord) continue;
+    // Gloria: 1 por carta (no por Señor ni por impacto)
+    gloryCards.add(dmgEv.sourceCardInstanceId);
+    // Pericias: una vez por Señor por carta
+    const periciaKey = `${dmgEv.sourceCardInstanceId}-${warlord.instanceId}`;
+    if (warlordsHit.has(periciaKey)) continue;
+    warlordsHit.add(periciaKey);
+    const warlordDef = catalog.byId.get(warlord.definitionId);
+    if (!warlordDef) continue;
+
+    // Gurdrug: cada carta que dañe al Jefe provoca pérdida de 1 carta adicional
+    // D428: identificar por definitionId estable
+    if (warlordDef.id === 'warlord.gurdrug') {
+      // Usar applyHeroDamage para manejar mazo vacío (reciclaje + herida)
+      const gurdrugEvents = applyHeroDamage(
+        player.playerId, 1, currentState, rng, nextSeq,
+      );
+      allEvents.push(...gurdrugEvents);
+      // Actualizar estado para que la siguiente iteración vea el mazo actualizado
+      for (const ev of gurdrugEvents) {
+        currentState = applyEventInline(currentState, ev);
+      }
+    }
+
+    // Shriekknifer: cartas con printedAttack == 1 → recuperar 1 carta
+    // D435: evaluar la carta ORIGEN de cada DAMAGE_DEALT (en cadenas de
+    // Disparo Rapido la carta que daña no es la que se jugó originalmente)
+    const playedDefIds = new Map<string, string>();
+    for (const ev of allEvents) {
+      if (ev.type === 'CARD_PLAYED') {
+        playedDefIds.set(ev.cardInstanceId, ev.cardDefinitionId);
+      }
+    }
+    const sourceDefId = playedDefIds.get(dmgEv.sourceCardInstanceId) ?? cardDef.id;
+    const sourceDef = catalog.byId.get(sourceDefId);
+    if (warlordDef.id === 'warlord.shriekknifer' && (sourceDef?.printedAttack ?? 0) === 1) {
+      const playerState = currentState.players[player.playerId];
+      if (playerState.wearPile.length > 0) {
+        // Recuperar de la parte INFERIOR del desgaste (cartas más antiguas)
+        const recoveredCard = playerState.wearPile[0];
+        const recoverEvent = {
+          type: 'CARDS_RECOVERED' as const,
+          playerId: player.playerId,
+          count: 1,
+          cardInstanceIds: [recoveredCard.instanceId],
+          toZone: 'ABILITY_DECK' as const,
+          seq: nextSeq(),
+        };
+        allEvents.push(recoverEvent);
+        // Actualizar estado para que la siguiente iteración vea el desgaste actualizado
+        currentState = applyEventInline(currentState, recoverEvent);
+      }
+    }
+  }
+
+  // Gloria especial del Señor: 1 Gloria por carta que dañe al Señor (§3.7, DIG-008)
+  for (const _cardId of gloryCards) {
+    allEvents.push({
+      type: 'GLORY_GAINED',
+      playerId: player.playerId,
+      amount: 1,
+      seq: nextSeq(),
+    });
+  }
+
+  // 3. Mover carta a desgaste (o destino especial)
+  // Excepción: si la carta tiene RECOVER_THIS_CARD y se emitió CARDS_RECOVERED para ella,
+  // no mover a WEAR_PILE (la carta se recuperó a mano o mazo)
+  const wasRecovered = allEvents.some(
+    e => e.type === 'CARDS_RECOVERED' && (e as { cardInstanceIds?: string[] }).cardInstanceIds?.includes(card.instanceId)
+  );
+  if (wasRecovered) {
+    // La carta ya fue recuperada por RECOVER_THIS_CARD; no mover a WEAR_PILE
+  } else if (cardDef.destinationAfterUse === 'WEAR_PILE') {
+    allEvents.push({
+      type: 'CARD_MOVED',
+      cardInstanceId: card.instanceId,
+      from: 'HAND',
+      to: 'WEAR_PILE',
+      seq: nextSeq(),
+    });
+  } else if (cardDef.destinationAfterUse === 'REMOVED_FROM_GAME') {
+    allEvents.push({
+      type: 'CARD_REMOVED_FROM_GAME',
+      cardInstanceId: card.instanceId,
+      seq: nextSeq(),
+    });
+  } else if (cardDef.destinationAfterUse === 'IN_FRONT_OF_PLAYER') {
+    // Ya se manejo en PLACE_PERSISTENT
+  }
+
+  // 4. Aplicar todos los eventos al estado final
+  // Nota: empezamos desde el estado original (no currentState) porque
+  // los eventos ya se aplicaron incrementalmente a currentState durante
+  // la resolucion. Aplicarlos de nuevo desde state asegura consistencia
+  // del event sourcing sin doblar efectos.
+  let finalState = state;
+  for (const ev of allEvents) {
+    finalState = applyEventInline(finalState, ev);
+  }
+
+  // D434 (spec §6.9 nota Brunmar + caso limite 9): un enemigo que entra en
+  // juego durante la resolucion (p.ej. SWAP_ENEMY/Supervivencia) con Heridas
+  // >= Fortaleza efectiva queda derrotado inmediatamente.
+  const auraDefeats = checkFortitudeDefeats(finalState, player.playerId, nextSeq);
+  for (const ev of auraDefeats) {
+    allEvents.push(ev);
+    if (ev.type === 'ENEMY_DEFEATED') enemiesDefeated.push(ev.enemyInstanceId);
+    finalState = applyEventInline(finalState, ev);
+  }
+
+  return {
+    events: allEvents,
+    newState: finalState,
+    enemiesDefeated,
+    additionalCardsPlayed,
+  };
+}
+
+// ============================================================================
+// Disparo Rapido — cadena de cartas
+// ============================================================================
+
+interface ChainResult {
+  events: GameEvent[];
+  state: GameState;
+  additionalCardsPlayed: string[];
+  enemiesDefeated: string[];
+  /** Eleccion pendiente (p.ej. opt-in de Beleth-Il en fallo de Disparo Rapido) */
+  pendingChoice?: PendingChoice;
+}
+
+function resolveRapidShot(
+  state: GameState,
+  _sourceCard: CardInstance,
+  cardDef: CardDefinition,
+  targetEnemyId: string | null,
+  player: PlayerState,
+  rng: DeterministicRng,
+  registry: EffectRegistry,
+  catalog: CatalogLoadResult,
+  ctx: ResolutionContext,
+  depth: number = 0,
+  inheritedEnemiesDefeated: string[] = [],
+): ChainResult {
+  const events: GameEvent[] = [];
+  let currentState = state;
+  const additionalCardsPlayed: string[] = [];
+  const enemiesDefeated: string[] = [...inheritedEnemiesDefeated];
+
+  if (depth >= MAX_CHAIN_DEPTH) {
+    return { events, state: currentState, additionalCardsPlayed, enemiesDefeated };
+  }
+
+  // Buscar el efecto DRAW_AND_CHECK
+  const drawEffect = cardDef.effects.find(e => e.type === 'DRAW_AND_CHECK');
+  if (!drawEffect || drawEffect.type !== 'DRAW_AND_CHECK') {
+    return { events, state: currentState, additionalCardsPlayed, enemiesDefeated };
+  }
+
+  // Normalizar aliases snake_case (compatibilidad con formato MD)
+  // D428: preferir expectedCard (definitionId estable) sobre expectedName (nombre localizado)
+  const expectedCardId = (drawEffect as any).expectedCard ?? (drawEffect as any).expected_card;
+  const expectedName = drawEffect.expectedName ?? (drawEffect as any).expected_name;
+  const onMatchEffects = drawEffect.onMatch ?? (drawEffect as any).on_match ?? [];
+  // Leer inheritTarget del onMatch (default: true)
+  const playImmediatelyEffect = onMatchEffects.find((e: any) => e.type === 'PLAY_IMMEDIATELY');
+  const inheritTarget = playImmediatelyEffect ? (playImmediatelyEffect as any).inheritTarget !== false : true;
+
+  // Robar 1 carta del mazo
+  let currentPlayer = currentState.players[player.playerId];
+  // D434 (spec §4.4): Disparo Rápido jugado desde un mazo de Apoyo roba del
+  // "propio mazo del explorador" = el mazo de Apoyo del que salio la carta,
+  // no del mazo del jugador. El mazo de Apoyo agotado no causa Herida ni
+  // reciclaje (no es el mazo-vida del jugador): la cadena simplemente acaba.
+  const supportIdx = currentPlayer.supportDeckIndexUsedThisTurn;
+  const drawsFromSupport =
+    (currentPlayer.borrowedSupportCardIds?.includes(_sourceCard.instanceId) ?? false)
+    && supportIdx !== null && supportIdx !== undefined;
+
+  let drawnCard: CardInstance;
+  if (drawsFromSupport) {
+    const supportDeck = currentPlayer.supportDecks?.[supportIdx] ?? [];
+    if (supportDeck.length === 0) {
+      return { events, state: currentState, additionalCardsPlayed, enemiesDefeated };
+    }
+    drawnCard = supportDeck[0];
+  } else {
+    if (currentPlayer.abilityDeck.length === 0) {
+      // Mazo agotado: recibir 1 Herida y barajar Desgaste (especificacion: mazo como vida)
+      if (currentPlayer.wearPile.length > 0) {
+        events.push({
+          type: 'HERO_WOUNDED',
+          playerId: player.playerId,
+          woundCount: currentPlayer.wounds + 1,
+          seq: nextSeq(),
+        });
+        const shuffledWear = rng.shuffle([...currentPlayer.wearPile]);
+        const newOrder = shuffledWear.map(c => c.instanceId);
+        events.push({
+          type: 'DECK_RESHUFFLED',
+          playerId: player.playerId,
+          newDeckSize: shuffledWear.length,
+          newOrder,
+          seq: nextSeq(),
+        });
+        // Actualizar estado: barajar desgaste como nuevo mazo
+        currentState = {
+          ...currentState,
+          players: {
+            ...currentState.players,
+            [player.playerId]: {
+              ...currentPlayer,
+              abilityDeck: shuffledWear.map(c => ({ ...c, zone: 'ABILITY_DECK' as Zone })),
+              wearPile: [],
+              wounds: currentPlayer.wounds + 1,
+            },
+          },
+        };
+        currentPlayer = currentState.players[player.playerId];
+      } else {
+        // No hay desgaste ni mazo: no se puede robar
+        return { events, state: currentState, additionalCardsPlayed, enemiesDefeated };
+      }
+    }
+    drawnCard = currentPlayer.abilityDeck[0];
+  }
+  const drawnDef = catalog.byId.get(drawnCard.definitionId);
+
+  // Evento de robo: CARDS_DRAWN para el mazo propio; CARD_MOVED para el mazo
+  // de Apoyo (CARDS_DRAWN solo busca en abilityDeck al re-aplicar el evento)
+  if (drawsFromSupport) {
+    events.push({
+      type: 'CARD_MOVED',
+      cardInstanceId: drawnCard.instanceId,
+      from: 'ABILITY_DECK' as Zone,
+      to: 'HAND' as Zone,
+      seq: nextSeq(),
+    });
+  } else {
+    events.push({
+      type: 'CARDS_DRAWN',
+      playerId: player.playerId,
+      count: 1,
+      cardInstanceIds: [drawnCard.instanceId],
+      seq: nextSeq(),
+    });
+  }
+
+  // Aplicar el robo al estado
+  currentState = drawsFromSupport
+    ? {
+        ...currentState,
+        players: {
+          ...currentState.players,
+          [player.playerId]: {
+            ...currentState.players[player.playerId],
+            supportDecks: (currentState.players[player.playerId].supportDecks ?? []).map(
+              (d, i) => i === supportIdx ? d.slice(1) : d,
+            ),
+            hand: [...currentState.players[player.playerId].hand, { ...drawnCard, zone: 'HAND' as Zone }],
+            // La carta robada del Apoyo tambien es prestada
+            borrowedSupportCardIds: [
+              ...(currentState.players[player.playerId].borrowedSupportCardIds ?? []),
+              drawnCard.instanceId,
+            ],
+          },
+        },
+      }
+    : {
+        ...currentState,
+        players: {
+          ...currentState.players,
+          [player.playerId]: {
+            ...currentState.players[player.playerId],
+            abilityDeck: currentState.players[player.playerId].abilityDeck.slice(1),
+            hand: [...currentState.players[player.playerId].hand, { ...drawnCard, zone: 'HAND' as Zone }],
+          },
+        },
+      };
+
+  if (!drawnDef) {
+    return { events, state: currentState, additionalCardsPlayed, enemiesDefeated };
+  }
+
+  // Comprobar si la carta robada es la esperada (ID estable, o nombre como fallback)
+  const isMatch = expectedCardId
+    ? drawnCard.definitionId === expectedCardId
+    : drawnDef.name === expectedName;
+  if (isMatch) {
+    // Coincidencia: ejecutar onMatch (PLAY_IMMEDIATELY)
+    additionalCardsPlayed.push(drawnCard.instanceId);
+
+    // Quitar la carta robada de la mano
+    currentState = {
+      ...currentState,
+      players: {
+        ...currentState.players,
+        [player.playerId]: {
+          ...currentState.players[player.playerId],
+          hand: currentState.players[player.playerId].hand.filter(
+            c => c.instanceId !== drawnCard.instanceId
+          ),
+        },
+      },
+    };
+
+    // Evento: carta jugada
+    // Determinar el objetivo de la carta robada
+    // Si inheritTarget === false, elegir un nuevo objetivo (primer enemigo del campo que no sea el original)
+    let drawnTargetEnemyId: string | null;
+    if (inheritTarget) {
+      drawnTargetEnemyId = targetEnemyId;
+    } else {
+      // Buscar un enemigo diferente al original
+      const differentEnemy = currentState.battlefield.find(e => e.instanceId !== targetEnemyId);
+      drawnTargetEnemyId = differentEnemy
+        ? differentEnemy.instanceId
+        : (currentState.battlefield.length > 0 ? currentState.battlefield[0].instanceId : null);
+    }
+
+    events.push({
+      type: 'CARD_PLAYED',
+      playerId: player.playerId,
+      cardInstanceId: drawnCard.instanceId,
+      cardDefinitionId: drawnCard.definitionId,
+      cardName: drawnDef.name,
+      targetEnemyInstanceId: drawnTargetEnemyId ?? undefined,
+      seq: nextSeq(),
+    });
+
+    // Dano impreso de la carta robada
+    if (drawnDef.printedAttack && drawnDef.printedAttack > 0 && drawnTargetEnemyId) {
+      let damage = drawnDef.printedAttack;
+      damage = applyDamageModifiers(damage, drawnDef.name, currentState.players[player.playerId]);
+      // Aplicar vulnerabilidad del enemigo (DAMAGE_BONUS)
+      if (drawnTargetEnemyId) {
+        const enemy = currentState.battlefield.find(e => e.instanceId === drawnTargetEnemyId);
+        if (enemy) damage += getEnemyDamageBonus(enemy);
+      }
+
+      events.push({
+        type: 'DAMAGE_DEALT',
+        targetId: drawnTargetEnemyId,
+        amount: damage,
+        sourceCardInstanceId: drawnCard.instanceId,
+        seq: nextSeq(),
+      });
+
+      // Aplicar el dano al estado intermedio para que la reevaluacion de derrota sea correcta
+      currentState = applyEventInline(currentState, {
+        type: 'DAMAGE_DEALT',
+        targetId: drawnTargetEnemyId,
+        amount: damage,
+        sourceCardInstanceId: drawnCard.instanceId,
+        seq: nextSeq(),
+      });
+
+      // Gloria del Señor de la Guerra: se otorga en el post-procesado de pericias
+      // (no aquí, para evitar doble GLORY_GAINED)
+
+      // Comprobar derrota (currentState ya tiene el daño aplicado)
+      if (drawnTargetEnemyId) {
+        currentState = emitEnemyDefeated(
+          currentState, drawnTargetEnemyId, player.playerId, enemiesDefeated, events, catalog, ctx,
+        );
+      }
+    }
+
+    // Mover carta robada a desgaste
+    events.push({
+      type: 'CARD_MOVED',
+      cardInstanceId: drawnCard.instanceId,
+      from: 'HAND',
+      to: 'WEAR_PILE',
+      seq: nextSeq(),
+    });
+
+    // Recursion: la carta robada tambien tiene DRAW_AND_CHECK
+    if (drawnDef.effects.some(e => e.type === 'DRAW_AND_CHECK')) {
+      const newCtx: ResolutionContext = {
+        ...ctx,
+        currentCardId: drawnCard.definitionId,
+        currentCardName: drawnDef.name,
+        currentCardInstanceId: drawnCard.instanceId,
+        depth: depth + 1,
+      };
+      const chainResult = resolveRapidShot(
+        currentState,
+        drawnCard,
+        drawnDef,
+        drawnTargetEnemyId,
+        currentState.players[player.playerId],
+        rng,
+        registry,
+        catalog,
+        newCtx,
+        depth + 1,
+        enemiesDefeated, // heredar enemigos ya derrotados en la cadena
+      );
+      events.push(...chainResult.events);
+      currentState = chainResult.state;
+      additionalCardsPlayed.push(...chainResult.additionalCardsPlayed);
+      enemiesDefeated.push(...chainResult.enemiesDefeated);
+      // Propagar eleccion pendiente de la subcadena (Beleth-Il)
+      if (chainResult.pendingChoice) {
+        return { events, state: currentState, additionalCardsPlayed, enemiesDefeated, pendingChoice: chainResult.pendingChoice };
+      }
+    }
+  } else {
+    // No coincidencia: la carta robada va al FONDO del mazo del que salio
+    // (especificacion: Disparo Rapido - carta fallida al fondo del mazo).
+    // D434: si salio del mazo de Apoyo, vuelve al mazo de Apoyo (spec §4.4).
+    events.push({
+      type: 'CARD_MOVED',
+      cardInstanceId: drawnCard.instanceId,
+      from: 'HAND',
+      to: 'ABILITY_DECK',
+      seq: nextSeq(),
+    });
+    // Actualizar estado: remover de mano, anadir al fondo del mazo origen
+    const p = currentState.players[player.playerId];
+    const backToSupport = drawsFromSupport && supportIdx !== null && supportIdx !== undefined;
+    currentState = {
+      ...currentState,
+      players: {
+        ...currentState.players,
+        [player.playerId]: {
+          ...p,
+          hand: p.hand.filter(c => c.instanceId !== drawnCard.instanceId),
+          ...(backToSupport
+            ? {
+                supportDecks: (p.supportDecks ?? []).map(
+                  (d, i) => i === supportIdx ? [...d, { ...drawnCard, zone: 'ABILITY_DECK' as Zone }] : d,
+                ),
+              }
+            : {
+                abilityDeck: [...p.abilityDeck, { ...drawnCard, zone: 'ABILITY_DECK' as Zone }],
+              }),
+        },
+      },
+    };
+
+    // Beleth-Il (spec §6.8): "la primera carta fallida que robes PODRÁS
+    // recuperarla y robar otra" — Pericia de uso discrecional (2 usos).
+    // Se ofrece como eleccion pendiente; al aceptar, la carta va a la mano.
+    // AMB-002 (spec): "recuperar" podria ser fondo del mazo por glosario,
+    // pero como la carta fallida ya va al fondo por defecto, la lectura
+    // "a la mano" es la unica que da efecto a la Pericia.
+    const playerState = currentState.players[player.playerId];
+    if (playerState.heroId === 'hero.beleth-il' && (playerState.heroUsesRemaining ?? 0) > 0) {
+      return {
+        events, state: currentState, additionalCardsPlayed, enemiesDefeated,
+        pendingChoice: {
+          choiceId: `beleth-recover-${player.playerId}-${nextSeq()}`,
+          playerId: player.playerId,
+          type: 'CONFIRM',
+          prompt: 'Beleth-Il: ¿usar tu Pericia para recuperar la carta fallida a la mano y robar otra?',
+          options: ['yes', 'no'],
+          minSelections: 1,
+          maxSelections: 1,
+          relatedCardIds: [drawnCard.instanceId],
+        },
+      };
+    }
+  }
+
+  return { events, state: currentState, additionalCardsPlayed, enemiesDefeated };
+}
+
+// ============================================================================
+// Disparadores reactivos: ON_HORDE_ATTACK (Trampa)
+// ============================================================================
+
+export function processHordeAttackTriggers(
+  state: GameState,
+  rng: DeterministicRng,
+  registry: EffectRegistry,
+  catalog: CatalogLoadResult,
+  chosenEnemyTarget?: string | null,
+): { events: GameEvent[]; state: GameState; pendingChoice?: PendingChoice } {
+  const events: GameEvent[] = [];
+  let currentState = state;
+
+  // Buscar cartas persistentes con trigger HORDE_ATTACK
+  // D378: Solo se activan para el jugador activo (la Horda ataca al héroe activo)
+  for (const playerId of [state.activePlayerId]) {
+    const player = state.players[playerId];
+    if (!player) continue;
+    for (const persistentCard of player.persistentCards) {
+      if (persistentCard.persistentTrigger !== 'HORDE_ATTACK') continue;
+
+      const cardDef = catalog.byId.get(persistentCard.definitionId);
+      if (!cardDef) continue;
+
+      // Buscar el efecto PLACE_PERSISTENT y ejecutar sus efectos internos
+      for (const effect of cardDef.effects) {
+        if (effect.type !== 'PLACE_PERSISTENT') continue;
+
+        // Detectar empate de Fortaleza máxima para Trampa (spec: el jugador elige)
+        if (chosenEnemyTarget === undefined) {
+          const innerEffects = (effect as any).effects ?? [];
+          const hasMaxFortitudeTarget = innerEffects.some((e: any) =>
+            e.target?.kind === 'ENEMY_WITH_MAX_FORTITUDE'
+          );
+          if (hasMaxFortitudeTarget && currentState.battlefield.length > 0) {
+            const maxFort = Math.max(...currentState.battlefield.map(e => getEffectiveFortitude(e, currentState)));
+            const tied = currentState.battlefield.filter(e => getEffectiveFortitude(e, currentState) === maxFort);
+            if (tied.length > 1) {
+              const tieChoice: PendingChoice = {
+                choiceId: `trap-${nextSeq()}`,
+                playerId,
+                type: 'SELECT_ENEMY',
+                prompt: `Trampa: elige el enemigo a derrotar (empate de Fortaleza ${maxFort})`,
+                options: tied.map(e => e.instanceId),
+                minSelections: 1,
+                maxSelections: 1,
+              };
+              return { events, state: currentState, pendingChoice: tieChoice };
+            }
+          }
+        }
+
+        // La Trampa derrota al enemigo con mayor fortaleza
+        const ctx: ResolutionContext = {
+          activePlayerId: playerId,
+          currentCardId: persistentCard.definitionId,
+          currentCardName: cardDef.name,
+          currentCardInstanceId: persistentCard.instanceId,
+          selectedEnemyId: null,
+          cardsPlayedThisTurn: {},
+          cardsPlayedAgainstEnemy: {},
+          drawnCardInstanceId: null,
+          sourceZone: 'IN_FRONT_OF_PLAYER',
+          enemiesDefeatedThisResolution: [],
+          depth: 0,
+          chosenEnemyTarget: chosenEnemyTarget ?? null,
+        };
+
+        // Ejecutar los efectos internos del PLACE_PERSISTENT (no el PLACE_PERSISTENT mismo)
+        const innerEffects = (effect as any).effects ?? [];
+        const bus = new EventBus(registry, rng);
+        for (const innerEff of innerEffects) {
+          const triggerEvents = registry.execute(innerEff, ctx, currentState, rng, bus);
+          events.push(...triggerEvents);
+          // Aplicar eventos al estado
+          for (const ev of triggerEvents) {
+            // Capturar enemigo ANTES de applyEventInline (que lo elimina del battlefield)
+            const enemyBeforeApply = ev.type === 'ENEMY_DEFEATED'
+              ? currentState.battlefield.find(e => e.instanceId === ev.enemyInstanceId)
+              : null;
+            currentState = applyEventInline(currentState, ev);
+            // Si se emitió ENEMY_DEFEATED, invocar escenario
+            if (ev.type === 'ENEMY_DEFEATED' && enemyBeforeApply && !ctx.enemiesDefeatedThisResolution.includes(ev.enemyInstanceId)) {
+              ctx.enemiesDefeatedThisResolution.push(ev.enemyInstanceId);
+              const scenarioDefId = currentState.scenario?.definitionId;
+              if (scenarioDefId) {
+                const enemy = enemyBeforeApply;
+                if (enemy) {
+                  const enemyFortitude = getEffectiveFortitude(enemy, currentState);
+                  (ctx as any).lastDefeatedEnemyFortitude = enemyFortitude;
+                  const scenarioEvents = scenarioOnEnemyDefeated(
+                    currentState, scenarioDefId, ev.defeatingPlayerId, enemyFortitude, catalog,
+                  );
+                  events.push(...scenarioEvents);
+                  for (const sev of scenarioEvents) {
+                    currentState = applyEventInline(currentState, sev);
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Remover la carta persistente (se consume)
+        events.push({
+          type: 'PERSISTENT_CARD_REMOVED',
+          cardInstanceId: persistentCard.instanceId,
+          seq: nextSeq(),
+        });
+        events.push({
+          type: 'CARD_REMOVED_FROM_GAME',
+          cardInstanceId: persistentCard.instanceId,
+          seq: nextSeq(),
+        });
+      }
+    }
+  }
+
+  // D402: devolver currentState (acumulado), no el state original de entrada
+  return { events, state: currentState };
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+export function applyDamageModifiers(baseDamage: number, cardName: string, player: PlayerState): number {
+  let damage = baseDamage;
+  for (const mod of player.modifiers) {
+    if (mod.layer !== 'DAMAGE_BONUS') continue;
+    if (mod.filter?.name && mod.filter.name !== cardName) continue;
+    damage += mod.amount;
+  }
+  return Math.max(0, damage);
+}
+
+function applyEventInline(state: GameState, event: GameEvent): GameState {
+  return applyEvent(state, event);
+}
+
+// ============================================================================
+// Ejecutar cadena de efectos con limite de recursion
+// ============================================================================
+
+function executeEffectChain(
+  effects: CardEffect[],
+  ctx: ResolutionContext,
+  state: GameState,
+  rng: DeterministicRng,
+  registry: EffectRegistry,
+  _catalog: CatalogLoadResult,
+  depth: number,
+): { events: GameEvent[]; state: GameState } {
+  if (depth >= MAX_EFFECT_RECURSION) {
+    return { events: [], state };
+  }
+
+  const allEvents: GameEvent[] = [];
+  let currentState = state;
+  const bus = new EventBus(registry, rng);
+  bus.setState(currentState);
+
+  for (const effect of effects) {
+    const events = registry.execute(effect, ctx, currentState, rng, bus);
+    allEvents.push(...events);
+    for (const ev of events) {
+      currentState = applyEventInline(currentState, ev);
+    }
+  }
+
+  return { events: allEvents, state: currentState };
+}

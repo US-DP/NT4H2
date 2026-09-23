@@ -1,0 +1,112 @@
+{
+  "setId": "official.abilities.explorer",
+  "cards": [
+    {
+      "id": "explorer.companion-wolf",
+      "name": "Compañero Lobo",
+      "type": "ABILITY",
+      "heroClass": "EXPLORER",
+      "copies": 1,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "PREVENT_DAMAGE", "amount": { "kind": "CONSTANT", "value": 2 }, "duration": "HORDE_ATTACK" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "explorer.precise-shot",
+      "name": "Disparo Certero",
+      "type": "ABILITY",
+      "heroClass": "EXPLORER",
+      "copies": 2,
+      "printedAttack": 3,
+      "effects": [
+        { "type": "LOSE_CARDS", "amount": { "kind": "CONSTANT", "value": 1 } },
+        { "type": "END_ATTACK" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "explorer.rapid-shot",
+      "name": "Disparo Rápido",
+      "type": "ABILITY",
+      "heroClass": "EXPLORER",
+      "copies": 6,
+      "printedAttack": 1,
+      "effects": [
+        {
+          "type": "DRAW_AND_CHECK",
+          "amount": { "kind": "CONSTANT", "value": 1 },
+          "expectedCard": "explorer.rapid-shot",
+          "expectedName": "Disparo Rápido",
+          "onMatch": [
+            { "type": "PLAY_IMMEDIATELY", "inheritTarget": false }
+          ],
+          "onMismatch": []
+        }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR",
+      "_note": "onMismatch: la carta robada (no coincidente) se mueve al FONDO del mazo de Habilidad. Comportamiento implementado en resolver.ts (resolveRapidShot) por ser dependiente del contexto de la carta robada."
+    },
+    {
+      "id": "explorer.bullseye",
+      "name": "En la Diana",
+      "type": "ABILITY",
+      "heroClass": "EXPLORER",
+      "copies": 1,
+      "printedAttack": 4,
+      "effects": [
+        { "type": "GAIN_GLORY", "amount": { "kind": "CONSTANT", "value": 1 } },
+        { "type": "LOSE_CARDS", "amount": { "kind": "CONSTANT", "value": 1 } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "explorer.arrow-volley",
+      "name": "Lluvia de Flechas",
+      "type": "ABILITY",
+      "heroClass": "EXPLORER",
+      "copies": 2,
+      "printedAttack": 2,
+      "effects": [
+        { "type": "DEAL_DAMAGE_SPLIT", "amount": { "kind": "CONSTANT", "value": 2 }, "targetCount": 2, "target": { "kind": "ALL_ENEMIES" } },
+        { "type": "DEAL_DAMAGE_TO_HERO", "amount": { "kind": "CONSTANT", "value": 2 }, "target": { "kind": "HERO_WITH_FEWEST_WOUNDS" } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR",
+      "_note": "Daño 2 (total) repartido entre 2 enemigos + 2 de daño al héroe con menos heridas"
+    },
+    {
+      "id": "explorer.collect-arrows",
+      "name": "Recoger Flechas",
+      "type": "ABILITY",
+      "heroClass": "EXPLORER",
+      "copies": 2,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "RECOVER_CARD_BY_NAME", "name": "Disparo Rápido", "from": "WEAR_PILE", "to": "BOTTOM_OF_DECK" },
+        { "type": "SHUFFLE_DECK", "deck": "ABILITY" },
+        { "type": "GAIN_COINS", "amount": { "kind": "CONSTANT", "value": 1 } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "explorer.survival",
+      "name": "Supervivencia",
+      "type": "ABILITY",
+      "heroClass": "EXPLORER",
+      "copies": 1,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "SWAP_ENEMY", "target": { "kind": "SELECTED_ENEMY" }, "newFrom": "BOTTOM_OF_HORDE" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    }
+  ]
+}

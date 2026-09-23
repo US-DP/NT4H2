@@ -1,0 +1,171 @@
+name: CI - UI NT4H
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/**'
+      - '.github/workflows/ui-ci.yml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/**'
+      - '.github/workflows/ui-ci.yml'
+
+jobs:
+  # ===========================================================================
+  # Capa 0: Typecheck del frontend
+  # ===========================================================================
+  ui-typecheck:
+    name: 'UI Capa 0: Typecheck'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nt4h/mobile typecheck
+
+  # ===========================================================================
+  # Capa 1: Pruebas de componentes (Nivel 9)
+  # ===========================================================================
+  ui-components:
+    name: 'UI Capa 1: Componentes (Nivel 9)'
+    runs-on: ubuntu-latest
+    needs: ui-typecheck
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nt4h/mobile test -- tests/components.test.tsx
+
+  # ===========================================================================
+  # Capa 2: Pruebas de accesibilidad (Nivel 10)
+  # ===========================================================================
+  ui-accessibility:
+    name: 'UI Capa 2: Accesibilidad (Nivel 10)'
+    runs-on: ubuntu-latest
+    needs: ui-components
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nt4h/mobile test -- tests/accessibility.test.tsx
+
+  # ===========================================================================
+  # Capa 3: Pruebas de interacción (Nivel 11)
+  # ===========================================================================
+  ui-interactions:
+    name: 'UI Capa 3: Interacción (Nivel 11)'
+    runs-on: ubuntu-latest
+    needs: ui-accessibility
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nt4h/mobile test -- tests/interactions.test.tsx
+
+  # ===========================================================================
+  # Capa 4: Pruebas responsive + estados + privacidad (Niveles 12-14)
+  # ===========================================================================
+  ui-responsive-states-privacy:
+    name: 'UI Capa 4: Responsive/Estados/Privacidad (Niveles 12-14)'
+    runs-on: ubuntu-latest
+    needs: ui-interactions
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nt4h/mobile test -- tests/responsive.test.tsx tests/states.test.tsx tests/privacy.test.tsx
+
+  # ===========================================================================
+  # Capa 5: Pruebas de flujo completo (Nivel 15)
+  # ===========================================================================
+  ui-flow:
+    name: 'UI Capa 5: Flujo completo (Nivel 15)'
+    runs-on: ubuntu-latest
+    needs: ui-responsive-states-privacy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nt4h/mobile test -- tests/flow.test.tsx
+
+  # ===========================================================================
+  # Capa 6: Suite completa de UI (regresión)
+  # ===========================================================================
+  ui-full-suite:
+    name: 'UI Capa 6: Suite completa'
+    runs-on: ubuntu-latest
+    needs: ui-flow
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nt4h/mobile test
+
+  # ===========================================================================
+  # Capa 7: Pruebas E2E (Nivel 16) — Solo en main, no en PRs
+  # ===========================================================================
+  ui-e2e:
+    name: 'UI Capa 7: E2E (Nivel 16)'
+    runs-on: ubuntu-latest
+    needs: ui-full-suite
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nt4h/mobile exec playwright install --with-deps chromium
+      - run: pnpm --filter @nt4h/mobile test:e2e
+        env:
+          CI: true

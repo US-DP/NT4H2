@@ -1,0 +1,30 @@
+{
+  "name": "@nt4h/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src tests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nt4h/catalog": "workspace:*",
+    "@nt4h/schema": "workspace:*",
+    "seedrandom": "^3.0.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.18.0",
+    "@types/seedrandom": "^3.0.8",
+    "eslint": "9.18.0",
+    "eslint-plugin-security": "3.0.1",
+    "fast-check": "^4.9.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "8.20.0",
+    "vitest": "^2.1.0"
+  }
+}

@@ -1,0 +1,49 @@
+# Dependencias
+node_modules/
+.pnpm-store/
+
+# Builds
+dist/
+build/
+web-build/
+*.tsbuildinfo
+
+# Expo / React Native
+.expo/
+.expo-shared/
+
+# Turbo / caches
+.turbo/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+__pycache__/
+*.pyc
+
+# Tests / reportes
+playwright-report/
+test-results/
+coverage/
+ui-lint.json
+*.log
+
+# Entornos y secretos
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+*.pem
+*.key
+
+# SO / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Backend Django
+db.sqlite3
+*.sqlite3
+media/
+staticfiles/

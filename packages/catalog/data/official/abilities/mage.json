@@ -1,0 +1,135 @@
+{
+  "setId": "official.abilities.mage",
+  "cards": [
+    {
+      "id": "mage.protective-aura",
+      "name": "Aura Protectora",
+      "type": "ABILITY",
+      "heroClass": "MAGE",
+      "copies": 1,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "CANCEL_ALL_DAMAGE", "duration": "NEXT_HORDE_ATTACK" },
+        { "type": "LOSE_CARDS", "amount": { "kind": "COUNT_ENEMIES_IN_FIELD" } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "mage.fireball",
+      "name": "Bola de Fuego",
+      "type": "ABILITY",
+      "heroClass": "MAGE",
+      "copies": 1,
+      "printedAttack": 2,
+      "effects": [
+        { "type": "DEAL_DAMAGE_ALL_ENEMIES", "amount": { "kind": "CONSTANT", "value": 2 } },
+        { "type": "DEAL_DAMAGE_TO_OTHER_HEROES", "amount": { "kind": "CONSTANT", "value": 1 } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR",
+      "_note": "El motor suprime el ataque impreso (printedAttack=2) cuando la carta define DEAL_DAMAGE_ALL_ENEMIES, para evitar doble aplicación. DEAL_DAMAGE_ALL_ENEMIES daña a todos los enemigos con 2. DEAL_DAMAGE_TO_OTHER_HEROES daña al resto de héroes con 1."
+    },
+    {
+      "id": "mage.ice-shot",
+      "name": "Disparo Gélido",
+      "type": "ABILITY",
+      "heroClass": "MAGE",
+      "copies": 2,
+      "printedAttack": 1,
+      "effects": [
+        { "type": "DISABLE_ENEMY_DAMAGE", "target": { "kind": "SELECTED_ENEMY" }, "duration": "UNTIL_END_OF_TURN" },
+        { "type": "DRAW_CARDS", "amount": { "kind": "CONSTANT", "value": 1 }, "source": "ABILITY_DECK" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "mage.corrosive-arrow",
+      "name": "Flecha Corrosiva",
+      "type": "ABILITY",
+      "heroClass": "MAGE",
+      "copies": 1,
+      "printedAttack": 1,
+      "effects": [
+        { "type": "APPLY_VULNERABILITY", "target": { "kind": "SELECTED_ENEMY" }, "bonus": { "kind": "CONSTANT", "value": 1 }, "duration": "UNTIL_END_OF_TURN" },
+        { "type": "LOSE_CARDS", "amount": { "kind": "CONSTANT", "value": 1 } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "mage.staff-strike",
+      "name": "Golpe de Bastón",
+      "type": "ABILITY",
+      "heroClass": "MAGE",
+      "copies": 4,
+      "printedAttack": 1,
+      "effects": [
+        {
+          "type": "CONDITIONAL",
+          "condition": { "kind": "ALREADY_USED_AGAINST_THIS_ENEMY", "name": "Golpe de Bastón" },
+          "then": []
+        }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR",
+      "_note": "Si ya utilizaste Golpe de Bastón contra el mismo enemigo, el daño de esta carta es 2. La lógica de daño variable se maneja en el motor de resolución con el historial cardsPlayedAgainstEnemy."
+    },
+    {
+      "id": "mage.healing-orb",
+      "name": "Orbe Curativo",
+      "type": "ABILITY",
+      "heroClass": "MAGE",
+      "copies": 1,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "ALL_HEROES_RECOVER", "amount": { "kind": "CONSTANT", "value": 2 } },
+        { "type": "HEAL_WOUNDS", "amount": { "kind": "CONSTANT", "value": 1 } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "INFERRED"
+    },
+    {
+      "id": "mage.fire-bolt",
+      "name": "Proyectil Ígneo",
+      "type": "ABILITY",
+      "heroClass": "MAGE",
+      "copies": 3,
+      "printedAttack": 2,
+      "effects": [
+        { "type": "GAIN_GLORY", "amount": { "kind": "CONSTANT", "value": 1 } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "mage.reconstitution",
+      "name": "Reconstitución",
+      "type": "ABILITY",
+      "heroClass": "MAGE",
+      "copies": 1,
+      "printedAttack": 0,
+      "effects": [
+        { "type": "DRAW_CARDS", "amount": { "kind": "CONSTANT", "value": 1 }, "source": "ABILITY_DECK" },
+        { "type": "RECOVER_CARDS", "amount": { "kind": "CONSTANT", "value": 2 }, "from": "WEAR_PILE", "to": "BOTTOM_OF_DECK" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    },
+    {
+      "id": "mage.light-torrent",
+      "name": "Torrente de Luz",
+      "type": "ABILITY",
+      "heroClass": "MAGE",
+      "copies": 1,
+      "printedAttack": 2,
+      "effects": [
+        { "type": "OTHER_HEROES_RECOVER", "amount": { "kind": "CONSTANT", "value": 2 } },
+        { "type": "GAIN_GLORY", "amount": { "kind": "CONSTANT", "value": 1 } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "OCR"
+    }
+  ]
+}

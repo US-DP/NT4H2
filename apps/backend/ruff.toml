@@ -1,0 +1,20 @@
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = [
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "F",   # pyflakes
+  "I",   # isort
+  "B",   # flake8-bugbear
+  "UP",  # pyupgrade
+  "SIM", # flake8-simplify
+]
+ignore = [
+  "E501",  # line too long (handled by formatter)
+  "B008",  # do not perform function call in argument (Django pattern)
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["B011"]

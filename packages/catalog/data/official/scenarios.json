@@ -1,0 +1,155 @@
+{
+  "setId": "official.scenarios",
+  "cards": [
+    {
+      "id": "scenario.battlefield",
+      "name": "Campo de Batalla",
+      "type": "SCENARIO",
+      "copies": 1,
+      "effects": [
+        { "type": "ON_ENEMY_DEFEATED", "effects": [
+          { "type": "GAIN_COINS", "amount": { "kind": "CONSTANT", "value": 1 }, "target": "DEFEATING_HERO" }
+        ]}
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "CONFIRMED",
+      "_effect": "ON_ENEMY_DEFEATED: GAIN_COINS(1, to=defeating_hero)"
+    },
+    {
+      "id": "scenario.tears-of-aradiel",
+      "name": "Lágrimas de Aradiel",
+      "type": "SCENARIO",
+      "copies": 1,
+      "effects": [
+        { "type": "CUSTOM_SCENARIO", "handler": "tears-of-aradiel" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "CONFIRMED",
+      "_effect": "ONCE_PER_TURN: PAY_GLORY(1, to=other_hero) + PLAY_RANDOM_CARD_FROM_OTHER_HERO + DISCARD_TO_OWNER_WEAR + OWNER_DRAWS_1",
+      "_notValidInSolo": true
+    },
+    {
+      "id": "scenario.kalern-mud",
+      "name": "Lodazal de Kalern",
+      "type": "SCENARIO",
+      "copies": 1,
+      "effects": [
+        { "type": "CUSTOM_SCENARIO", "handler": "kalern-mud" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "CONFIRMED",
+      "_effect": "ON_TURN_START: PLAYER_TO_LEFT_SELECTS_ENEMY + RETURN_TO_BOTTOM_OF_HORDE + CLEAR_WOUNDS"
+    },
+    {
+      "id": "scenario.lotharion-market",
+      "name": "Mercado de Lötharion",
+      "type": "SCENARIO",
+      "copies": 1,
+      "effects": [
+        { "type": "MODIFY_MARKET_COST", "modifier": { "kind": "CONSTANT", "value": -1 } }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "CONFIRMED"
+    },
+    {
+      "id": "scenario.ur-mountains",
+      "name": "Montañas de Ur",
+      "type": "SCENARIO",
+      "copies": 1,
+      "effects": [
+        { "type": "CUSTOM_SCENARIO", "handler": "ur-mountains" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "CONFIRMED",
+      "_effect": "OPTIONAL: DRAW_CARDS(1) + REVEAL_ENEMY_FROM_HORDE"
+    },
+    {
+      "id": "scenario.umbrous-swamp",
+      "name": "Pantano Umbrío",
+      "type": "SCENARIO",
+      "copies": 1,
+      "effects": [
+        { "type": "ON_ENEMY_DEFEATED", "condition": { "fortitudeGte": 3 }, "effects": [
+          { "type": "GAIN_COINS", "amount": { "kind": "CONSTANT", "value": 1 }, "target": "DEFEATING_HERO" }
+        ]}
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "CONFIRMED",
+      "_effect": "ON_ENEMY_DEFEATED(fortaleza>=3): GAIN_COINS(1, additional)"
+    },
+    {
+      "id": "scenario.skaarg-plains",
+      "name": "Planicie de Skaàrg",
+      "type": "SCENARIO",
+      "copies": 1,
+      "effects": [
+        { "type": "IGNORE_COIN_REWARDS" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "CONFIRMED",
+      "_effect": "IGNORE_COIN_REWARDS_FROM_ENEMY_BACKS"
+    },
+    {
+      "id": "scenario.ulthar-portal",
+      "name": "Portal de Ulthar",
+      "type": "SCENARIO",
+      "copies": 1,
+      "effects": [
+        { "type": "CUSTOM_SCENARIO", "handler": "ulthar-portal" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "CONFIRMED",
+      "_effect": "COST(1_GLORY or 2_COINS) + RETURN_HOSTE_TO_BOTTOM_OF_HORDE + PLACE_TROPHY_ENEMY_IN_FIELD"
+    },
+    {
+      "id": "scenario.eque-port",
+      "name": "Puerto de Eque",
+      "type": "SCENARIO",
+      "copies": 1,
+      "effects": [
+        { "type": "CUSTOM_SCENARIO", "handler": "eque-port" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "CONFIRMED",
+      "_effect": "OPTIONAL_ON_TURN_START: DISCARD_1_HAND + DRAW_1 + MODIFY_ENEMY_DAMAGE(+1)"
+    },
+    {
+      "id": "scenario.brunmar-ruins",
+      "name": "Ruinas de Brunmar",
+      "type": "SCENARIO",
+      "copies": 1,
+      "effects": [
+        { "type": "MODIFY_FORTITUDE", "modifier": { "kind": "CONSTANT", "value": -1 }, "target": { "kind": "ALL_ENEMIES" }, "duration": "WHILE_SOURCE_ACTIVE" },
+        { "type": "IGNORE_GLORY_REWARDS" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "CONFIRMED",
+      "_effect": "IGNORE_GLORY_FROM_ENEMY_BACKS"
+    },
+    {
+      "id": "scenario.jade-deposits",
+      "name": "Yacimientos de Jade",
+      "type": "SCENARIO",
+      "copies": 1,
+      "effects": [
+        { "type": "CUSTOM_SCENARIO", "handler": "jade-deposits" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "CONFIRMED",
+      "_effect": "OPTIONAL_ON_TURN_START: DISCARD_ALL_HAND + DRAW_4 + GAIN_COINS(3)"
+    },
+    {
+      "id": "scenario.cemenmar-wastes",
+      "name": "Yermo de Cemenmar",
+      "type": "SCENARIO",
+      "copies": 1,
+      "effects": [
+        { "type": "CUSTOM_SCENARIO", "handler": "cemenmar-wastes" }
+      ],
+      "destinationAfterUse": "WEAR_PILE",
+      "verificationStatus": "CONFIRMED",
+      "_effect": "ON_EVASION: STEAL_COINS(up_to_3_total, max_2_per_hero)",
+      "_notValidInSolo": true
+    }
+  ]
+}
