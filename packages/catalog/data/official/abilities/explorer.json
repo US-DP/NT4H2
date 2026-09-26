@@ -7,12 +7,20 @@
       "type": "ABILITY",
       "heroClass": "EXPLORER",
       "copies": 1,
-      "printedAttack": 0,
+      "printedAttack": 2,
       "effects": [
-        { "type": "PREVENT_DAMAGE", "amount": { "kind": "CONSTANT", "value": 2 }, "duration": "HORDE_ATTACK" }
+        {
+          "type": "PREVENT_DAMAGE",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 2
+          },
+          "duration": "HORDE_ATTACK"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Previenes 2 puntos de daño."
     },
     {
       "id": "explorer.precise-shot",
@@ -22,11 +30,20 @@
       "copies": 2,
       "printedAttack": 3,
       "effects": [
-        { "type": "LOSE_CARDS", "amount": { "kind": "CONSTANT", "value": 1 } },
-        { "type": "END_ATTACK" }
+        {
+          "type": "LOSE_CARDS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          }
+        },
+        {
+          "type": "END_ATTACK"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Pierdes 1 carta. Finalizas el ataque."
     },
     {
       "id": "explorer.rapid-shot",
@@ -38,18 +55,25 @@
       "effects": [
         {
           "type": "DRAW_AND_CHECK",
-          "amount": { "kind": "CONSTANT", "value": 1 },
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          },
           "expectedCard": "explorer.rapid-shot",
           "expectedName": "Disparo Rápido",
           "onMatch": [
-            { "type": "PLAY_IMMEDIATELY", "inheritTarget": false }
+            {
+              "type": "PLAY_IMMEDIATELY",
+              "inheritTarget": false
+            }
           ],
           "onMismatch": []
         }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR",
-      "_note": "onMismatch: la carta robada (no coincidente) se mueve al FONDO del mazo de Habilidad. Comportamiento implementado en resolver.ts (resolveRapidShot) por ser dependiente del contexto de la carta robada."
+      "verificationStatus": "CONFIRMED",
+      "_note": "onMismatch: la carta robada (no coincidente) se mueve al FONDO del mazo de Habilidad. Comportamiento implementado en resolver.ts (resolveRapidShot) por ser dependiente del contexto de la carta robada.",
+      "altText": "Roba una carta, si es “Disparo rápido” úsala. Si no, ponla en el fondo de tu mazo de Habilidad."
     },
     {
       "id": "explorer.bullseye",
@@ -59,11 +83,24 @@
       "copies": 1,
       "printedAttack": 4,
       "effects": [
-        { "type": "GAIN_GLORY", "amount": { "kind": "CONSTANT", "value": 1 } },
-        { "type": "LOSE_CARDS", "amount": { "kind": "CONSTANT", "value": 1 } }
+        {
+          "type": "GAIN_GLORY",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          }
+        },
+        {
+          "type": "LOSE_CARDS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Ganas 1 ficha de Gloria. Pierdes 1 carta."
     },
     {
       "id": "explorer.arrow-volley",
@@ -73,12 +110,32 @@
       "copies": 2,
       "printedAttack": 2,
       "effects": [
-        { "type": "DEAL_DAMAGE_SPLIT", "amount": { "kind": "CONSTANT", "value": 2 }, "targetCount": 2, "target": { "kind": "ALL_ENEMIES" } },
-        { "type": "DEAL_DAMAGE_TO_HERO", "amount": { "kind": "CONSTANT", "value": 2 }, "target": { "kind": "HERO_WITH_FEWEST_WOUNDS" } }
+        {
+          "type": "DEAL_DAMAGE_SPLIT",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 2
+          },
+          "targetCount": 2,
+          "target": {
+            "kind": "ALL_ENEMIES"
+          }
+        },
+        {
+          "type": "DEAL_DAMAGE_TO_HERO",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 2
+          },
+          "target": {
+            "kind": "HERO_WITH_FEWEST_WOUNDS"
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR",
-      "_note": "Daño 2 (total) repartido entre 2 enemigos + 2 de daño al héroe con menos heridas"
+      "verificationStatus": "CONFIRMED",
+      "_note": "Daño 2 (total) repartido entre 2 enemigos + 2 de daño al héroe con menos heridas",
+      "altText": "Dañas a 2 enemigos y al héroe con menos Heridas (en caso de empate, tú eliges)."
     },
     {
       "id": "explorer.collect-arrows",
@@ -88,12 +145,27 @@
       "copies": 2,
       "printedAttack": 0,
       "effects": [
-        { "type": "RECOVER_CARD_BY_NAME", "name": "Disparo Rápido", "from": "WEAR_PILE", "to": "BOTTOM_OF_DECK" },
-        { "type": "SHUFFLE_DECK", "deck": "ABILITY" },
-        { "type": "GAIN_COINS", "amount": { "kind": "CONSTANT", "value": 1 } }
+        {
+          "type": "RECOVER_CARD_BY_NAME",
+          "name": "Disparo Rápido",
+          "from": "WEAR_PILE",
+          "to": "BOTTOM_OF_DECK"
+        },
+        {
+          "type": "SHUFFLE_DECK",
+          "deck": "ABILITY"
+        },
+        {
+          "type": "GAIN_COINS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Recupera una carta de “Disparo rápido” de tu pila de Desgaste. Baraja el Mazo de Habilidades. Ganas 1 Moneda."
     },
     {
       "id": "explorer.survival",
@@ -103,10 +175,17 @@
       "copies": 1,
       "printedAttack": 0,
       "effects": [
-        { "type": "SWAP_ENEMY", "target": { "kind": "SELECTED_ENEMY" }, "newFrom": "BOTTOM_OF_HORDE" }
+        {
+          "type": "SWAP_ENEMY",
+          "target": {
+            "kind": "SELECTED_ENEMY"
+          },
+          "newFrom": "BOTTOM_OF_HORDE"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Cambia uno de los enemigos en el campo de batalla por la carta inferior del mazo de la Horda."
     }
   ]
 }

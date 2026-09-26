@@ -1,32 +1,410 @@
 {
-  "setId": "official.horde",
-  "cards": [
-    { "id": "horde.001", "name": "Hueste 1", "type": "HORDE", "copies": 1, "printedFortitude": 2, "isOrc": true, "reward": { "coins": 1, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.002", "name": "Hueste 2", "type": "HORDE", "copies": 1, "printedFortitude": 2, "isOrc": true, "reward": { "coins": 1, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.003", "name": "Hueste 3", "type": "HORDE", "copies": 1, "printedFortitude": 2, "isOrc": true, "reward": { "coins": 0, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.004", "name": "Hueste 4", "type": "HORDE", "copies": 1, "printedFortitude": 2, "isOrc": true, "reward": { "coins": 0, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.005", "name": "Hueste 5", "type": "HORDE", "copies": 1, "printedFortitude": 2, "isOrc": true, "reward": { "coins": 0, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.006", "name": "Hueste 6", "type": "HORDE", "copies": 1, "printedFortitude": 3, "isOrc": true, "reward": { "coins": 1, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.007", "name": "Hueste 7", "type": "HORDE", "copies": 1, "printedFortitude": 2, "isOrc": true, "reward": { "coins": 1, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.008", "name": "Hueste 8", "type": "HORDE", "copies": 1, "printedFortitude": 2, "isOrc": true, "reward": { "coins": 0, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.009", "name": "Hueste 9", "type": "HORDE", "copies": 1, "printedFortitude": 2, "isOrc": true, "reward": { "coins": 0, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.010", "name": "Hueste 10", "type": "HORDE", "copies": 1, "printedFortitude": 3, "isOrc": true, "reward": { "coins": 0, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.011", "name": "Hueste 11", "type": "HORDE", "copies": 1, "printedFortitude": 3, "isOrc": true, "reward": { "coins": 2, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.012", "name": "Hueste 12", "type": "HORDE", "copies": 1, "printedFortitude": 3, "isOrc": true, "reward": { "coins": 1, "glory": 1 }, "verificationStatus": "COLOR" },
-    { "id": "horde.013", "name": "Hueste 13", "type": "HORDE", "copies": 1, "printedFortitude": 4, "isOrc": true, "reward": { "coins": 1, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.014", "name": "Hueste 14", "type": "HORDE", "copies": 1, "printedFortitude": 4, "isOrc": true, "reward": { "coins": 0, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.015", "name": "Hueste 15", "type": "HORDE", "copies": 1, "printedFortitude": 4, "isOrc": true, "reward": { "coins": 0, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.016", "name": "Hueste 16", "type": "HORDE", "copies": 1, "printedFortitude": 4, "isOrc": true, "reward": { "coins": 1, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.017", "name": "Hueste 17", "type": "HORDE", "copies": 1, "printedFortitude": 4, "isOrc": true, "reward": { "coins": 1, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.018", "name": "Hueste 18", "type": "HORDE", "copies": 1, "printedFortitude": 4, "isOrc": true, "reward": { "coins": 2, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.019", "name": "Hueste 19", "type": "HORDE", "copies": 1, "printedFortitude": 4, "isOrc": true, "reward": { "coins": 2, "glory": 1 }, "verificationStatus": "COLOR" },
-    { "id": "horde.020", "name": "Hueste 20", "type": "HORDE", "copies": 1, "printedFortitude": 4, "isOrc": true, "reward": { "coins": 2, "glory": 1 }, "verificationStatus": "COLOR" },
-    { "id": "horde.021", "name": "Hueste 21", "type": "HORDE", "copies": 1, "printedFortitude": 5, "isOrc": true, "reward": { "coins": 0, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.022", "name": "Hueste 22", "type": "HORDE", "copies": 1, "printedFortitude": 5, "isOrc": true, "reward": { "coins": 2, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.023", "name": "Hueste 23", "type": "HORDE", "copies": 1, "printedFortitude": 5, "isOrc": true, "reward": { "coins": 2, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.024", "name": "Hueste 24", "type": "HORDE", "copies": 1, "printedFortitude": 5, "isOrc": true, "reward": { "coins": 2, "glory": 1 }, "verificationStatus": "COLOR" },
-    { "id": "horde.025", "name": "Hueste 25", "type": "HORDE", "copies": 1, "printedFortitude": 4, "isOrc": true, "reward": { "coins": 1, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.026", "name": "Hueste 26", "type": "HORDE", "copies": 1, "printedFortitude": 6, "isOrc": true, "reward": { "coins": 1, "glory": 0 }, "verificationStatus": "COLOR" },
-    { "id": "horde.027", "name": "Hueste 27", "type": "HORDE", "copies": 1, "printedFortitude": 6, "isOrc": true, "reward": { "coins": 0, "glory": 0 }, "verificationStatus": "COLOR" }
-  ]
+ "setId": "official.horde",
+ "cards": [
+  {
+   "id": "horde.001",
+   "name": "Hueste 1",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 2,
+   "isOrc": true,
+   "reward": {
+    "coins": 1,
+    "glory": 1
+   },
+   "verificationStatus": "CONFIRMED"
+  },
+  {
+   "id": "horde.002",
+   "name": "Hueste 2",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 2,
+   "isOrc": true,
+   "reward": {
+    "coins": 1,
+    "glory": 1
+   },
+   "verificationStatus": "CONFIRMED"
+  },
+  {
+   "id": "horde.003",
+   "name": "Hueste 3",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 2,
+   "isOrc": true,
+   "reward": {
+    "coins": 0,
+    "glory": 1
+   },
+   "verificationStatus": "CONFIRMED"
+  },
+  {
+   "id": "horde.004",
+   "name": "Hueste 4",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 2,
+   "isOrc": true,
+   "reward": {
+    "coins": 0,
+    "glory": 1
+   },
+   "verificationStatus": "CONFIRMED"
+  },
+  {
+   "id": "horde.005",
+   "name": "Hueste 5",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 2,
+   "isOrc": true,
+   "reward": {
+    "coins": 0,
+    "glory": 1
+   },
+   "verificationStatus": "CONFIRMED"
+  },
+  {
+   "id": "horde.006",
+   "name": "Hueste 6",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 3,
+   "isOrc": true,
+   "reward": {
+    "coins": 1,
+    "glory": 2
+   },
+   "verificationStatus": "CONFIRMED",
+   "specialIcons": [
+    "TEMPORARY_WOUNDS"
+   ]
+  },
+  {
+   "id": "horde.007",
+   "name": "Hueste 7",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 3,
+   "isOrc": true,
+   "reward": {
+    "coins": 1,
+    "glory": 2
+   },
+   "verificationStatus": "CONFIRMED",
+   "specialIcons": [
+    "TEMPORARY_WOUNDS"
+   ]
+  },
+  {
+   "id": "horde.008",
+   "name": "Hueste 8",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 3,
+   "isOrc": true,
+   "reward": {
+    "coins": 0,
+    "glory": 2
+   },
+   "verificationStatus": "CONFIRMED",
+   "specialIcons": [
+    "TEMPORARY_WOUNDS"
+   ]
+  },
+  {
+   "id": "horde.009",
+   "name": "Hueste 9",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 3,
+   "isOrc": true,
+   "reward": {
+    "coins": 0,
+    "glory": 2
+   },
+   "verificationStatus": "CONFIRMED",
+   "specialIcons": [
+    "TEMPORARY_WOUNDS"
+   ]
+  },
+  {
+   "id": "horde.010",
+   "name": "Hueste 10",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 3,
+   "isOrc": true,
+   "reward": {
+    "coins": 0,
+    "glory": 2
+   },
+   "verificationStatus": "CONFIRMED",
+   "specialIcons": [
+    "TEMPORARY_WOUNDS"
+   ]
+  },
+  {
+   "id": "horde.011",
+   "name": "Hueste 11",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 3,
+   "isOrc": true,
+   "reward": {
+    "coins": 2,
+    "glory": 1
+   },
+   "verificationStatus": "CONFIRMED",
+   "specialIcons": [
+    "ANTI_MAGIC"
+   ],
+   "antiMagicValue": 1
+  },
+  {
+   "id": "horde.012",
+   "name": "Hueste 12",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 3,
+   "isOrc": true,
+   "reward": {
+    "coins": 1,
+    "glory": 1
+   },
+   "verificationStatus": "CONFIRMED",
+   "specialIcons": [
+    "ANTI_MAGIC"
+   ],
+   "antiMagicValue": 1
+  },
+  {
+   "id": "horde.013",
+   "name": "Hueste 13",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 4,
+   "isOrc": true,
+   "reward": {
+    "coins": 1,
+    "glory": 2
+   },
+   "verificationStatus": "CONFIRMED"
+  },
+  {
+   "id": "horde.014",
+   "name": "Hueste 14",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 4,
+   "isOrc": true,
+   "reward": {
+    "coins": 0,
+    "glory": 2
+   },
+   "verificationStatus": "CONFIRMED"
+  },
+  {
+   "id": "horde.015",
+   "name": "Hueste 15",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 4,
+   "isOrc": true,
+   "reward": {
+    "coins": 0,
+    "glory": 2
+   },
+   "verificationStatus": "CONFIRMED"
+  },
+  {
+   "id": "horde.016",
+   "name": "Hueste 16",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 4,
+   "isOrc": true,
+   "reward": {
+    "coins": 1,
+    "glory": 2
+   },
+   "verificationStatus": "CONFIRMED",
+   "specialIcons": [
+    "IMPROVED_LOOT"
+   ]
+  },
+  {
+   "id": "horde.017",
+   "name": "Hueste 17",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 4,
+   "isOrc": true,
+   "reward": {
+    "coins": 1,
+    "glory": 2
+   },
+   "verificationStatus": "CONFIRMED",
+   "specialIcons": [
+    "IMPROVED_LOOT"
+   ]
+  },
+  {
+   "id": "horde.018",
+   "name": "Hueste 18",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 4,
+   "isOrc": true,
+   "reward": {
+    "coins": 2,
+    "glory": 2
+   },
+   "verificationStatus": "CONFIRMED",
+   "specialIcons": [
+    "IMPROVED_LOOT"
+   ]
+  },
+  {
+   "id": "horde.019",
+   "name": "Hueste 19",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 4,
+   "isOrc": true,
+   "reward": {
+    "coins": 2,
+    "glory": 2
+   },
+   "verificationStatus": "CONFIRMED",
+   "specialIcons": [
+    "IMPROVED_LOOT"
+   ]
+  },
+  {
+   "id": "horde.020",
+   "name": "Hueste 20",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 4,
+   "isOrc": true,
+   "reward": {
+    "coins": 2,
+    "glory": 2
+   },
+   "verificationStatus": "CONFIRMED",
+   "specialIcons": [
+    "IMPROVED_LOOT"
+   ]
+  },
+  {
+   "id": "horde.021",
+   "name": "Hueste 21",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 5,
+   "isOrc": true,
+   "reward": {
+    "coins": 0,
+    "glory": 3
+   },
+   "verificationStatus": "CONFIRMED",
+   "specialIcons": [
+    "ANTI_MAGIC"
+   ],
+   "antiMagicValue": 2
+  },
+  {
+   "id": "horde.022",
+   "name": "Hueste 22",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 5,
+   "isOrc": true,
+   "reward": {
+    "coins": 2,
+    "glory": 3
+   },
+   "verificationStatus": "CONFIRMED",
+   "specialIcons": [
+    "ANTI_MAGIC"
+   ],
+   "antiMagicValue": 2
+  },
+  {
+   "id": "horde.023",
+   "name": "Hueste 23",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 5,
+   "isOrc": true,
+   "reward": {
+    "coins": 2,
+    "glory": 3
+   },
+   "verificationStatus": "CONFIRMED",
+   "specialIcons": [
+    "ANTI_MAGIC"
+   ],
+   "antiMagicValue": 2
+  },
+  {
+   "id": "horde.024",
+   "name": "Hueste 24",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 5,
+   "isOrc": true,
+   "reward": {
+    "coins": 2,
+    "glory": 3
+   },
+   "verificationStatus": "CONFIRMED",
+   "specialIcons": [
+    "ANTI_MAGIC"
+   ],
+   "antiMagicValue": 2
+  },
+  {
+   "id": "horde.025",
+   "name": "Hueste 25",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 6,
+   "isOrc": true,
+   "reward": {
+    "coins": 1,
+    "glory": 4
+   },
+   "verificationStatus": "CONFIRMED"
+  },
+  {
+   "id": "horde.026",
+   "name": "Hueste 26",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 6,
+   "isOrc": true,
+   "reward": {
+    "coins": 1,
+    "glory": 4
+   },
+   "verificationStatus": "CONFIRMED"
+  },
+  {
+   "id": "horde.027",
+   "name": "Hueste 27",
+   "type": "HORDE",
+   "copies": 1,
+   "printedFortitude": 6,
+   "isOrc": true,
+   "reward": {
+    "coins": 0,
+    "glory": 4
+   },
+   "verificationStatus": "CONFIRMED"
+  }
+ ]
 }

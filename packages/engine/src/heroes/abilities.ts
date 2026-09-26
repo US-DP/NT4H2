@@ -282,6 +282,7 @@ function valerysAbility(
       options: confronted && confronted !== playerId ? [confronted] : [],
       minSelections: 1,
       maxSelections: 1,
+      fromReactionWindow: true,
     };
     return {
       events,
@@ -342,6 +343,7 @@ function lisavetteAbility(
       options: confronted && confronted !== playerId ? [confronted] : [],
       minSelections: 1,
       maxSelections: 1,
+      fromReactionWindow: true,
     };
     return {
       events,
@@ -363,6 +365,7 @@ function lisavetteAbility(
       options: enemies,
       minSelections: 1,
       maxSelections: 1,
+      fromReactionWindow: true,
       resolutionContext: {
         activePlayerId: playerId,
         currentCardId: '',
@@ -405,6 +408,7 @@ function lisavetteAbility(
   events.push({
     type: 'CARD_MOVED',
     cardInstanceId: shieldCard.instanceId,
+    playerId,
     from: 'HAND',
     to: 'WEAR_PILE',
     seq: nextSeq(),

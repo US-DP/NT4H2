@@ -338,10 +338,19 @@ export function swapStartingCards(
   for (const cardId of cardInstanceIds) {
     const cardIdx = newHand.findIndex(c => c.instanceId === cardId);
     if (cardIdx === -1) continue;
-    // Mover carta al fondo del mazo
+    // Mover carta al fondo del mazo — con evento para que el fold del
+    // eventLog reproduzca la misma mano/mazo (event sourcing fiel).
     const card = newHand[cardIdx];
     newHand.splice(cardIdx, 1);
     newDeck.push({ ...card, zone: 'ABILITY_DECK' as Zone });
+    events.push({
+      type: 'CARD_MOVED',
+      cardInstanceId: card.instanceId,
+      from: 'HAND',
+      to: 'ABILITY_DECK',
+      playerId,
+      seq: nextSeq(),
+    } as GameEvent);
     // Robar nueva carta del top del mazo
     if (newDeck.length > 0) {
       const newCard = newDeck[0];

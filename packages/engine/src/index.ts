@@ -49,8 +49,14 @@ export { setupSoloMode, buySupportCard, openSupportDeck, calculateSoloScore, get
 export { setupMulticlassMode, validateMulticlassDeck, isMulticlassGameEnded } from './modes/multiclass.js';
 export { projectForPlayer, projectEventsForPlayer } from './projection/index.js';
 export type { PlayerGameState } from './projection/index.js';
-export { createSnapshot, replay, replayFromSnapshot, stateHash, createReplay, ENGINE_VERSION, SNAPSHOT_VERSION } from './replay/index.js';
+export { createSnapshot, replay, replayFromSnapshot, stateHash, createReplay, ENGINE_VERSION, RULESET_VERSION, SNAPSHOT_VERSION } from './replay/index.js';
 export type { GameSnapshot, ReplayEnvelope, CommandResult as ReplayCommandResult } from './replay/index.js';
-export { applyModifiers, effectiveFortitude, effectiveDamage, effectiveHordeDamage, effectiveEnemyDamage, expireModifiers, MODIFIER_LAYERS } from './modifiers/index.js';
+export { applyModifiers, effectiveFortitude, getEffectiveFortitude, effectiveDamage, effectiveHordeDamage, effectiveEnemyDamage, expireModifiers, MODIFIER_LAYERS } from './modifiers/index.js';
 export type { ModifierLayer } from './modifiers/index.js';
 export { nextSeq, resetSeq } from './seq.js';
+export { computeFinalScore } from './scoring.js';
+export type { FinalScore, PlayerScore } from './scoring.js';
+export { evaluateCommand } from './evaluation.js';
+export type { CommandEvaluation, CommandReasonCode, CommandCostPreview } from './evaluation.js';
+export { computeHordeAttackBreakdown } from './analysis/hordeBreakdown.js';
+export type { HordeAttackBreakdown, HordeAttackEnemyLine } from './analysis/hordeBreakdown.js';

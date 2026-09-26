@@ -11,9 +11,20 @@
       "effects": [],
       "destinationAfterUse": "WEAR_PILE",
       "verificationStatus": "CONFIRMED",
-      "_peritia": "Cada carta que dañe a este Jefe provocará la pérdida de una carta adicional.",
-      "_peritiaTrigger": "DAMAGE_DEALT",
-      "_peritiaEffect": { "type": "LOSE_CARDS", "amount": { "kind": "CONSTANT", "value": 1 } }
+      "peritia": {
+        "trigger": "DAMAGE_DEALT",
+        "effects": [
+          {
+            "type": "LOSE_CARDS",
+            "amount": {
+              "kind": "CONSTANT",
+              "value": 1
+            }
+          }
+        ],
+        "text": "Cada carta que dañe a este Jefe provocará la pérdida de una carta adicional."
+      },
+      "altText": "Cada carta que dañe a este Jefe provocará la pérdida de una carta adicional."
     },
     {
       "id": "warlord.roghkiller",
@@ -25,9 +36,27 @@
       "effects": [],
       "destinationAfterUse": "WEAR_PILE",
       "verificationStatus": "CONFIRMED",
-      "_peritia": "Añade 1 punto de Fortaleza a cada orco que haya en el campo de batalla.",
-      "_peritiaTrigger": "CONTINUOUS",
-      "_peritiaEffect": { "type": "MODIFY_FORTITUDE", "modifier": { "kind": "CONSTANT", "value": 1 }, "target": { "kind": "ALL_ENEMIES", "filter": { "isOrc": true } }, "duration": "WHILE_SOURCE_ACTIVE" }
+      "peritia": {
+        "trigger": "CONTINUOUS",
+        "effects": [
+          {
+            "type": "MODIFY_FORTITUDE",
+            "modifier": {
+              "kind": "CONSTANT",
+              "value": 1
+            },
+            "target": {
+              "kind": "ALL_ENEMIES",
+              "filter": {
+                "isOrc": true
+              }
+            },
+            "duration": "WHILE_SOURCE_ACTIVE"
+          }
+        ],
+        "text": "Añade 1 punto de Fortaleza a cada orco que haya en el campo de batalla."
+      },
+      "altText": "Añade 1 punto de Fortaleza a cada orco que haya en el campo de batalla."
     },
     {
       "id": "warlord.shriekknifer",
@@ -39,10 +68,23 @@
       "effects": [],
       "destinationAfterUse": "WEAR_PILE",
       "verificationStatus": "CONFIRMED",
-      "_peritia": "Cada ataque con cartas de 1 punto de daño permitirá al héroe recuperar una carta.",
-      "_peritiaTrigger": "CARD_PLAYED",
-      "_peritiaCondition": "printedAttack == 1",
-      "_peritiaEffect": { "type": "RECOVER_CARDS", "amount": { "kind": "CONSTANT", "value": 1 }, "from": "WEAR_PILE", "to": "BOTTOM_OF_DECK" }
+      "peritia": {
+        "trigger": "CARD_PLAYED",
+        "effects": [
+          {
+            "type": "RECOVER_CARDS",
+            "amount": {
+              "kind": "CONSTANT",
+              "value": 1
+            },
+            "from": "WEAR_PILE",
+            "to": "BOTTOM_OF_DECK"
+          }
+        ],
+        "text": "Cada ataque con cartas de 1 punto de daño permitirá al héroe recuperar una carta.",
+        "condition": "printedAttack == 1"
+      },
+      "altText": "Cada ataque con cartas de 1 punto de daño permitirá al héroe recuperar una carta."
     }
   ]
 }

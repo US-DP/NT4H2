@@ -242,8 +242,15 @@ describe('processPhases — fases automaticas', () => {
     // D427: resolver la puja de Líder para tener jugador activo
     let state = startFirstTurn(setup.state, rng, catalog).state;
 
-    // Simular que el jugador termina su ataque
-    state = { ...state, phase: 'HORDE_ATTACK' as const };
+    // Simular que el jugador termina su ataque; declinar la Pericia de
+    // Feldon para que el test no dependa de quién es Líder
+    state = {
+      ...state,
+      phase: 'HORDE_ATTACK' as const,
+      players: Object.fromEntries(
+        Object.entries(state.players).map(([id, p]) => [id, { ...p, feldonDecision: 'DECLINE' as const }])
+      ),
+    };
 
     const result = processPhases(state, rng, catalog);
     expect(result.state.phase).toBe('MARKET');
@@ -257,8 +264,15 @@ describe('processPhases — fases automaticas', () => {
     // D427: resolver la puja de Líder para tener jugador activo
     let state = startFirstTurn(setup.state, rng, catalog).state;
 
-    // Simular que estamos en HORDE_ATTACK
-    state = { ...state, phase: 'HORDE_ATTACK' as const };
+    // Simular que estamos en HORDE_ATTACK; declinar la Pericia de Feldon
+    // para que el test no dependa de quién es Líder
+    state = {
+      ...state,
+      phase: 'HORDE_ATTACK' as const,
+      players: Object.fromEntries(
+        Object.entries(state.players).map(([id, p]) => [id, { ...p, feldonDecision: 'DECLINE' as const }])
+      ),
+    };
 
     const result = processPhases(state, rng, catalog);
     // Se detiene en MARKET porque requiere accion del jugador
@@ -291,7 +305,14 @@ describe('processPhases — fases automaticas', () => {
     const player = resolved.players[resolved.activePlayerId];
     void player.abilityDeck.length;
 
-    const state: GameState = { ...resolved, phase: 'HORDE_ATTACK' as const };
+    // Declinar la Pericia de Feldon para no depender de quién es Líder
+    const state: GameState = {
+      ...resolved,
+      phase: 'HORDE_ATTACK' as const,
+      players: Object.fromEntries(
+        Object.entries(resolved.players).map(([id, p]) => [id, { ...p, feldonDecision: 'DECLINE' as const }])
+      ),
+    };
     const result = processPhases(state, rng, catalog);
 
     // Debe haber un evento CARDS_LOST

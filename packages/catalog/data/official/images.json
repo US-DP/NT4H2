@@ -149,6 +149,11 @@
     "thumbnail": "assets/cards/abilities/rogue.pickpocket-front.png",
     "status": "READY_FOR_GAME"
   },
+  "rogue.plunder-a": {
+    "front": "assets/cards/abilities/rogue.plunder-a-front.png",
+    "thumbnail": "assets/cards/abilities/rogue.plunder-a-front.png",
+    "status": "READY_FOR_GAME"
+  },
   "rogue.plunder-b": {
     "front": "assets/cards/abilities/rogue.plunder-b-front.png",
     "thumbnail": "assets/cards/abilities/rogue.plunder-b-front.png",
@@ -424,6 +429,61 @@
   "scenario.brunmar-ruins": {
     "front": "assets/cards/scenarios/scenario.brunmar-ruins-front.png",
     "thumbnail": "assets/cards/scenarios/scenario.brunmar-ruins-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "scenario.kalern-mud": {
+    "front": "assets/cards/scenarios/scenario.kalern-mud-front.png",
+    "thumbnail": "assets/cards/scenarios/scenario.kalern-mud-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "scenario.lotharion-market": {
+    "front": "assets/cards/scenarios/scenario.lotharion-market-front.png",
+    "thumbnail": "assets/cards/scenarios/scenario.lotharion-market-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "scenario.skaarg-plains": {
+    "front": "assets/cards/scenarios/scenario.skaarg-plains-front.png",
+    "thumbnail": "assets/cards/scenarios/scenario.skaarg-plains-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "scenario.ulthar-portal": {
+    "front": "assets/cards/scenarios/scenario.ulthar-portal-front.png",
+    "thumbnail": "assets/cards/scenarios/scenario.ulthar-portal-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "scenario.jade-deposits": {
+    "front": "assets/cards/scenarios/scenario.jade-deposits-front.png",
+    "thumbnail": "assets/cards/scenarios/scenario.jade-deposits-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "scenario.cemenmar-wastes": {
+    "front": "assets/cards/scenarios/scenario.cemenmar-wastes-front.png",
+    "thumbnail": "assets/cards/scenarios/scenario.cemenmar-wastes-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "hero.valerys": {
+    "front": "assets/cards/heroes/hero.valerys-front.png",
+    "thumbnail": "assets/cards/heroes/hero.valerys-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "hero.taheral": {
+    "front": "assets/cards/heroes/hero.taheral-front.png",
+    "thumbnail": "assets/cards/heroes/hero.taheral-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "hero.idril": {
+    "front": "assets/cards/heroes/hero.idril-front.png",
+    "thumbnail": "assets/cards/heroes/hero.idril-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "hero.feldon": {
+    "front": "assets/cards/heroes/hero.feldon-front.png",
+    "thumbnail": "assets/cards/heroes/hero.feldon-front.png",
+    "status": "READY_FOR_GAME"
+  },
+  "hero.lisavette": {
+    "front": "assets/cards/heroes/hero.lisavette-front.png",
+    "thumbnail": "assets/cards/heroes/hero.lisavette-front.png",
     "status": "READY_FOR_GAME"
   }
 }

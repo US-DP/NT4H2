@@ -9,6 +9,7 @@ import { resolveCard } from '../src/effects/resolver.js';
 import { EffectRegistry, registerCoreEffects } from '../src/effects/registry.js';
 import { loadCatalog } from '@nt4h/catalog';
 import { makeCard, makeEnemy } from './fixtures/builders.js';
+import { computeHordeAttackBreakdown } from '../src/analysis/hordeBreakdown.js';
 import type { GameState, Zone } from '@nt4h/schema';
 
 describe('HeroAbilities â€” Pericias de heroes', () => {
@@ -65,7 +66,7 @@ describe('HeroAbilities â€” Pericias de heroes', () => {
 
   it('usa la Pericia de Valerys (interceptar dano)', () => {
     const state = makeState('hero.valerys');
-    // D434: ValÃ¨rys solo intercepta el daÃ±o del hÃ©roe que se enfrenta a la
+    // D434: Val¨rys solo intercepta el da±o del h©roe que se enfrenta a la
     // Horda â€” el jugador activo debe ser el objetivo 'p2'
     state.activePlayerId = 'p2';
     const result = useHeroAbility(state, 'p1', rng, catalog, 'p2');
@@ -174,7 +175,7 @@ describe('HeroAbilities â€” Pericias de heroes', () => {
     );
     expect(res.events.some(e => e.type === 'HERO_ABILITY_USED')).toBe(true);
     const after = processPhases(res.newState, rng, catalog);
-    // 4 de daÃ±o â†’ mitad = 2 cartas perdidas
+    // 4 de da±o â†’ mitad = 2 cartas perdidas
     const lost = after.events.find(e => e.type === 'CARDS_LOST');
     expect(lost && lost.type === 'CARDS_LOST' ? lost.cardInstanceIds.length : 0).toBe(2);
   });
@@ -322,7 +323,7 @@ describe('Scenarios â€” efectos de escenario', () => {
     }
   });
 
-  it('Pantano UmbrÃ­o da 1 moneda extra si fortaleza >= 3', () => {
+  it('Pantano Umbr­o da 1 moneda extra si fortaleza >= 3', () => {
     const state = makeState();
     const events = onEnemyDefeated(state, 'scenario.umbrous-swamp', 'p1', 3);
     expect(events).toHaveLength(1);
@@ -331,13 +332,13 @@ describe('Scenarios â€” efectos de escenario', () => {
     }
   });
 
-  it('Pantano UmbrÃ­o no da moneda extra si fortaleza < 3', () => {
+  it('Pantano Umbr­o no da moneda extra si fortaleza < 3', () => {
     const state = makeState();
     const events = onEnemyDefeated(state, 'scenario.umbrous-swamp', 'p1', 2);
     expect(events).toEqual([]);
   });
 
-  it('MontaÃ±as de Ur tiene efecto opcional de inicio de turno', () => {
+  it('Monta±as de Ur tiene efecto opcional de inicio de turno', () => {
     const state = makeState();
     const effect = onTurnStart(state, 'scenario.ur-mountains');
     expect(effect).not.toBeNull();
@@ -381,5 +382,82 @@ describe('Scenarios â€” efectos de escenario', () => {
     const state = makeState();
     const result = executeTurnStartEffect(state, 'scenario.jade-deposits', 'p1', false);
     expect(result.events).toEqual([]);
+  });
+});
+
+
+describe('computeHordeAttackBreakdown — paridad con el motor (UI-160..164)', () => {
+  let catalog: ReturnType<typeof loadCatalog>;
+  let rng: DeterministicRng;
+
+  beforeEach(() => {
+    resetInstanceCounter();
+    resetPhaseSeq();
+    catalog = loadCatalog();
+    rng = new DeterministicRng('test-breakdown-001');
+  });
+
+  function baseState(): GameState {
+    const s = setupGame({
+      mode: 'STANDARD', playerCount: 2, seed: 'test-breakdown-001',
+      heroes: [
+        { playerId: 'p1', heroId: 'hero.aranel', heroFace: 'FEMALE' as const, deckId: 'explorer.default' },
+        { playerId: 'p2', heroId: 'hero.feldon', heroFace: 'MALE' as const, deckId: 'warrior.default' },
+      ],
+      useScenarios: false,
+    }, catalog).state;
+    s.phase = 'HORDE_ATTACK';
+    s.activePlayerId = 'p1';
+    return s;
+  }
+
+  it('finalExhaustion coincide con el daño real aplicado', () => {
+    const state = baseState();
+    state.battlefield = [
+      makeEnemy({ baseFortitude: 4 }),
+      makeEnemy({ baseFortitude: 3, wounds: 1 }),
+    ];
+    const breakdown = computeHordeAttackBreakdown(state, catalog);
+    const after = processPhases(state, rng, catalog);
+    const attacked = after.events.find(e => e.type === 'HORDE_ATTACKED');
+    expect(attacked && attacked.type === 'HORDE_ATTACKED' ? attacked.totalDamage : -1)
+      .toBe(breakdown.finalExhaustion);
+    expect(breakdown.enemyLines.length).toBe(2);
+    expect(breakdown.enemyLines[0].baseDamage).toBe(4);
+    expect(breakdown.enemyLines[1].baseDamage).toBe(2); // 3 fort - 1 herida
+  });
+
+  it('escudos y prevención reducen el desgaste final', () => {
+    const state = baseState();
+    state.battlefield = [makeEnemy({ baseFortitude: 5 })];
+    state.players.p1 = { ...state.players.p1, shields: 2, prevention: 1 };
+    const breakdown = computeHordeAttackBreakdown(state, catalog);
+    expect(breakdown.shieldsApplied).toBe(2);
+    expect(breakdown.preventionApplied).toBe(1);
+    expect(breakdown.finalExhaustion).toBe(2);
+    const after = processPhases(state, rng, catalog);
+    const attacked = after.events.find(e => e.type === 'HORDE_ATTACKED');
+    expect(attacked && attacked.type === 'HORDE_ATTACKED' ? attacked.totalDamage : -1).toBe(2);
+  });
+
+  it('damageCancellation anula el asalto completo', () => {
+    const state = baseState();
+    state.battlefield = [makeEnemy({ baseFortitude: 5 })];
+    state.players.p1 = { ...state.players.p1, damageCancellation: true };
+    const breakdown = computeHordeAttackBreakdown(state, catalog);
+    expect(breakdown.cancelled).toBe(true);
+    expect(breakdown.finalExhaustion).toBe(0);
+  });
+
+  it('enemigos con daño desactivado no aportan', () => {
+    const state = baseState();
+    state.battlefield = [
+      makeEnemy({ baseFortitude: 4, damageDisabled: true }),
+      makeEnemy({ baseFortitude: 3 }),
+    ];
+    const breakdown = computeHordeAttackBreakdown(state, catalog);
+    expect(breakdown.enemyLines[0].damageDisabled).toBe(true);
+    expect(breakdown.enemyLines[0].finalDamage).toBe(0);
+    expect(breakdown.finalExhaustion).toBe(3);
   });
 });

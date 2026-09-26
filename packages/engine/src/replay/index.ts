@@ -26,6 +26,11 @@ export const SNAPSHOT_VERSION = 1;
 
 /** Versión actual del motor */
 export const ENGINE_VERSION = '0.1.0';
+/**
+ * Version del reglamento digital: independiente del motor y del catalogo —
+ * el reglamento puede corregirse o re-redactarse sin tocar codigo.
+ */
+export const RULESET_VERSION = '1.0.0';
 
 export interface GameSnapshot {
   version: number;
@@ -100,7 +105,9 @@ export function replay(envelope: ReplayEnvelope, catalog?: CatalogLoadResult): G
   registerCoreEffects(registry);
 
   for (const cmd of envelope.commands) {
-    const result = execute(state, cmd, rng, registry, catalog);
+    // actorId preserva al actor real (pericias reactivas de jugadores no
+    // activos, pujas de líder) — sin él el replay divergiría del online.
+    const result = execute(state, cmd, rng, registry, catalog, cmd.actorId);
     if (!result.accepted) {
       // En replay, los comandos rechazados se ignoran
       continue;
@@ -214,6 +221,9 @@ export function createReplay(
       state: initialState,
       eventCount: 0,
       takenAt: initialState.monotonicCounter,
+      // Capturar el seq global para que el replay emita los mismos seq
+      // (bit-idéntico, §51.12)
+      seq: currentSeq(),
     },
     commands,
   };

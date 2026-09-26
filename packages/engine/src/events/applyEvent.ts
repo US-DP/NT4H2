@@ -16,7 +16,13 @@ import type {
   ModifierLayer,
   Zone,
 } from '@nt4h/schema';
-import { applyEntryAuras, getEffectiveFortitude } from '../modifiers/index.js';
+import {
+  applyEntryAuras,
+  getEffectiveFortitude,
+  cleanupHordeAttackEnd,
+  cleanupRestoration,
+  cleanupTurnEnd,
+} from '../modifiers/index.js';
 
 export function applyEvent(state: GameState, event: GameEvent): GameState {
   const newState = applyEventInternal(state, event);
@@ -55,6 +61,8 @@ function applyEventInternal(state: GameState, event: GameEvent): GameState {
           prevention: 0,
           damageCancellation: false,
           shields: 0,
+          armor: 0,
+          blockNext: 0,
           interceptedBy: null,
           // Reset contadores de Apoyo (modo solitario)
           supportCardsDrawnThisTurn: 0,
@@ -64,6 +72,11 @@ function applyEventInternal(state: GameState, event: GameEvent): GameState {
           // o eliminadas al final del turno anterior
           borrowedSupportCardIds: [],
         })),
+        // Taller: los oyentes de un turno expiran al empezar el siguiente
+        listeners: (state.listeners ?? []).filter(l => l.duration !== 'THIS_TURN'),
+        // La cuenta de descartes por evasión solo vale dentro de la
+        // resolución de la ficha — fuera de ella leería basura.
+        evasionDiscardedCount: 0,
       };
 
     case 'TURN_ENDED':
@@ -381,13 +394,35 @@ function applyEventInternal(state: GameState, event: GameEvent): GameState {
     }
 
     // === Ataque de la Horda ===
-    case 'HORDE_ATTACKED':
-      // El dano ya fue procesado como CARDS_LOST por el motor
-      return state;
+    case 'HORDE_ATTACKED': {
+      // El dano ya fue procesado como CARDS_LOST por el motor.
+      // La intercepción de Valèrys queda consumida al resolver el ataque
+      // (processHordeAttack la limpia en el camino directo — idempotente).
+      const target = state.players[state.activePlayerId];
+      if (!target || target.interceptedBy == null) return state;
+      return mapPlayerState(state, state.activePlayerId, p => ({
+        ...p,
+        interceptedBy: null,
+      }));
+    }
 
     // === Revelacion de enemigos ===
-    case 'ENEMY_REVEALED':
-      return state; // El enemigo ya esta en battlefield
+    case 'ENEMY_REVEALED': {
+      // El enemigo entra al campo y sale del mazo de la Horda. El evento
+      // transporta el EnemyState completo (recompensa, auras de entrada…) para
+      // que el fold del eventLog sea bit-idéntico (sin catalogo ni seq).
+      // Idempotente: el camino directo ya lo insertó antes de emitir.
+      const hordeDeck = state.hordeDeck.filter(c => c.instanceId !== event.enemyInstanceId);
+      const alreadyInField = state.battlefield.some(e => e.instanceId === event.enemyInstanceId);
+      if (alreadyInField || !event.enemy) {
+        return hordeDeck.length === state.hordeDeck.length ? state : { ...state, hordeDeck };
+      }
+      return {
+        ...state,
+        battlefield: [...state.battlefield, { ...event.enemy }],
+        hordeDeck,
+      };
+    }
 
     case 'WARLORD_REVEALED':
       return { ...state, warlordRevealed: true };
@@ -426,6 +461,8 @@ function applyEventInternal(state: GameState, event: GameEvent): GameState {
     // === Escenarios ===
     case 'SCENARIO_REVEALED':
       // Setear el escenario revelado (puede haber sido borrado por SCENARIO_DISCARDED previo)
+      // y sacar la carta del mazo de escenarios (idempotente: el camino
+      // directo ya la extrajo antes de emitir el evento).
       return {
         ...state,
         scenario: {
@@ -434,6 +471,7 @@ function applyEventInternal(state: GameState, event: GameEvent): GameState {
           ownerId: 'scenario',
           zone: 'SCENARIO_ACTIVE' as Zone,
         },
+        scenarioDeck: state.scenarioDeck.filter(c => c.instanceId !== event.scenarioInstanceId),
         // Solitario: 1 moneda sobre el escenario revelado (spec §4.1)
         scenarioCoins: state.mode === 'SOLO' ? 1 : 0,
       };
@@ -626,6 +664,7 @@ function applyEventInternal(state: GameState, event: GameEvent): GameState {
             ...player,
             hand: remainingHand,
             wearPile: [...player.wearPile, ...discarded.map(c => ({ ...c, zone: 'WEAR_PILE' as Zone }))],
+            evasionTokenUsed: true,
           },
         },
       };
@@ -670,6 +709,10 @@ function applyEventInternal(state: GameState, event: GameEvent): GameState {
     // === Leader ===
     case 'LEADER_DETERMINED':
       return { ...state, activePlayerId: event.playerId };
+
+    case 'LEADER_TIE_BREAK':
+      // Informativo: el ganador ya se aplicó en LEADER_DETERMINED.
+      return state;
 
     // === Deck Shuffle ===
     case 'DECK_SHUFFLED': {
@@ -780,6 +823,131 @@ function applyEventInternal(state: GameState, event: GameEvent): GameState {
       // No cambia el estado del juego; es informativo para el cliente
       return state;
 
+    // === Resolucion detenida por presupuesto (Taller §18) ===
+    case 'RESOLUTION_HALTED':
+      // Informativo: el estado queda como lo dejo la resolucion parcial
+      return state;
+
+    // === Armadura (GRANT_ARMOR, Taller) ===
+    case 'ARMOR_GRANTED':
+      return mapPlayerState(state, event.playerId, p => ({
+        ...p,
+        armor: (p.armor ?? 0) + event.amount,
+      }));
+
+    // === Estados sobre enemigos (Marca, Veneno, Aturdimiento…) ===
+    case 'STATUS_APPLIED': {
+      const enemy = state.battlefield.find(e => e.instanceId === event.enemyInstanceId);
+      if (!enemy) return state;
+      const hasStatus = (enemy.statuses ?? []).some(s => s.id === event.status);
+      const statuses = hasStatus
+        ? (enemy.statuses ?? []).map(s =>
+            s.id === event.status ? { ...s, stacks: s.stacks + event.stacks } : s)
+        : [...(enemy.statuses ?? []), { id: event.status, stacks: event.stacks, duration: event.duration }];
+      return {
+        ...state,
+        battlefield: state.battlefield.map(e =>
+          e.instanceId === event.enemyInstanceId ? { ...e, statuses } : e),
+      };
+    }
+
+    case 'STATUS_REMOVED':
+      return {
+        ...state,
+        battlefield: state.battlefield.map(e =>
+          e.instanceId === event.enemyInstanceId
+            ? { ...e, statuses: (e.statuses ?? []).filter(s => s.id !== event.status) }
+            : e),
+      };
+
+    // === Descarte directo de la Horda (DISCARD_HORDE_CARD, Taller) ===
+    case 'HORDE_CARD_DISCARDED':
+      return {
+        ...state,
+        hordeDeck: state.hordeDeck.filter(c => c.instanceId !== event.cardInstanceId),
+      };
+
+    // === Enemigo invocado directamente al campo (SPAWN_ENEMY, Taller) ===
+    case 'ENEMY_SPAWNED': {
+      // La carta sale del mazo de la Horda y entra al campo (con auras de
+      // entrada, igual que ENEMY_SWAPPED — p.ej. Ruinas de Brunmar)
+      const spawned = applyEntryAuras({
+        instanceId: event.enemyInstanceId,
+        definitionId: event.enemyDefinitionId,
+        baseFortitude: event.enemyFortitude,
+        wounds: 0,
+        reward: event.enemyReward,
+        modifiers: [],
+        isWarlord: event.enemyIsWarlord,
+        isOrc: event.enemyIsOrc,
+        specialIcons: event.enemySpecialIcons,
+        damageDisabled: false,
+        statuses: [],
+      }, state);
+      return {
+        ...state,
+        battlefield: [...state.battlefield, spawned],
+        hordeDeck: state.hordeDeck.filter(c => c.instanceId !== event.enemyInstanceId),
+      };
+    }
+
+    // === Variables de partida del Taller (SET_VARIABLE scope GAME) ===
+    case 'VARIABLE_SET':
+      return {
+        ...state,
+        customVars: { ...(state.customVars ?? {}), [event.name]: event.value },
+      };
+
+    // === Bloqueo del próximo daño (BLOCK_NEXT_DAMAGE) ===
+    case 'BLOCK_GRANTED':
+      return mapPlayerState(state, event.playerId, p => ({
+        ...p,
+        blockNext: (p.blockNext ?? 0) + event.amount,
+      }));
+
+    case 'BLOCK_CONSUMED':
+      return mapPlayerState(state, event.playerId, p => ({
+        ...p,
+        blockNext: 0,
+      }));
+
+    // === Oyentes de eventos (REGISTER_LISTENER / REMOVE_LISTENER) ===
+    case 'LISTENER_REGISTERED':
+      return {
+        ...state,
+        listeners: [...(state.listeners ?? []), event.listener],
+      };
+
+    case 'LISTENER_REMOVED':
+      return {
+        ...state,
+        listeners: (state.listeners ?? []).filter(l => l.id !== event.listenerId),
+      };
+
+    // === Limpiezas de ciclo de vida ===
+    // Los helpers viven en modifiers/ y son los mismos que usa el camino
+    // directo: la transformación es determinista, así que aplicarla sobre un
+    // estado ya limpio es un no-op (idempotente).
+    case 'EFFECTS_EXPIRED':
+      switch (event.scope) {
+        case 'HORDE_ATTACK_END': return cleanupHordeAttackEnd(state);
+        case 'RESTORATION': return cleanupRestoration(state);
+        case 'TURN_END': return cleanupTurnEnd(state);
+        default: return state;
+      }
+
+    case 'PENDING_CHOICES_REMOVED':
+      return {
+        ...state,
+        pendingChoices: state.pendingChoices.filter(c => !event.choiceIds.includes(c.choiceId)),
+      };
+
+    case 'TROPHY_REMOVED':
+      return mapPlayerState(state, event.playerId, p => ({
+        ...p,
+        trophies: p.trophies.filter(t => t !== event.trophyInstanceId),
+      }));
+
     default: {
       // Exhaustive check
       const _exhaustive: never = event;
@@ -861,6 +1029,7 @@ function moveCard(state: GameState, cardInstanceId: string, to: Zone, toPlayerId
   if (toPlayerId && newPlayers[toPlayerId]) {
     let movedCard: any = null;
     let sourcePlayerId: string | null = null;
+    let sourceZoneKey: 'hand' | 'abilityDeck' | 'wearPile' | 'persistentCards' | null = null;
     for (const [playerId, player] of Object.entries(newPlayers)) {
       for (const zoneKey of ['hand', 'abilityDeck', 'wearPile', 'persistentCards'] as const) {
         const zoneCards = player[zoneKey] as any[];
@@ -872,12 +1041,16 @@ function moveCard(state: GameState, cardInstanceId: string, to: Zone, toPlayerId
             [zoneKey]: zoneCards.filter((c: any) => c.instanceId !== cardInstanceId),
           };
           sourcePlayerId = playerId;
+          sourceZoneKey = zoneKey;
           break;
         }
       }
       if (movedCard) break;
     }
-    if (movedCard && sourcePlayerId && sourcePlayerId !== toPlayerId) {
+    // Re-añadir a la zona `to` del destino — también cuando origen y
+    // destino son el mismo jugador (movimiento entre zonas propias);
+    // sin esto la carta desaparecía silenciosamente.
+    if (movedCard && sourcePlayerId) {
       const target = newPlayers[toPlayerId];
       if (to === 'HAND') {
         newPlayers[toPlayerId] = { ...target, hand: [...target.hand, movedCard] };
@@ -885,11 +1058,15 @@ function moveCard(state: GameState, cardInstanceId: string, to: Zone, toPlayerId
         newPlayers[toPlayerId] = { ...target, wearPile: [...target.wearPile, movedCard] };
       } else if (to === 'ABILITY_DECK') {
         newPlayers[toPlayerId] = { ...target, abilityDeck: [...target.abilityDeck, movedCard] };
+      } else if (sourceZoneKey) {
+        // Zona no-jugador (MARKET, etc.): restaurar a la zona de origen
+        // para no destruir la carta.
+        const src = newPlayers[sourcePlayerId];
+        newPlayers[sourcePlayerId] = {
+          ...src,
+          [sourceZoneKey]: [...(src[sourceZoneKey] as any[]), movedCard],
+        };
       }
-      return { ...state, players: newPlayers };
-    }
-    // Si la carta no existe o ya es del destino, caer al flujo normal
-    if (movedCard && sourcePlayerId === toPlayerId) {
       return { ...state, players: newPlayers };
     }
     if (!movedCard) return { ...state, players: newPlayers };
@@ -920,7 +1097,22 @@ function moveCard(state: GameState, cardInstanceId: string, to: Zone, toPlayerId
         if (to === 'HAND') {
           newPlayers[playerId].hand = [...newPlayers[playerId].hand, movedCard];
         } else if (to === 'WEAR_PILE') {
-          newPlayers[playerId].wearPile = [...newPlayers[playerId].wearPile, movedCard];
+          // D434 (spec §4.2): una carta prestada de un mazo de Apoyo NO va al
+          // Desgaste del jugador — se devuelve al fondo de su mazo de Apoyo
+          const isBorrowed = newPlayers[playerId].borrowedSupportCardIds?.includes(cardInstanceId) ?? false;
+          const supportIdx = newPlayers[playerId].supportDeckIndexUsedThisTurn;
+          if (isBorrowed && supportIdx !== null && supportIdx !== undefined) {
+            newPlayers[playerId] = {
+              ...newPlayers[playerId],
+              supportDecks: (newPlayers[playerId].supportDecks ?? []).map(
+                (d, j) => j === supportIdx ? [...d, movedCard] : d,
+              ),
+              borrowedSupportCardIds: (newPlayers[playerId].borrowedSupportCardIds ?? [])
+                .filter(id => id !== cardInstanceId),
+            };
+          } else {
+            newPlayers[playerId].wearPile = [...newPlayers[playerId].wearPile, movedCard];
+          }
         } else if (to === 'ABILITY_DECK') {
           // D434: una carta prestada que "vuelve al fondo de su mazo" retorna
           // a su mazo de Apoyo de origen (spec §4.4), no al mazo de Habilidad

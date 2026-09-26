@@ -209,6 +209,61 @@ describe('CardResolver — efectos especiales', () => {
     expect(result.events.some(e => e.type === 'PERSISTENT_CARD_REMOVED')).toBe(true);
   });
 
+  it('resuelve Supervivencia (SWAP_ENEMY): cambia el enemigo por el del fondo de la Horda', () => {
+    const state = makeSetupState();
+    const player = state.players.p1;
+    const enemy = state.battlefield[0];
+    const card = makeCardInstance('explorer.survival', 'p1');
+    const cardDef = catalog.byId.get('explorer.survival')!;
+    const expectedNew = state.hordeDeck[state.hordeDeck.length - 1];
+
+    const result = resolveCard(state, card, cardDef, enemy.instanceId, player, rng, registry, catalog);
+
+    const swap = result.events.find(e => e.type === 'ENEMY_SWAPPED');
+    expect(swap).toBeDefined();
+    if (swap && swap.type === 'ENEMY_SWAPPED') {
+      expect(swap.oldEnemyInstanceId).toBe(enemy.instanceId);
+      expect(swap.newEnemyInstanceId).toBe(expectedNew.instanceId);
+      // El botín queda oculto hasta que el enemigo cae
+      expect(swap.newEnemyReward).toBeNull();
+    }
+  });
+
+  it('resuelve Recoger Flechas (RECOVER_CARD_BY_NAME + SHUFFLE_DECK + GAIN_COINS)', () => {
+    const state = makeSetupState();
+    // Dejar un "Disparo Rápido" en el Desgaste de p1
+    const spent: CardInstance = {
+      instanceId: 'spent-rapid-shot',
+      definitionId: 'explorer.rapid-shot',
+      ownerId: 'p1',
+      zone: 'WEAR_PILE' as Zone,
+      name: 'Disparo Rápido',
+    };
+    const withWear: GameState = {
+      ...state,
+      players: {
+        ...state.players,
+        p1: { ...state.players.p1, wearPile: [...state.players.p1.wearPile, spent] },
+      },
+    };
+    const player = withWear.players.p1;
+    const enemy = state.battlefield[0];
+    const card = makeCardInstance('explorer.collect-arrows', 'p1');
+    const cardDef = catalog.byId.get('explorer.collect-arrows')!;
+
+    const result = resolveCard(withWear, card, cardDef, enemy.instanceId, player, rng, registry, catalog);
+
+    // El Disparo Rápido vuelve al mazo de habilidad
+    expect(result.events.some(e =>
+      e.type === 'CARD_MOVED' && e.cardInstanceId === 'spent-rapid-shot'
+      && e.from === 'WEAR_PILE' && e.to === 'ABILITY_DECK'
+    )).toBe(true);
+    // El mazo se baraja después
+    expect(result.events.some(e => e.type === 'DECK_SHUFFLED' && (e as { deck?: string }).deck === 'ABILITY')).toBe(true);
+    // Y se gana 1 Moneda
+    expect(result.events.some(e => e.type === 'COINS_GAINED')).toBe(true);
+  });
+
   it('resuelve Aura Protectora (CANCEL_ALL_DAMAGE)', () => {
     const state = makeSetupState();
     const player = state.players.p1;

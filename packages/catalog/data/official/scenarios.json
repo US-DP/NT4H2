@@ -7,13 +7,24 @@
       "type": "SCENARIO",
       "copies": 1,
       "effects": [
-        { "type": "ON_ENEMY_DEFEATED", "effects": [
-          { "type": "GAIN_COINS", "amount": { "kind": "CONSTANT", "value": 1 }, "target": "DEFEATING_HERO" }
-        ]}
+        {
+          "type": "ON_ENEMY_DEFEATED",
+          "effects": [
+            {
+              "type": "GAIN_COINS",
+              "amount": {
+                "kind": "CONSTANT",
+                "value": 1
+              },
+              "target": "DEFEATING_HERO"
+            }
+          ]
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
       "verificationStatus": "CONFIRMED",
-      "_effect": "ON_ENEMY_DEFEATED: GAIN_COINS(1, to=defeating_hero)"
+      "_effect": "ON_ENEMY_DEFEATED: GAIN_COINS(1, to=defeating_hero)",
+      "altText": "Cada enemigo vencido aportará 1 Moneda al héroe que lo derrote."
     },
     {
       "id": "scenario.tears-of-aradiel",
@@ -21,12 +32,16 @@
       "type": "SCENARIO",
       "copies": 1,
       "effects": [
-        { "type": "CUSTOM_SCENARIO", "handler": "tears-of-aradiel" }
+        {
+          "type": "CUSTOM_SCENARIO",
+          "handler": "tears-of-aradiel"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
       "verificationStatus": "CONFIRMED",
       "_effect": "ONCE_PER_TURN: PAY_GLORY(1, to=other_hero) + PLAY_RANDOM_CARD_FROM_OTHER_HERO + DISCARD_TO_OWNER_WEAR + OWNER_DRAWS_1",
-      "_notValidInSolo": true
+      "_notValidInSolo": true,
+      "altText": "Una vez por turno, el héroe activo puede utilizar una carta de otro héroe (elegida al azar). Para hacerlo deberá entregarle 1 ficha de Gloria. Tras aplicar la carta, se descarta de la mano del propietario y este roba una nueva."
     },
     {
       "id": "scenario.kalern-mud",
@@ -34,11 +49,15 @@
       "type": "SCENARIO",
       "copies": 1,
       "effects": [
-        { "type": "CUSTOM_SCENARIO", "handler": "kalern-mud" }
+        {
+          "type": "CUSTOM_SCENARIO",
+          "handler": "kalern-mud"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
       "verificationStatus": "CONFIRMED",
-      "_effect": "ON_TURN_START: PLAYER_TO_LEFT_SELECTS_ENEMY + RETURN_TO_BOTTOM_OF_HORDE + CLEAR_WOUNDS"
+      "_effect": "ON_TURN_START: PLAYER_TO_LEFT_SELECTS_ENEMY + RETURN_TO_BOTTOM_OF_HORDE + CLEAR_WOUNDS",
+      "altText": "Al comienzo del turno de cada héroe, el jugador de su izquierda elige un enemigo, que vuelve a la parte inferior del mazo de la Horda (si tuviera Heridas, se descartan)."
     },
     {
       "id": "scenario.lotharion-market",
@@ -46,10 +65,17 @@
       "type": "SCENARIO",
       "copies": 1,
       "effects": [
-        { "type": "MODIFY_MARKET_COST", "modifier": { "kind": "CONSTANT", "value": -1 } }
+        {
+          "type": "MODIFY_MARKET_COST",
+          "modifier": {
+            "kind": "CONSTANT",
+            "value": -1
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "CONFIRMED"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Mientras este escenario esté activo, todos los artículos del Mercado cuestan una Moneda menos."
     },
     {
       "id": "scenario.ur-mountains",
@@ -57,11 +83,15 @@
       "type": "SCENARIO",
       "copies": 1,
       "effects": [
-        { "type": "CUSTOM_SCENARIO", "handler": "ur-mountains" }
+        {
+          "type": "CUSTOM_SCENARIO",
+          "handler": "ur-mountains"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
       "verificationStatus": "CONFIRMED",
-      "_effect": "OPTIONAL: DRAW_CARDS(1) + REVEAL_ENEMY_FROM_HORDE"
+      "_effect": "OPTIONAL: DRAW_CARDS(1) + REVEAL_ENEMY_FROM_HORDE",
+      "altText": "El héroe activo puede robar, durante su fase de ataque, 1 carta de Habilidad extra a cambio de poner en juego 1 carta adicional del mazo de la Horda."
     },
     {
       "id": "scenario.umbrous-swamp",
@@ -69,13 +99,27 @@
       "type": "SCENARIO",
       "copies": 1,
       "effects": [
-        { "type": "ON_ENEMY_DEFEATED", "condition": { "fortitudeGte": 3 }, "effects": [
-          { "type": "GAIN_COINS", "amount": { "kind": "CONSTANT", "value": 1 }, "target": "DEFEATING_HERO" }
-        ]}
+        {
+          "type": "ON_ENEMY_DEFEATED",
+          "condition": {
+            "fortitudeGte": 3
+          },
+          "effects": [
+            {
+              "type": "GAIN_COINS",
+              "amount": {
+                "kind": "CONSTANT",
+                "value": 1
+              },
+              "target": "DEFEATING_HERO"
+            }
+          ]
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
       "verificationStatus": "CONFIRMED",
-      "_effect": "ON_ENEMY_DEFEATED(fortaleza>=3): GAIN_COINS(1, additional)"
+      "_effect": "ON_ENEMY_DEFEATED(fortaleza>=3): GAIN_COINS(1, additional)",
+      "altText": "Cada enemigo con 3 o más puntos de Fortaleza que venzas reporta 1 Moneda adicional."
     },
     {
       "id": "scenario.skaarg-plains",
@@ -83,11 +127,14 @@
       "type": "SCENARIO",
       "copies": 1,
       "effects": [
-        { "type": "IGNORE_COIN_REWARDS" }
+        {
+          "type": "IGNORE_COIN_REWARDS"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
       "verificationStatus": "CONFIRMED",
-      "_effect": "IGNORE_COIN_REWARDS_FROM_ENEMY_BACKS"
+      "_effect": "IGNORE_COIN_REWARDS_FROM_ENEMY_BACKS",
+      "altText": "Mientras este escenario permanezca en juego, todas las monedas que aparezcan en las cartas de enemigos se ignoran."
     },
     {
       "id": "scenario.ulthar-portal",
@@ -95,11 +142,15 @@
       "type": "SCENARIO",
       "copies": 1,
       "effects": [
-        { "type": "CUSTOM_SCENARIO", "handler": "ulthar-portal" }
+        {
+          "type": "CUSTOM_SCENARIO",
+          "handler": "ulthar-portal"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
       "verificationStatus": "CONFIRMED",
-      "_effect": "COST(1_GLORY or 2_COINS) + RETURN_HOSTE_TO_BOTTOM_OF_HORDE + PLACE_TROPHY_ENEMY_IN_FIELD"
+      "_effect": "COST(1_GLORY or 2_COINS) + RETURN_HOSTE_TO_BOTTOM_OF_HORDE + PLACE_TROPHY_ENEMY_IN_FIELD",
+      "altText": "El héroe activo puede gastar 1 ficha de Gloria o 2 Monedas en su fase de ataque para devolver una carta de Hueste a la parte inferior del mazo de la Horda y poner en juego un enemigo de entre sus trofeos."
     },
     {
       "id": "scenario.eque-port",
@@ -107,11 +158,15 @@
       "type": "SCENARIO",
       "copies": 1,
       "effects": [
-        { "type": "CUSTOM_SCENARIO", "handler": "eque-port" }
+        {
+          "type": "CUSTOM_SCENARIO",
+          "handler": "eque-port"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
       "verificationStatus": "CONFIRMED",
-      "_effect": "OPTIONAL_ON_TURN_START: DISCARD_1_HAND + DRAW_1 + MODIFY_ENEMY_DAMAGE(+1)"
+      "_effect": "OPTIONAL_ON_TURN_START: DISCARD_1_HAND + DRAW_1 + MODIFY_ENEMY_DAMAGE(+1)",
+      "altText": "El héroe activo, al comienzo de su turno, puede descartar una carta de su mano y robar una nueva. A cambio, cada enemigo causa 1 más de Daño."
     },
     {
       "id": "scenario.brunmar-ruins",
@@ -119,12 +174,25 @@
       "type": "SCENARIO",
       "copies": 1,
       "effects": [
-        { "type": "MODIFY_FORTITUDE", "modifier": { "kind": "CONSTANT", "value": -1 }, "target": { "kind": "ALL_ENEMIES" }, "duration": "WHILE_SOURCE_ACTIVE" },
-        { "type": "IGNORE_GLORY_REWARDS" }
+        {
+          "type": "MODIFY_FORTITUDE",
+          "modifier": {
+            "kind": "CONSTANT",
+            "value": -1
+          },
+          "target": {
+            "kind": "ALL_ENEMIES"
+          },
+          "duration": "WHILE_SOURCE_ACTIVE"
+        },
+        {
+          "type": "IGNORE_GLORY_REWARDS"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
       "verificationStatus": "CONFIRMED",
-      "_effect": "IGNORE_GLORY_FROM_ENEMY_BACKS"
+      "_effect": "IGNORE_GLORY_FROM_ENEMY_BACKS",
+      "altText": "Todos los enemigos tienen un punto menos de Fortaleza. Se ignoran los puntos de Gloria que aparezcan en la parte trasera de cada enemigo vencido."
     },
     {
       "id": "scenario.jade-deposits",
@@ -132,11 +200,15 @@
       "type": "SCENARIO",
       "copies": 1,
       "effects": [
-        { "type": "CUSTOM_SCENARIO", "handler": "jade-deposits" }
+        {
+          "type": "CUSTOM_SCENARIO",
+          "handler": "jade-deposits"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
       "verificationStatus": "CONFIRMED",
-      "_effect": "OPTIONAL_ON_TURN_START: DISCARD_ALL_HAND + DRAW_4 + GAIN_COINS(3)"
+      "_effect": "OPTIONAL_ON_TURN_START: DISCARD_ALL_HAND + DRAW_4 + GAIN_COINS(3)",
+      "altText": "Si al comienzo de su turno, un héroe descarta toda su mano y roba 4 nuevas cartas, consigue 3 Monedas."
     },
     {
       "id": "scenario.cemenmar-wastes",
@@ -144,12 +216,16 @@
       "type": "SCENARIO",
       "copies": 1,
       "effects": [
-        { "type": "CUSTOM_SCENARIO", "handler": "cemenmar-wastes" }
+        {
+          "type": "CUSTOM_SCENARIO",
+          "handler": "cemenmar-wastes"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
       "verificationStatus": "CONFIRMED",
       "_effect": "ON_EVASION: STEAL_COINS(up_to_3_total, max_2_per_hero)",
-      "_notValidInSolo": true
+      "_notValidInSolo": true,
+      "altText": "Al realizar su acción de Evasión, podrá robar de los demás héroes hasta 3 Monedas en total (máximo 2 al mismo jugador)."
     }
   ]
 }

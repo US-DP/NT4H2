@@ -69,6 +69,19 @@ export const HeroClassSchema = z.enum([
 export type HeroClass = z.infer<typeof HeroClassSchema>;
 
 // ============================================================================
+// Estado oficial — separacion contenido oficial / personalizado (Taller)
+// ============================================================================
+
+export const OfficialStatusSchema = z.enum([
+  'OFFICIAL',
+  'OFFICIAL_PROMO',
+  'CUSTOM',
+  'COMMUNITY',
+  'DRAFT',
+]);
+export type OfficialStatus = z.infer<typeof OfficialStatusSchema>;
+
+// ============================================================================
 // Iconos de capacidad
 // ============================================================================
 
@@ -84,6 +97,13 @@ export type CapabilityIcon = z.infer<typeof CapabilityIconSchema>;
 // ValueExpr — expresiones de valor numerico
 // ============================================================================
 
+/** Estadísticas de héroe consultables por efectos y condiciones (Taller §12) */
+export const HeroStatSchema = z.enum([
+  'WOUNDS', 'COINS', 'GLORY', 'CARDS_IN_HAND', 'CARDS_IN_WEAR',
+  'CARDS_PLAYED', 'TROPHIES',
+]);
+export type HeroStat = z.infer<typeof HeroStatSchema>;
+
 export const ValueExprSchema: z.ZodType<ValueExpr> = z.lazy((): z.ZodType<ValueExpr> =>
   z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('CONSTANT'), value: z.number().int() }),
@@ -98,6 +118,31 @@ export const ValueExprSchema: z.ZodType<ValueExpr> = z.lazy((): z.ZodType<ValueE
       numerator: ValueExprSchema,
       denominator: z.number().int().positive(),
     }),
+    // Operadores adicionales (Taller §12)
+    z.object({ kind: z.literal('SUBTRACT'), of: z.array(ValueExprSchema).min(2) }),
+    z.object({ kind: z.literal('MIN'), of: z.array(ValueExprSchema).min(1) }),
+    z.object({ kind: z.literal('MAX'), of: z.array(ValueExprSchema).min(1) }),
+    z.object({ kind: z.literal('ABS'), of: z.array(ValueExprSchema).min(1).max(1) }),
+    // Valores del estado de partida (Taller §12)
+    z.object({
+      kind: z.literal('HERO_STAT'),
+      stat: HeroStatSchema,
+      hero: HeroSelectorSchema.optional(),
+    }),
+    z.object({ kind: z.literal('ENEMY_DAMAGE_OF'), target: TargetSelectorSchema }),
+    z.object({ kind: z.literal('ENEMY_WOUNDS_OF'), target: TargetSelectorSchema }),
+    z.object({
+      kind: z.literal('STATUS_STACKS_OF'),
+      status: z.string(),
+      target: TargetSelectorSchema,
+    }),
+    z.object({ kind: z.literal('DEFEATED_ENEMIES') }),
+    // Variables del Taller: lee una variable de resolución o de partida
+    z.object({
+      kind: z.literal('VARIABLE'),
+      name: z.string().min(1),
+      scope: z.enum(['RESOLUTION', 'GAME']).optional(),
+    }),
   ]),
 );
 
@@ -109,7 +154,17 @@ export type ValueExpr =
   | { kind: 'SUM'; of: ValueExpr[] }
   | { kind: 'MULTIPLY'; factors: ValueExpr[] }
   | { kind: 'EVASION_DISCARDED_COUNT' }
-  | { kind: 'FLOOR_DIV'; numerator: ValueExpr; denominator: number };
+  | { kind: 'FLOOR_DIV'; numerator: ValueExpr; denominator: number }
+  | { kind: 'SUBTRACT'; of: ValueExpr[] }
+  | { kind: 'MIN'; of: ValueExpr[] }
+  | { kind: 'MAX'; of: ValueExpr[] }
+  | { kind: 'ABS'; of: ValueExpr[] }
+  | { kind: 'HERO_STAT'; stat: HeroStat; hero?: HeroSelector }
+  | { kind: 'ENEMY_DAMAGE_OF'; target: TargetSelector }
+  | { kind: 'ENEMY_WOUNDS_OF'; target: TargetSelector }
+  | { kind: 'STATUS_STACKS_OF'; status: string; target: TargetSelector }
+  | { kind: 'DEFEATED_ENEMIES' }
+  | { kind: 'VARIABLE'; name: string; scope?: 'RESOLUTION' | 'GAME' };
 
 // ============================================================================
 // TargetSelector — selectores de enemigos
@@ -126,19 +181,26 @@ export type EnemyFilter = z.infer<typeof EnemyFilterSchema>;
 export const TargetSelectorSchema: z.ZodType<TargetSelector> = z.lazy((): z.ZodType<TargetSelector> =>
   z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('ONE_ENEMY'), filter: EnemyFilterSchema }),
-    z.object({ kind: z.literal('ALL_ENEMIES') }),
+    z.object({ kind: z.literal('ALL_ENEMIES'), filter: EnemyFilterSchema }),
     z.object({ kind: z.literal('ENEMY_WITH_MAX_FORTITUDE') }),
     z.object({ kind: z.literal('ENEMY_WITH_FEWEST_WOUNDS') }),
     z.object({ kind: z.literal('SELECTED_ENEMY') }),
+    z.object({ kind: z.literal('ENEMY_WITH_MIN_FORTITUDE') }),
+    z.object({ kind: z.literal('ENEMY_WITH_MAX_DAMAGE') }),
+    /** Cualquier enemigo distinto del seleccionado (para daño sobrante, cadenas) */
+    z.object({ kind: z.literal('OTHER_ENEMY') }),
   ]),
 );
 
 export type TargetSelector =
   | { kind: 'ONE_ENEMY'; filter?: EnemyFilter }
-  | { kind: 'ALL_ENEMIES' }
+  | { kind: 'ALL_ENEMIES'; filter?: EnemyFilter }
   | { kind: 'ENEMY_WITH_MAX_FORTITUDE' }
   | { kind: 'ENEMY_WITH_FEWEST_WOUNDS' }
-  | { kind: 'SELECTED_ENEMY' };
+  | { kind: 'SELECTED_ENEMY' }
+  | { kind: 'ENEMY_WITH_MIN_FORTITUDE' }
+  | { kind: 'ENEMY_WITH_MAX_DAMAGE' }
+  | { kind: 'OTHER_ENEMY' };
 
 // ============================================================================
 // HeroSelector — selectores de heroes
@@ -150,6 +212,9 @@ export const HeroSelectorSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('EACH_OTHER') }),
   z.object({ kind: z.literal('HERO_WITH_FEWEST_WOUNDS') }),
   z.object({ kind: z.literal('OTHER_HERO') }),
+  z.object({ kind: z.literal('HERO_WITH_MOST_WOUNDS') }),
+  z.object({ kind: z.literal('HERO_WITH_MOST_GLORY') }),
+  z.object({ kind: z.literal('HERO_WITH_MOST_COINS') }),
 ]);
 
 export type HeroSelector = z.infer<typeof HeroSelectorSchema>;
@@ -168,6 +233,31 @@ export const ConditionSchema: z.ZodType<Condition> = z.lazy((): z.ZodType<Condit
     z.object({ kind: z.literal('NOT'), condition: ConditionSchema }),
     z.object({ kind: z.literal('AND'), conditions: z.array(ConditionSchema) }),
     z.object({ kind: z.literal('OR'), conditions: z.array(ConditionSchema) }),
+    // Predicados sobre héroe (Taller §10)
+    z.object({
+      kind: z.literal('HERO_STAT_GTE'),
+      stat: HeroStatSchema,
+      value: z.number().int(),
+      hero: HeroSelectorSchema.optional(),
+    }),
+    z.object({
+      kind: z.literal('HERO_STAT_LTE'),
+      stat: HeroStatSchema,
+      value: z.number().int(),
+      hero: HeroSelectorSchema.optional(),
+    }),
+    z.object({ kind: z.literal('HAS_CARD_IN_HAND'), name: z.string() }),
+    // Predicados sobre enemigos y campo
+    z.object({ kind: z.literal('ENEMY_COUNT_GTE'), value: z.number().int() }),
+    z.object({ kind: z.literal('ENEMY_COUNT_LTE'), value: z.number().int() }),
+    z.object({ kind: z.literal('ENEMY_IS_ORC') }),
+    z.object({ kind: z.literal('ENEMY_IS_WARLORD') }),
+    z.object({ kind: z.literal('ENEMY_IS_UNHARMED') }),
+    z.object({ kind: z.literal('ENEMY_HAS_STATUS'), status: z.string() }),
+    // Variables del Taller (comparación contra entero)
+    z.object({ kind: z.literal('VARIABLE_GTE'), name: z.string().min(1), value: z.number().int() }),
+    z.object({ kind: z.literal('VARIABLE_LTE'), name: z.string().min(1), value: z.number().int() }),
+    z.object({ kind: z.literal('VARIABLE_EQ'), name: z.string().min(1), value: z.number().int() }),
   ]),
 );
 
@@ -179,7 +269,19 @@ export type Condition =
   | { kind: 'ENEMY_FORTITUDE_GTE'; value: number }
   | { kind: 'NOT'; condition: Condition }
   | { kind: 'AND'; conditions: Condition[] }
-  | { kind: 'OR'; conditions: Condition[] };
+  | { kind: 'OR'; conditions: Condition[] }
+  | { kind: 'HERO_STAT_GTE'; stat: HeroStat; value: number; hero?: HeroSelector }
+  | { kind: 'HERO_STAT_LTE'; stat: HeroStat; value: number; hero?: HeroSelector }
+  | { kind: 'HAS_CARD_IN_HAND'; name: string }
+  | { kind: 'ENEMY_COUNT_GTE'; value: number }
+  | { kind: 'ENEMY_COUNT_LTE'; value: number }
+  | { kind: 'ENEMY_IS_ORC' }
+  | { kind: 'ENEMY_IS_WARLORD' }
+  | { kind: 'ENEMY_IS_UNHARMED' }
+  | { kind: 'ENEMY_HAS_STATUS'; status: string }
+  | { kind: 'VARIABLE_GTE'; name: string; value: number }
+  | { kind: 'VARIABLE_LTE'; name: string; value: number }
+  | { kind: 'VARIABLE_EQ'; name: string; value: number };
 
 // ============================================================================
 // CardEffect — union discriminada de efectos de carta
@@ -310,6 +412,24 @@ export const CardEffectSchema: z.ZodType<CardEffect> = z.lazy((): z.ZodType<Card
       effects: z.array(z.lazy(() => CardEffectSchema)),
     }),
     z.object({ type: z.literal('END_ATTACK') }),
+    z.object({
+      type: z.literal('REPEAT'),
+      /** Veces a repetir (expresion evaluada una vez al inicio) */
+      times: ValueExprSchema,
+      /** Limite duro obligatorio: nunca se repite mas de `max` veces */
+      max: z.number().int().min(1).max(50),
+      effects: z.array(z.lazy(() => CardEffectSchema)),
+    }),
+    z.object({
+      type: z.literal('CHOOSE_ONE'),
+      prompt: z.string().optional(),
+      /** Si true, se añade la opcion "No hacer nada" (efecto opcional) */
+      optional: z.boolean().optional(),
+      options: z.array(z.object({
+        label: z.string().optional(),
+        effects: z.array(z.lazy(() => CardEffectSchema)),
+      })).min(2).max(6),
+    }),
 
     // --- Enemigos ---
     z.object({
@@ -410,6 +530,124 @@ export const CardEffectSchema: z.ZodType<CardEffect> = z.lazy((): z.ZodType<Card
       type: z.literal('CUSTOM_SCENARIO'),
       handler: z.string(),
     }),
+
+    // --- Extensiones del Taller (fase 1+) ---
+    z.object({
+      type: z.literal('DEAL_DAMAGE_HITS'),
+      amount: ValueExprSchema,
+      times: ValueExprSchema,
+      target: TargetSelectorSchema,
+    }),
+    z.object({
+      type: z.literal('EXECUTE_ENEMY'),
+      target: TargetSelectorSchema,
+      /** Derrota si la Fortaleza efectiva es <= umbral */
+      threshold: ValueExprSchema,
+      loot: z.boolean().default(true),
+    }),
+    z.object({
+      type: z.literal('OVERKILL_DAMAGE'),
+      amount: ValueExprSchema,
+      target: TargetSelectorSchema,
+      /** El daño que exceda la Fortaleza restante salta a este enemigo */
+      spill: TargetSelectorSchema,
+    }),
+    z.object({
+      type: z.literal('SPAWN_ENEMY'),
+      count: z.number().int().min(1).max(10),
+    }),
+    z.object({
+      type: z.literal('DISCARD_HORDE_CARD'),
+      count: z.number().int().min(1).max(10),
+      from: z.enum(['TOP', 'BOTTOM']).default('BOTTOM'),
+    }),
+    z.object({
+      type: z.literal('MOVE_HORDE_CARDS'),
+      count: z.number().int().min(1).max(10),
+      /** Mueve `count` cartas del extremo de robo (BOTTOM) al `to` */
+      to: z.enum(['TOP', 'BOTTOM']),
+    }),
+    z.object({
+      type: z.literal('DRAW_FROM_BOTTOM'),
+      amount: ValueExprSchema,
+    }),
+    z.object({
+      type: z.literal('DRAW_UP_TO'),
+      limit: z.number().int().min(1).max(15),
+    }),
+    z.object({
+      type: z.literal('TAKE_WOUNDS'),
+      amount: ValueExprSchema,
+      hero: HeroSelectorSchema.optional(),
+    }),
+    z.object({
+      type: z.literal('GRANT_ARMOR'),
+      amount: ValueExprSchema,
+      duration: EffectDurationSchema,
+    }),
+    z.object({
+      type: z.literal('MOVE_CARD'),
+      count: ValueExprSchema,
+      from: z.enum(['HAND', 'WEAR_PILE', 'ABILITY_DECK']),
+      to: z.enum(['HAND', 'WEAR_PILE', 'ABILITY_DECK', 'REMOVED_FROM_GAME']),
+    }),
+    z.object({
+      type: z.literal('FOR_EACH'),
+      collection: z.enum(['ENEMIES', 'OTHER_HEROES', 'ALL_HEROES']),
+      effects: z.array(z.lazy(() => CardEffectSchema)).min(1),
+    }),
+    // Sistema de estados de enemigo (Taller §3)
+    z.object({
+      type: z.literal('APPLY_STATUS'),
+      status: z.string().min(1),
+      stacks: ValueExprSchema,
+      duration: z.enum(['PERMANENT', 'UNTIL_END_OF_TURN']).default('PERMANENT'),
+      target: TargetSelectorSchema,
+    }),
+    z.object({
+      type: z.literal('REMOVE_STATUS'),
+      status: z.string().min(1),
+      target: TargetSelectorSchema,
+    }),
+    z.object({
+      type: z.literal('INCREASE_STATUS'),
+      status: z.string().min(1),
+      amount: ValueExprSchema,
+      target: TargetSelectorSchema,
+    }),
+    // === Extensiones del Taller (fase 2): variables, bloqueo, oyentes ===
+    z.object({
+      type: z.literal('SET_VARIABLE'),
+      name: z.string().min(1),
+      value: ValueExprSchema,
+      scope: z.enum(['RESOLUTION', 'GAME']).default('RESOLUTION'),
+    }),
+    z.object({
+      type: z.literal('BLOCK_NEXT_DAMAGE'),
+      amount: ValueExprSchema,
+    }),
+    z.object({
+      type: z.literal('TRY_EFFECT'),
+      effects: z.array(CardEffectSchema).min(1),
+      onFailure: z.array(CardEffectSchema).optional(),
+    }),
+    z.object({
+      type: z.literal('REGISTER_LISTENER'),
+      /** Tipo de GameEvent que dispara el oyente (p.ej. ENEMY_DEFEATED) */
+      event: z.string().min(1),
+      once: z.boolean().default(false),
+      duration: z.enum(['THIS_TURN', 'GAME']).default('THIS_TURN'),
+      tag: z.string().optional(),
+      effects: z.array(CardEffectSchema).min(1),
+    }),
+    z.object({
+      type: z.literal('REMOVE_LISTENER'),
+      tag: z.string().min(1),
+    }),
+    z.object({
+      type: z.literal('DISCARD_FROM_HAND'),
+      count: ValueExprSchema,
+    }),
   ]),
 );
 
@@ -445,6 +683,8 @@ export type CardEffect =
   | { type: 'ON_DEFEAT'; effects: CardEffect[] }
   | { type: 'ON_ENEMY_DEFEATED'; effects: CardEffect[]; condition?: { fortitudeGte?: number } }
   | { type: 'ON_HORDE_ATTACK'; effects: CardEffect[] }
+  | { type: 'REPEAT'; times: ValueExpr; max: number; effects: CardEffect[] }
+  | { type: 'CHOOSE_ONE'; prompt?: string; optional?: boolean; options: { label?: string; effects: CardEffect[] }[] }
   | { type: 'IGNORE_COIN_REWARDS' }
   | { type: 'IGNORE_GLORY_REWARDS' }
   | { type: 'END_ATTACK' }
@@ -470,7 +710,30 @@ export type CardEffect =
   | { type: 'LOOK_AT_CARDS'; deck: 'HORDE'; amount: ValueExpr; action: 'REORDER' }
   | { type: 'STEAL_COINS_MULTIPLE'; maxTotal?: ValueExpr; maxPerHero?: ValueExpr; max_total?: ValueExpr; max_per_hero?: ValueExpr }
   | { type: 'PLAY_RANDOM_CARD_FROM_OTHER_HERO'; costGlory?: ValueExpr; cost_glory?: ValueExpr }
-  | { type: 'CUSTOM_SCENARIO'; handler: string };
+  | { type: 'CUSTOM_SCENARIO'; handler: string }
+  // Extensiones del Taller (fase 1+)
+  | { type: 'DEAL_DAMAGE_HITS'; amount: ValueExpr; times: ValueExpr; target: TargetSelector }
+  | { type: 'EXECUTE_ENEMY'; target: TargetSelector; threshold: ValueExpr; loot?: boolean }
+  | { type: 'OVERKILL_DAMAGE'; amount: ValueExpr; target: TargetSelector; spill: TargetSelector }
+  | { type: 'SPAWN_ENEMY'; count: number }
+  | { type: 'DISCARD_HORDE_CARD'; count: number; from?: 'TOP' | 'BOTTOM' }
+  | { type: 'MOVE_HORDE_CARDS'; count: number; to: 'TOP' | 'BOTTOM' }
+  | { type: 'DRAW_FROM_BOTTOM'; amount: ValueExpr }
+  | { type: 'DRAW_UP_TO'; limit: number }
+  | { type: 'TAKE_WOUNDS'; amount: ValueExpr; hero?: HeroSelector }
+  | { type: 'GRANT_ARMOR'; amount: ValueExpr; duration: EffectDuration }
+  | { type: 'MOVE_CARD'; count: ValueExpr; from: 'HAND' | 'WEAR_PILE' | 'ABILITY_DECK'; to: 'HAND' | 'WEAR_PILE' | 'ABILITY_DECK' | 'REMOVED_FROM_GAME' }
+  | { type: 'FOR_EACH'; collection: 'ENEMIES' | 'OTHER_HEROES' | 'ALL_HEROES'; effects: CardEffect[] }
+  | { type: 'APPLY_STATUS'; status: string; stacks: ValueExpr; duration?: 'PERMANENT' | 'UNTIL_END_OF_TURN'; target: TargetSelector }
+  | { type: 'REMOVE_STATUS'; status: string; target: TargetSelector }
+  | { type: 'INCREASE_STATUS'; status: string; amount: ValueExpr; target: TargetSelector }
+  // Extensiones del Taller (fase 2)
+  | { type: 'SET_VARIABLE'; name: string; value: ValueExpr; scope?: 'RESOLUTION' | 'GAME' }
+  | { type: 'BLOCK_NEXT_DAMAGE'; amount: ValueExpr }
+  | { type: 'TRY_EFFECT'; effects: CardEffect[]; onFailure?: CardEffect[] }
+  | { type: 'REGISTER_LISTENER'; event: string; once?: boolean; duration?: 'THIS_TURN' | 'GAME'; tag?: string; effects: CardEffect[] }
+  | { type: 'REMOVE_LISTENER'; tag: string }
+  | { type: 'DISCARD_FROM_HAND'; count: ValueExpr };
 
 // ============================================================================
 // Reward — recompensa de una Hueste en el reverso
@@ -548,9 +811,28 @@ export const CardDefinitionSchema = z.object({
     pdfRow: z.number().int().optional(),
     pdfCol: z.number().int().optional(),
   }).optional(),
+  /** Texto manual que sustituye al texto generado (debe ser coherente con los efectos) */
+  textOverride: z.string().optional(),
+  /** Texto alternativo accesible de la imagen (obligatorio para publicar custom) */
+  altText: z.string().optional(),
+  /** Pericia de Señor de la Guerra (declarativa): disparador + efectos +
+   *  condición opcional sobre la carta origen (p. ej. 'printedAttack == 1').
+   *  El motor la ejecuta genéricamente — los Señores del Taller no
+   *  necesitan código nuevo. */
+  peritia: z.object({
+    trigger: z.enum(['DAMAGE_DEALT', 'CARD_PLAYED', 'CONTINUOUS']),
+    effects: z.array(CardEffectSchema).min(1),
+    condition: z.string().max(64).optional(),
+    /** Texto de la pericia (referencia fuente) */
+    text: z.string().optional(),
+  }).optional(),
   verificationStatus: z.enum(['CONFIRMED', 'OCR', 'COLOR', 'INFERRED', 'REVISAR']).default('CONFIRMED'),
   author: z.string().default('official'),
   version: z.string().default('1.0.0'),
+  /** Separacion oficial/personalizado. Las cartas del core son OFFICIAL. */
+  officialStatus: OfficialStatusSchema.default('OFFICIAL'),
+  /** Conjunto al que pertenece la carta ('official' para el juego base). */
+  setId: z.string().default('official'),
 });
 
 export type CardDefinition = z.infer<typeof CardDefinitionSchema>;
@@ -573,3 +855,46 @@ export const CardSetSchema = z.object({
 });
 
 export type CardSet = z.infer<typeof CardSetSchema>;
+
+// ============================================================================
+// DeckDefinition — mazo de Habilidad (oficial o personalizado)
+// ============================================================================
+
+export const DECK_SIZE = 15;
+
+export const DeckDefinitionSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  /** Clases de Héroe cuyas cartas puede usar el mazo (1 = estándar, 2 = multiclase) */
+  heroClassIds: z.array(HeroClassSchema).min(1).max(2),
+  cardEntries: z.array(z.object({
+    cardDefinitionId: z.string().min(1),
+    copies: z.number().int().min(1),
+  })).min(1),
+  deckSize: z.number().int().min(1).default(DECK_SIZE),
+  allowedGameModes: z.array(z.enum(['STANDARD', 'SOLO', 'MULTICLASS'])).default(['STANDARD', 'SOLO']),
+  setId: z.string().default('official'),
+  officialStatus: OfficialStatusSchema.default('OFFICIAL'),
+  author: z.string().default('official'),
+  version: z.string().default('1.0.0'),
+});
+export type DeckDefinition = z.infer<typeof DeckDefinitionSchema>;
+
+// ============================================================================
+// ContentSet — conjunto versionado de contenido (Taller)
+// ============================================================================
+
+export const ContentSetSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  version: z.string().min(1),
+  author: z.string().min(1),
+  description: z.string().default(''),
+  status: z.enum(['DRAFT', 'VALIDATION', 'REVIEW', 'PUBLISHED']).default('DRAFT'),
+  cards: z.array(CardDefinitionSchema).default([]),
+  decks: z.array(DeckDefinitionSchema).default([]),
+  /** Versiones mínimas requeridas para jugar el conjunto */
+  requiredRulesetVersion: z.string().optional(),
+  checksum: z.string().optional(),
+});
+export type ContentSet = z.infer<typeof ContentSetSchema>;

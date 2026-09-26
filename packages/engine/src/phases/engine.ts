@@ -17,10 +17,12 @@ import type {
 } from '@nt4h/schema';
 import type { DeterministicRng } from '../rng/index.js';
 import { applyEvent, checkFortitudeDefeats, mapPlayerState } from '../events/applyEvent.js';
-import { getEffectiveFortitude, getEnemyOutgoingDamageBonus, expireModifiers } from '../modifiers/index.js';
+import { getEffectiveFortitude, getEnemyOutgoingDamageBonus, cleanupHordeAttackEnd, cleanupRestoration, cleanupTurnEnd } from '../modifiers/index.js';
 import { applyScenarioEffects, clearScenarioEffects, onTurnStart, executeTurnStartEffect } from '../scenarios/index.js';
 import { EffectRegistry, registerCoreEffects } from '../effects/registry.js';
 import { processHordeAttackTriggers } from '../effects/resolver.js';
+import { dispatchListeners } from '../effects/listeners.js';
+import { computeHordeAttackBreakdown } from '../analysis/hordeBreakdown.js';
 import { calculateSoloScore } from '../modes/solo.js';
 import { nextSeq, resetSeq } from '../seq.js';
 import type { CatalogLoadResult } from '@nt4h/catalog';
@@ -51,8 +53,48 @@ export function processPhases(
   const allEvents: GameEvent[] = [];
   let pending: PhaseResult['pendingPhase'] = null;
 
+  // Registry compartido para oyentes del Taller (REGISTER_LISTENER): se
+  // disparan tras cada evento de fase. Sus eventos NO re-disparan oyentes.
+  const phaseReg = new EffectRegistry();
+  registerCoreEffects(phaseReg);
+  const applyBatch = (base: GameState, evs: GameEvent[]): { state: GameState; extra: GameEvent[] } => {
+    let s = base;
+    const extra: GameEvent[] = [];
+    for (const ev of evs) {
+      s = applyEvent(s, ev);
+      const dl = dispatchListeners(s, ev, { registry: phaseReg, rng, nextSeq });
+      if (dl.events.length > 0) {
+        extra.push(...dl.events);
+        s = dl.state;
+      }
+    }
+    return { state: s, extra };
+  };
+
   // Maximo 20 iteraciones para evitar bucles infinitos
   for (let i = 0; i < 20; i++) {
+    // Podar pendingChoices de héroes eliminados: un héroe con
+    // wounds >= maxWounds no puede ejecutar comandos (salvo PASS),
+    // así que sus elecciones pendientes bloquearían la máquina de
+    // fases para siempre (deadlock). Se retiran como parte del
+    // avance — la spec le saca de la partida al recibir la herida.
+    const aliveChoices = current.pendingChoices.filter(c => {
+      const p = current.players[c.playerId];
+      // Jugador inexistente o eliminado → la elección es irresoluble.
+      return !!p && p.wounds < (p.maxWounds ?? 3);
+    });
+    if (aliveChoices.length !== current.pendingChoices.length) {
+      // Event-sourced: la poda también debe ocurrir en el fold del eventLog
+      allEvents.push({
+        type: 'PENDING_CHOICES_REMOVED',
+        choiceIds: current.pendingChoices
+          .filter(c => !aliveChoices.includes(c))
+          .map(c => c.choiceId),
+        seq: nextSeq(),
+      });
+      current = { ...current, pendingChoices: aliveChoices };
+    }
+
     switch (current.phase) {
       case 'HORDE_ATTACK': {
         // D371: Ventana de reacción — antes del ataque, otros héroes pueden
@@ -83,8 +125,11 @@ export function processPhases(
         // interceptación caía en el siguiente turno.
         const pendingReactions = current.pendingChoices.filter(
           c => c.type === 'REACTION_WINDOW'
+            || c.fromReactionWindow === true
+            // Fallback para estados serializados antiguos sin la marca
             || c.choiceId.startsWith('reaction-hero-')
             || c.choiceId.startsWith('lisavette-enemy-')
+            || c.choiceId.startsWith('lisavette-')
             || c.choiceId.startsWith('valerys-')
         );
         if (pendingReactions.length > 0) {
@@ -95,18 +140,24 @@ export function processPhases(
         const reg = new EffectRegistry();
         registerCoreEffects(reg);
         const triggerResult = processHordeAttackTriggers(current, rng, reg, catalog);
+        // D440: triggerResult.state YA tiene los eventos aplicados inline
+        // (applyEventInline dentro del resolver). Aplicarlos de nuevo con
+        // applyBatch sobre ese estado duplicaría recompensas (COINS_GAINED,
+        // GLORY_GAINED del escenario). Se aplican sobre `current` (estado
+        // pre-trigger), lo que reproduce triggerResult.state y además
+        // dispara los oyentes del Taller.
         // Si hay eleccion pendiente (empate de Trampa), detener y esperar al jugador
+        const trigApplied = applyBatch(current, triggerResult.events);
+        allEvents.push(...triggerResult.events, ...trigApplied.extra);
         if (triggerResult.pendingChoice) {
           current = {
-            ...triggerResult.state,
-            pendingChoices: [...triggerResult.state.pendingChoices, triggerResult.pendingChoice],
+            ...trigApplied.state,
+            pendingChoices: [...trigApplied.state.pendingChoices, triggerResult.pendingChoice],
           };
-          allEvents.push(...triggerResult.events);
           // Detener el procesamiento de fases: el jugador debe resolver la eleccion
           return { events: allEvents, state: current, rng, pendingPhase: null };
         }
-        current = triggerResult.events.reduce((s, e) => applyEvent(s, e), triggerResult.state);
-        allEvents.push(...triggerResult.events);
+        current = trigApplied.state;
 
         // D434: Feldon — Pericia de uso discrecional (spec §6.8, 1 uso).
         // Preguntar al jugador que va a recibir el daño (activo o interceptor)
@@ -117,6 +168,12 @@ export function processPhases(
         const feldonChoicePending = current.pendingChoices.some(
           c => c.type === 'CONFIRM' && c.choiceId.startsWith('feldon-reduce-')
         );
+        // Si la pregunta a Feldon ya está pendiente, el ataque debe ESPERAR
+        // su resolución — antes atacaba directamente dejando la elección
+        // bloqueando las fases siguientes.
+        if (feldonChoicePending) {
+          return { events: allEvents, state: current, rng, pendingPhase: null };
+        }
         // No ofrecer la Pericia si el daño entrante es 0 (campo vacío o
         // enemigos con daño deshabilitado): aceptarla gastaría el uso en vano
         const incomingDamage = current.battlefield
@@ -148,15 +205,17 @@ export function processPhases(
         // Luego procesar el ataque de la Horda
         const result = processHordeAttack(current, rng, catalog);
         // Aplicar eventos al estado para sincronizar
-        current = result.events.reduce((s, e) => applyEvent(s, e), result.state);
-        allEvents.push(...result.events);
+        const hordeApplied = applyBatch(result.state, result.events);
+        current = hordeApplied.state;
+        allEvents.push(...result.events, ...hordeApplied.extra);
         break;
       }
 
       case 'RESTORATION': {
         const result = processRestoration(current, rng, catalog);
-        current = result.events.reduce((s, e) => applyEvent(s, e), result.state);
-        allEvents.push(...result.events);
+        const restApplied = applyBatch(result.state, result.events);
+        current = restApplied.state;
+        allEvents.push(...result.events, ...restApplied.extra);
         // Si el jugador debe elegir qué descartar (mano > 4), pausar
         if (current.pendingChoices.length > 0) {
           return { events: allEvents, state: current, rng, pendingPhase: null };
@@ -166,29 +225,33 @@ export function processPhases(
 
       case 'BATTLEFIELD_REPLENISHMENT': {
         const result = processBattlefieldReplenishment(current, rng, catalog);
-        current = result.events.reduce((s, e) => applyEvent(s, e), result.state);
-        allEvents.push(...result.events);
+        const replApplied = applyBatch(result.state, result.events);
+        current = replApplied.state;
+        allEvents.push(...result.events, ...replApplied.extra);
         break;
       }
 
       case 'SCENARIO_TRANSITION': {
         const result = processScenarioTransition(current, rng, catalog);
-        current = result.events.reduce((s, e) => applyEvent(s, e), result.state);
-        allEvents.push(...result.events);
+        const scenApplied = applyBatch(result.state, result.events);
+        current = scenApplied.state;
+        allEvents.push(...result.events, ...scenApplied.extra);
         break;
       }
 
       case 'TURN_END': {
         const result = processTurnEnd(current, rng);
-        current = result.events.reduce((s, e) => applyEvent(s, e), result.state);
-        allEvents.push(...result.events);
+        const endApplied = applyBatch(result.state, result.events);
+        current = endApplied.state;
+        allEvents.push(...result.events, ...endApplied.extra);
         break;
       }
 
       case 'GAME_END_CHECK': {
         const result = processGameEndCheck(current, rng, catalog);
-        current = result.events.reduce((s, e) => applyEvent(s, e), result.state);
-        allEvents.push(...result.events);
+        const endCheckApplied = applyBatch(result.state, result.events);
+        current = endCheckApplied.state;
+        allEvents.push(...result.events, ...endCheckApplied.extra);
         if (current.phase === 'FINISHED') {
           pending = 'FINISHED';
         }
@@ -271,50 +334,72 @@ function processHordeAttack(
   const events: GameEvent[] = [];
   const player = state.players[state.activePlayerId];
 
+  // === Estados de enemigo del Taller (§3) ===
+  // 'poison': al activarse la Horda, cada enemigo envenenado recibe sus stacks
+  // de Heridas ANTES de resolver el ataque (puede morir y no aportar daño).
+  // 'stun': salta este ataque y luego se consume (emitido aquí; el desglose
+  // de daño ya lo trató como deshabilitado via computeHordeAttackBreakdown).
+  // `damageBase`: vista local con el veneno ya aplicado — SOLO para el
+  // cálculo de daño. El `state` devuelto no la incluye: los eventos los
+  // aplica processPhases (aplicarlos aquí duplicaría las Heridas).
+  let damageBase = state;
+  {
+    const defeatedByPoison = new Set<string>();
+    for (const enemy of state.battlefield) {
+      const poison = (enemy.statuses ?? []).find(s => s.id === 'poison' && s.stacks > 0);
+      if (!poison) continue;
+      const woundEv: GameEvent = {
+        type: 'WOUND_PLACED',
+        enemyInstanceId: enemy.instanceId,
+        amount: poison.stacks,
+        seq: nextSeq(),
+      };
+      events.push(woundEv);
+      damageBase = applyEvent(damageBase, woundEv);
+      const refreshed = damageBase.battlefield.find(e => e.instanceId === enemy.instanceId);
+      if (refreshed && refreshed.wounds >= getEffectiveFortitude(refreshed, damageBase)) {
+        defeatedByPoison.add(enemy.instanceId);
+        const defEv: GameEvent = {
+          type: 'ENEMY_DEFEATED',
+          enemyInstanceId: enemy.instanceId,
+          enemyDefinitionId: enemy.definitionId,
+          defeatingPlayerId: state.activePlayerId,
+          reward: {
+            coins: state.ignoreCoinRewards ? 0 : (enemy.reward?.coins ?? 0),
+            glory: state.ignoreGloryRewards ? 0 : (enemy.reward?.glory ?? 0),
+          },
+          seq: nextSeq(),
+        };
+        events.push(defEv);
+        damageBase = applyEvent(damageBase, defEv);
+      }
+    }
+    // 'stun' salta este ataque (el desglose lo ve aún presente → aporta 0)
+    // y se consume tras la Horda: STATUS_REMOVED solo va al log.
+    for (const enemy of state.battlefield) {
+      if (defeatedByPoison.has(enemy.instanceId)) continue;
+      if ((enemy.statuses ?? []).some(s => s.id === 'stun' && s.stacks > 0)) {
+        events.push({
+          type: 'STATUS_REMOVED',
+          enemyInstanceId: enemy.instanceId,
+          status: 'stun',
+          seq: nextSeq(),
+        });
+      }
+    }
+  }
+
   // Calcular dano total de la Horda
   // Especificacion 3.4: Dano = Suma(Fortaleza - Heridas) de cada enemigo vivo
   // Especificacion 3.6: Anti-Magia: enemigos con este icono hacen menos dano
   // a heroes con capacidad MAGIC (restar valor indicado de la Fortaleza)
-  const heroHasMagic = player.capabilities.includes('MAGIC');
-  let totalDamage = 0;
-  for (const enemy of state.battlefield) {
-    if (enemy.damageDisabled) continue;
-    // El dano de cada enemigo = Fortaleza efectiva - Heridas (minimo 0)
-    let enemyDamage = Math.max(0, getEffectiveFortitude(enemy, state) - enemy.wounds);
-    // Anti-Magia: si el heroe tiene Magia y el enemigo tiene ANTI_MAGIC,
-    // restar el valor indicado (por defecto 1) de la Fortaleza al calcular dano
-    if (heroHasMagic && enemy.specialIcons?.includes('ANTI_MAGIC')) {
-      const enemyDef = catalog.byId.get(enemy.definitionId);
-      const antiMagicValue = enemyDef?.antiMagicValue ?? 1;
-      enemyDamage = Math.max(0, enemyDamage - antiMagicValue);
-    }
-    // Puerto de Eque: +1 dano del enemigo (modificador ENEMY_OUTGOING_DAMAGE en enemigo)
-    enemyDamage += getEnemyOutgoingDamageBonus(enemy);
-    totalDamage += enemyDamage;
-  }
-
-  // Aplicar prevencion y escudos
-  let effectiveDamage = totalDamage;
-  // Valerys: si el dano fue interceptado, skip defensas del objetivo original
+  // Fuente única del cálculo: computeHordeAttackBreakdown (la UI usa la
+  // misma función para el banner/resumen — no se duplica la regla).
+  // Valerys: si el dano fue interceptado, skip defensas del objetivo
+  // original — el subtotal es el daño crudo antes de defensas.
   const interceptorId = player.interceptedBy;
-  if (!interceptorId) {
-    if (player.prevention > 0) {
-      effectiveDamage = Math.max(0, effectiveDamage - player.prevention);
-    }
-    // Escudos: absorben daño de la Horda
-    if (player.shields > 0) {
-      effectiveDamage = Math.max(0, effectiveDamage - player.shields);
-    }
-    if (player.damageCancellation) {
-      effectiveDamage = 0;
-    }
-
-    // D434: Feldon — la reduccion a la mitad es opt-in (spec §6.8, 1 uso).
-    // El uso ya se consumio al aceptar la eleccion 'feldon-reduce-*'.
-    if (player.heroId === 'hero.feldon' && player.feldonDecision === 'HALVE') {
-      effectiveDamage = Math.floor(effectiveDamage / 2);
-    }
-  }
+  const breakdown = computeHordeAttackBreakdown(damageBase, catalog, state.activePlayerId);
+  const effectiveDamage = interceptorId ? breakdown.subtotal : breakdown.finalExhaustion;
 
   // D403: Limpiar interceptedBy si el daño quedó en 0 — si no, el flag persiste
   // y redirige incorrectamente el siguiente ataque de la Horda
@@ -335,33 +420,13 @@ function processHordeAttack(
         interceptedBy: null,
       }));
       // D372: Recalcular dano de la Horda usando las capacidades del interceptor
-      // (Anti-Magia depende del heroe que recibe el dano, no del objetivo original)
-      const interceptorHasMagic = interceptor.capabilities.includes('MAGIC');
-      let interceptorTotalDamage = 0;
-      for (const enemy of state.battlefield) {
-        if (enemy.damageDisabled) continue;
-        let enemyDamage = Math.max(0, getEffectiveFortitude(enemy, state) - enemy.wounds);
-        if (interceptorHasMagic && enemy.specialIcons?.includes('ANTI_MAGIC')) {
-          const enemyDef = catalog.byId.get(enemy.definitionId);
-          const antiMagicValue = enemyDef?.antiMagicValue ?? 1;
-          enemyDamage = Math.max(0, enemyDamage - antiMagicValue);
-        }
-        enemyDamage += getEnemyOutgoingDamageBonus(enemy);
-        interceptorTotalDamage += enemyDamage;
-      }
-      // Aplicar dano al interceptor con reciclaje + herida si el mazo se agota
-      // Recalcular defensas del interceptor (prevention, shields, damageCancellation)
-      let interceptorDamage = interceptorTotalDamage;
-      if (interceptor.damageCancellation) {
-        interceptorDamage = 0;
-      } else {
-        interceptorDamage = Math.max(0, interceptorDamage - interceptor.prevention);
-        interceptorDamage = Math.max(0, interceptorDamage - interceptor.shields);
-        // D373/D434: Feldon como interceptor aplica su reduccion solo si la
-        // aceptó en la eleccion 'feldon-reduce-*' (uso ya consumido allí)
-        if (interceptor.heroId === 'hero.feldon' && interceptor.feldonDecision === 'HALVE') {
-          interceptorDamage = Math.floor(interceptorDamage / 2);
-        }
+      // (Anti-Magia depende del heroe que recibe el dano, no del objetivo original).
+      // Misma fuente única: desglose calculado contra el interceptor.
+      const interceptorBreakdown = computeHordeAttackBreakdown(damageBase, catalog, interceptorId);
+      const interceptorDamage = interceptorBreakdown.finalExhaustion;
+      // BLOCK_NEXT_DAMAGE del interceptor consumido por el cálculo
+      if (interceptorBreakdown.blockApplied > 0) {
+        events.push({ type: 'BLOCK_CONSUMED', playerId: interceptorId, seq: nextSeq() });
       }
       if (interceptorDamage === 0) {
         // El interceptor bloquea todo el dano; pasar a Mercado
@@ -373,12 +438,10 @@ function processHordeAttack(
           totalDamage: 0,
           seq: nextSeq(),
         });
-        state = expireModifiers(state, 'HORDE_ATTACK_END');
-        // D404: limpiar REACTION_WINDOW obsoletas al salir de HORDE_ATTACK
-        state = {
-          ...state,
-          pendingChoices: state.pendingChoices.filter(c => c.type !== 'REACTION_WINDOW'),
-        };
+        // D404: limpiar REACTION_WINDOW obsoletas al salir de HORDE_ATTACK —
+        // incluido en cleanupHordeAttackEnd (mismo helper que el reducer).
+        state = cleanupHordeAttackEnd(state);
+        events.push({ type: 'EFFECTS_EXPIRED', scope: 'HORDE_ATTACK_END', seq: nextSeq() });
         events.push({
           type: 'PHASE_CHANGED',
           phase: 'MARKET',
@@ -466,12 +529,10 @@ function processHordeAttack(
       // No pre-aplicar el estado del interceptor: los eventos (CARDS_LOST, HERO_WOUNDED,
       // DECK_RESHUFFLED) se aplicarán posteriormente via applyEvent en processPhases.
       // El objetivo no sufre perdida de cartas, pero hay que pasar a Mercado
-      state = expireModifiers(state, 'HORDE_ATTACK_END');
-      // D404: limpiar REACTION_WINDOW obsoletas al salir de HORDE_ATTACK
-      state = {
-        ...state,
-        pendingChoices: state.pendingChoices.filter(c => c.type !== 'REACTION_WINDOW'),
-      };
+      // D404: limpiar REACTION_WINDOW obsoletas al salir de HORDE_ATTACK —
+      // incluido en cleanupHordeAttackEnd (mismo helper que el reducer).
+      state = cleanupHordeAttackEnd(state);
+      events.push({ type: 'EFFECTS_EXPIRED', scope: 'HORDE_ATTACK_END', seq: nextSeq() });
       events.push({
         type: 'PHASE_CHANGED',
         phase: 'MARKET',
@@ -489,6 +550,10 @@ function processHordeAttack(
     totalDamage: effectiveDamage,
     seq: nextSeq(),
   });
+  // BLOCK_NEXT_DAMAGE: ya descontado en breakdown.finalExhaustion
+  if (breakdown.blockApplied > 0) {
+    events.push({ type: 'BLOCK_CONSUMED', playerId: state.activePlayerId, seq: nextSeq() });
+  }
   if (effectiveDamage > 0) {
     let remainingDamage = effectiveDamage;
     let currentDeck = [...player.abilityDeck];
@@ -565,14 +630,11 @@ function processHordeAttack(
     }
   }
 
-  // Expirar modificadores de HORDE_ATTACK y resetear defensa tras el ataque
-  state = expireModifiers(state, 'HORDE_ATTACK_END');
-
-  // D404: limpiar REACTION_WINDOW obsoletas al salir de HORDE_ATTACK
-  state = {
-    ...state,
-    pendingChoices: state.pendingChoices.filter(c => c.type !== 'REACTION_WINDOW'),
-  };
+  // Expirar modificadores de HORDE_ATTACK y resetear defensa tras el ataque.
+  // D404: limpiar REACTION_WINDOW obsoletas al salir de HORDE_ATTACK —
+  // incluido en cleanupHordeAttackEnd (mismo helper que el reducer).
+  state = cleanupHordeAttackEnd(state);
+  events.push({ type: 'EFFECTS_EXPIRED', scope: 'HORDE_ATTACK_END', seq: nextSeq() });
 
   // Pasar a Mercado
   events.push({
@@ -647,6 +709,7 @@ function processRestoration(
       cardInstanceId: card.instanceId,
       from: 'HAND' as Zone,
       to: 'WEAR_PILE' as Zone,
+      playerId: player.playerId,
       seq: nextSeq(),
     });
   }
@@ -713,24 +776,20 @@ function processRestoration(
       hand: initialHand,
       abilityDeck: initialDeck,
       wearPile: initialWearPile,
-      prevention: 0,
-      damageCancellation: false,
-      interceptedBy: null,
-      shields: 0,
     },
   };
 
-  // Limpiar damageDisabled de enemigos y heridas temporales
-  // Especificacion 3.6: las Heridas de enemigos con icono TEMPORARY_WOUNDS
-  // se descartan al final del Restablecimiento
-  const newBattlefield = state.battlefield.map(e => ({
-    ...e,
-    damageDisabled: false,
-    // Resetear heridas si el enemigo tiene icono de heridas temporales
-    wounds: e.specialIcons?.includes('TEMPORARY_WOUNDS') ? 0 : e.wounds,
-    modifiers: e.modifiers.filter(m => m.duration !== 'UNTIL_END_OF_TURN' && m.duration !== 'HORDE_ATTACK' && m.duration !== 'NEXT_HORDE_ATTACK'),
-  }));
+  // Limpiezas del Restablecimiento — defensas del héroe activo, daño de
+  // enemigos rehabilitado, estados UNTIL_END_OF_TURN caducados y heridas de
+  // TEMPORARY_WOUNDS descartadas (spec §3.6). Mismo helper que el reducer de
+  // EFFECTS_EXPIRED: el fold del eventLog reproduce exactamente este estado.
+  const cleaned = cleanupRestoration({
+    ...state,
+    players: newPlayers,
+    phase: 'BATTLEFIELD_REPLENISHMENT',
+  });
 
+  events.push({ type: 'EFFECTS_EXPIRED', scope: 'RESTORATION', seq: nextSeq() });
   events.push({
     type: 'PHASE_CHANGED',
     phase: 'BATTLEFIELD_REPLENISHMENT',
@@ -738,12 +797,7 @@ function processRestoration(
   });
 
   return {
-    state: {
-      ...state,
-      players: newPlayers,
-      battlefield: newBattlefield,
-      phase: 'BATTLEFIELD_REPLENISHMENT',
-    },
+    state: cleaned,
     events,
   };
 }
@@ -892,6 +946,9 @@ function processBattlefieldReplenishment(
       enemyInstanceId: enemy.instanceId,
       definitionId: enemy.definitionId,
       fortitude: enemy.baseFortitude,
+      // EnemyState completo: el reducer lo inserta en el campo durante el
+      // fold del eventLog (auras de entrada ya incluidas en `enemy`).
+      enemy,
       seq: nextSeq(),
     });
 
@@ -1079,17 +1136,11 @@ function processTurnEnd(
     seq: nextSeq(),
   });
 
-  // Limpiar modificadores del jugador con duracion UNTIL_END_OF_TURN (Piedra de Amolar)
+  // La expiración de modificadores UNTIL_END_OF_TURN (Piedra de Amolar,
+  // Puerto de Eque, Flecha Corrosiva) y el reseteo de flags de Apoyo se hacen
+  // via cleanupTurnEnd al final — mismo helper que el reducer de EFFECTS_EXPIRED.
   const player = state.players[state.activePlayerId];
   if (player) {
-    const cleanedModifiers = player.modifiers.filter(m => m.duration !== 'UNTIL_END_OF_TURN');
-    if (cleanedModifiers.length !== player.modifiers.length) {
-      state = mapPlayerState(state, state.activePlayerId, p => ({
-        ...p,
-        modifiers: cleanedModifiers,
-      }));
-    }
-
     // D349/D363: Devolver cartas robadas de Apoyo según spec §4.2:
     // - Carta USADA → devolver al fondo de su mazo de origen (sea cual sea
     //   su zona: Desgaste, frente al jugador, etc.)
@@ -1157,19 +1208,13 @@ function processTurnEnd(
       }));
     }
   }
-  // Limpiar modificadores de enemigos con duracion UNTIL_END_OF_TURN (Flecha Corrosiva)
-  const battlefieldChanged = state.battlefield.some(e =>
-    e.modifiers.some(m => m.duration === 'UNTIL_END_OF_TURN')
-  );
-  if (battlefieldChanged) {
-    state = {
-      ...state,
-      battlefield: state.battlefield.map(e => ({
-        ...e,
-        modifiers: e.modifiers.filter(m => m.duration !== 'UNTIL_END_OF_TURN'),
-      })),
-    };
-  }
+
+  // Expirar modificadores UNTIL_END_OF_TURN (jugadores y enemigos) y resetear
+  // flags de Apoyo — event-sourced para que el fold del eventLog converja.
+  // Va DESPUÉS de los CARD_MOVED/CARD_REMOVED de cartas prestadas: su
+  // redirección al mazo de Apoyo depende de borrowedSupportCardIds.
+  state = cleanupTurnEnd(state);
+  events.push({ type: 'EFFECTS_EXPIRED', scope: 'TURN_END', seq: nextSeq() });
 
   // Pas al siguiente jugador (saltando jugadores eliminados)
   const currentIndex = state.playerOrder.indexOf(state.activePlayerId);

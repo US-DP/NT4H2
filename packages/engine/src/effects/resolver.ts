@@ -25,11 +25,13 @@ import type {
 } from '@nt4h/schema';
 import type { DeterministicRng } from '../rng/index.js';
 import type { EffectRegistry} from '../effects/registry.js';
+import { ResolutionBudgetError } from '../effects/registry.js';
 import { evalValue, resolveTarget, applyHeroDamage, drawCardsWithReshuffle } from '../effects/registry.js';
 import { EventBus, MAX_CHAIN_DEPTH, MAX_EFFECT_RECURSION } from '../triggers/index.js';
 import { applyEvent, checkFortitudeDefeats } from '../events/applyEvent.js';
 import { getEffectiveFortitude, getEnemyDamageBonus } from '../modifiers/index.js';
 import { onEnemyDefeated as scenarioOnEnemyDefeated } from '../scenarios/index.js';
+import { dispatchListeners } from './listeners.js';
 import { nextSeq, resetSeq } from '../seq.js';
 import type { CatalogLoadResult } from '@nt4h/catalog';
 
@@ -206,6 +208,8 @@ export function resolveCard(
     depth: 0,
     chosenHeroTarget: chosenHeroTarget ?? null,
     chosenEnemyTarget: chosenEnemyTarget ?? null,
+    opsUsed: 0,
+    destinationAfterUse: cardDef.destinationAfterUse,
   };
 
   // Pre-escanear empates en selectores que requieren eleccion del jugador
@@ -376,8 +380,66 @@ export function resolveCard(
   }
 
   // 2. Ejecutar efectos de la carta (excluyendo ON_DEFEAT que ya se procesaron)
-  for (const effect of cardDef.effects) {
+  for (let ei = 0; ei < cardDef.effects.length; ei++) {
+    const effect = cardDef.effects[ei];
     if (effect.type === 'ON_DEFEAT' || effect.type === 'ON_HORDE_ATTACK') continue;
+
+    // CHOOSE_ONE (Taller §9.11): pausar la resolucion y pedir la eleccion.
+    // Las ramas y los efectos restantes viajan en resolutionContext para que
+    // RESOLVE_CHOICE continúe de forma determinista.
+    if (effect.type === 'CHOOSE_ONE') {
+      ctx.pendingEffects = cardDef.effects.slice(ei + 1);
+      ctx.choiceEffects = effect.options.map(o => o.effects);
+      const labels = effect.options.map((o, i) => o.label ?? `Opción ${i + 1}`);
+      if (effect.optional) {
+        ctx.choiceEffects.push([]);
+        labels.push('No hacer nada');
+      }
+      return {
+        events: allEvents,
+        newState: currentState,
+        enemiesDefeated,
+        additionalCardsPlayed,
+        pendingChoice: {
+          choiceId: `choose-${card.instanceId}-${nextSeq()}`,
+          playerId: player.playerId,
+          type: 'CHOOSE_EFFECT',
+          prompt: effect.prompt ?? `${cardDef.name}: elige un efecto`,
+          options: labels,
+          minSelections: 1,
+          maxSelections: 1,
+          resolutionContext: ctx,
+        },
+      };
+    }
+
+    if (effect.type === 'DISCARD_FROM_HAND') {
+      // Descarte con elección del jugador: pausar la resolución y pedir
+      // qué cartas de la mano descartar (Taller). RESOLVE_CHOICE las mueve
+      // al Desgaste y continúa con los efectos restantes.
+      const count = Math.max(0, evalValue(effect.count, ctx, currentState));
+      const eligible = currentState.players[player.playerId].hand
+        .filter(c => c.instanceId !== card.instanceId)
+        .map(c => c.instanceId);
+      if (count <= 0 || eligible.length === 0) continue;
+      ctx.pendingEffects = cardDef.effects.slice(ei + 1);
+      return {
+        events: allEvents,
+        newState: currentState,
+        enemiesDefeated,
+        additionalCardsPlayed,
+        pendingChoice: {
+          choiceId: `fx-discard-${card.instanceId}-${nextSeq()}`,
+          playerId: player.playerId,
+          type: 'SELECT_CARD_FROM_HAND',
+          prompt: `${cardDef.name}: descarta ${count} carta(s)`,
+          options: eligible,
+          minSelections: Math.min(count, eligible.length),
+          maxSelections: Math.min(count, eligible.length),
+          resolutionContext: ctx,
+        },
+      };
+    }
 
     if (effect.type === 'DRAW_AND_ADD_ATTACK') {
       // Todo o Nada: robar 1 carta, sumar su dano al ataque, recuperar al fondo
@@ -422,7 +484,8 @@ export function resolveCard(
           cardInstanceId: drawnCard.instanceId,
           from: 'HAND',
           to: 'ABILITY_DECK',
-          seq: nextSeq(),
+          playerId: player.playerId,
+  seq: nextSeq(),
         });
         currentState = {
           ...currentState,
@@ -430,6 +493,11 @@ export function resolveCard(
             ...currentState.players,
             [player.playerId]: {
               ...currentState.players[player.playerId],
+              // Quitar de la mano además de añadir al mazo — si no, la
+              // carta existe en ambas zonas hasta que se aplique el
+              // CARD_MOVED (DISCARD_FROM_HAND la ofrecería, etc.).
+              hand: currentState.players[player.playerId].hand
+                .filter(c => c.instanceId !== drawnCard.instanceId),
               abilityDeck: [
                 ...currentState.players[player.playerId].abilityDeck,
                 { ...drawnCard, zone: 'ABILITY_DECK' as Zone },
@@ -500,12 +568,43 @@ export function resolveCard(
         newEnemyInstanceId: newEnemyCard.instanceId,
         newEnemyDefinitionId: newEnemyCard.definitionId,
         newEnemyFortitude: newEnemyDef.printedFortitude ?? 1,
-        newEnemyReward: newEnemyDef.reward ?? null,
+        // El botín es secreto: se revela en ENEMY_DEFEATED, no al entrar.
+        newEnemyReward: null,
         newEnemyIsOrc: newEnemyDef.isOrc ?? false,
         newEnemyIsWarlord: newEnemyDef.type === 'WARLORD',
         newEnemySpecialIcons: newEnemyDef.specialIcons ?? [],
         seq: nextSeq(),
       });
+      continue;
+    }
+
+    if (effect.type === 'SPAWN_ENEMY') {
+      // Invocar enemigos del mazo de la Horda (se roba desde el FONDO).
+      // El resolver lo intercepta porque necesita el catálogo para los stats.
+      const spawned = currentState.hordeDeck.slice(-effect.count);
+      for (const spawnCard of spawned) {
+        const spawnDef = catalog.byId.get(spawnCard.definitionId);
+        if (!spawnDef) continue;
+        allEvents.push({
+          type: 'ENEMY_SPAWNED',
+          enemyInstanceId: spawnCard.instanceId,
+          enemyDefinitionId: spawnCard.definitionId,
+          enemyFortitude: spawnDef.printedFortitude ?? 1,
+          enemyReward: spawnDef.reward ?? null,
+          enemyIsOrc: spawnDef.isOrc ?? false,
+          enemyIsWarlord: spawnDef.type === 'WARLORD',
+          enemySpecialIcons: spawnDef.specialIcons ?? [],
+          seq: nextSeq(),
+        });
+        if (spawnDef.type === 'WARLORD') {
+          allEvents.push({
+            type: 'WARLORD_REVEALED',
+            warlordInstanceId: spawnCard.instanceId,
+            definitionId: spawnCard.definitionId,
+            seq: nextSeq(),
+          });
+        }
+      }
       continue;
     }
 
@@ -642,8 +741,22 @@ export function resolveCard(
       continue;
     }
 
-    // Efecto normal: delegar al registry
-    const effectEvents = registry.execute(effect, ctx, currentState, rng, bus);
+    // Efecto normal: delegar al registry (con presupuesto de operaciones)
+    let effectEvents: GameEvent[];
+    try {
+      effectEvents = registry.execute(effect, ctx, currentState, rng, bus);
+    } catch (err) {
+      if (err instanceof ResolutionBudgetError) {
+        allEvents.push({
+          type: 'RESOLUTION_HALTED',
+          cardInstanceId: card.instanceId,
+          reason: err.message,
+          seq: nextSeq(),
+        });
+        break;
+      }
+      throw err;
+    }
     allEvents.push(...effectEvents);
 
     // Aplicar eventos al estado
@@ -653,6 +766,16 @@ export function resolveCard(
         ? currentState.battlefield.find(e => e.instanceId === ev.enemyInstanceId)
         : null;
       currentState = applyEventInline(currentState, ev);
+      // Oyentes del Taller (REGISTER_LISTENER): disparan sus efectos cuando
+      // coincide el tipo de evento. Los eventos que emiten NO vuelven a
+      // disparar oyentes (sin cascada — protege de bucles).
+      const dispatched = dispatchListeners(currentState, ev, {
+        registry, rng, nextSeq,
+      });
+      if (dispatched.events.length > 0) {
+        allEvents.push(...dispatched.events);
+        currentState = dispatched.state;
+      }
       if (ev.type === 'ENEMY_DEFEATED' && enemyBeforeApply && !enemiesDefeated.includes(ev.enemyInstanceId)) {
         enemiesDefeated.push(ev.enemyInstanceId);
         const scenarioDefId = currentState.scenario?.definitionId;
@@ -711,21 +834,13 @@ export function resolveCard(
     const warlordDef = catalog.byId.get(warlord.definitionId);
     if (!warlordDef) continue;
 
-    // Gurdrug: cada carta que dañe al Jefe provoca pérdida de 1 carta adicional
-    // D428: identificar por definitionId estable
-    if (warlordDef.id === 'warlord.gurdrug') {
-      // Usar applyHeroDamage para manejar mazo vacío (reciclaje + herida)
-      const gurdrugEvents = applyHeroDamage(
-        player.playerId, 1, currentState, rng, nextSeq,
-      );
-      allEvents.push(...gurdrugEvents);
-      // Actualizar estado para que la siguiente iteración vea el mazo actualizado
-      for (const ev of gurdrugEvents) {
-        currentState = applyEventInline(currentState, ev);
-      }
-    }
-
-    // Shriekknifer: cartas con printedAttack == 1 → recuperar 1 carta
+    // Pericia declarativa del Señor (genérica — los Señores del Taller
+    // no necesitan código nuevo). Soportada:
+    //   trigger DAMAGE_DEALT → LOSE_CARDS (el dañador pierde N cartas)
+    //   trigger CARD_PLAYED  + condición 'printedAttack == N' sobre la
+    //     carta origen → RECOVER_CARDS desde la base del desgaste
+    //   trigger CONTINUOUS   → aura persistente (Roghkiller, ver setup)
+    const peritia = warlordDef.peritia;
     // D435: evaluar la carta ORIGEN de cada DAMAGE_DEALT (en cadenas de
     // Disparo Rapido la carta que daña no es la que se jugó originalmente)
     const playedDefIds = new Map<string, string>();
@@ -736,21 +851,44 @@ export function resolveCard(
     }
     const sourceDefId = playedDefIds.get(dmgEv.sourceCardInstanceId) ?? cardDef.id;
     const sourceDef = catalog.byId.get(sourceDefId);
-    if (warlordDef.id === 'warlord.shriekknifer' && (sourceDef?.printedAttack ?? 0) === 1) {
-      const playerState = currentState.players[player.playerId];
-      if (playerState.wearPile.length > 0) {
+    // Condición 'printedAttack == N' sobre la carta origen
+    const condAttack = peritia?.condition
+      ? /^printedAttack\s*==\s*(\d+)$/.exec(peritia.condition)?.[1]
+      : undefined;
+    const condOk = condAttack === undefined
+      || (sourceDef?.printedAttack ?? 0) === Number(condAttack);
+
+    if (peritia?.trigger === 'DAMAGE_DEALT' && condOk) {
+      for (const eff of peritia.effects) {
+        if (eff.type !== 'LOSE_CARDS') continue;
+        const n = evalValue(eff.amount, ctx, currentState);
+        if (n <= 0) continue;
+        // applyHeroDamage maneja mazo vacío (reciclaje + herida)
+        const peritiaEvents = applyHeroDamage(player.playerId, n, currentState, rng, nextSeq);
+        allEvents.push(...peritiaEvents);
+        for (const ev of peritiaEvents) {
+          currentState = applyEventInline(currentState, ev);
+        }
+      }
+    }
+
+    if (peritia?.trigger === 'CARD_PLAYED' && condOk) {
+      for (const eff of peritia.effects) {
+        if (eff.type !== 'RECOVER_CARDS') continue;
+        const playerState = currentState.players[player.playerId];
+        const n = evalValue(eff.amount, ctx, currentState);
+        if (playerState.wearPile.length === 0 || n <= 0) continue;
         // Recuperar de la parte INFERIOR del desgaste (cartas más antiguas)
-        const recoveredCard = playerState.wearPile[0];
+        const recovered = playerState.wearPile.slice(0, n);
         const recoverEvent = {
           type: 'CARDS_RECOVERED' as const,
           playerId: player.playerId,
-          count: 1,
-          cardInstanceIds: [recoveredCard.instanceId],
+          count: recovered.length,
+          cardInstanceIds: recovered.map((c) => c.instanceId),
           toZone: 'ABILITY_DECK' as const,
           seq: nextSeq(),
         };
         allEvents.push(recoverEvent);
-        // Actualizar estado para que la siguiente iteración vea el desgaste actualizado
         currentState = applyEventInline(currentState, recoverEvent);
       }
     }
@@ -780,7 +918,8 @@ export function resolveCard(
       cardInstanceId: card.instanceId,
       from: 'HAND',
       to: 'WEAR_PILE',
-      seq: nextSeq(),
+      playerId: player.playerId,
+  seq: nextSeq(),
     });
   } else if (cardDef.destinationAfterUse === 'REMOVED_FROM_GAME') {
     allEvents.push({
@@ -938,7 +1077,8 @@ function resolveRapidShot(
       cardInstanceId: drawnCard.instanceId,
       from: 'ABILITY_DECK' as Zone,
       to: 'HAND' as Zone,
-      seq: nextSeq(),
+      playerId: player.playerId,
+  seq: nextSeq(),
     });
   } else {
     events.push({
@@ -1076,7 +1216,8 @@ function resolveRapidShot(
       cardInstanceId: drawnCard.instanceId,
       from: 'HAND',
       to: 'WEAR_PILE',
-      seq: nextSeq(),
+      playerId: player.playerId,
+  seq: nextSeq(),
     });
 
     // Recursion: la carta robada tambien tiene DRAW_AND_CHECK
@@ -1119,7 +1260,8 @@ function resolveRapidShot(
       cardInstanceId: drawnCard.instanceId,
       from: 'HAND',
       to: 'ABILITY_DECK',
-      seq: nextSeq(),
+      playerId: player.playerId,
+  seq: nextSeq(),
     });
     // Actualizar estado: remover de mano, anadir al fondo del mazo origen
     const p = currentState.players[player.playerId];
@@ -1316,7 +1458,7 @@ function applyEventInline(state: GameState, event: GameEvent): GameState {
 // Ejecutar cadena de efectos con limite de recursion
 // ============================================================================
 
-function executeEffectChain(
+export function executeEffectChain(
   effects: CardEffect[],
   ctx: ResolutionContext,
   state: GameState,
@@ -1335,7 +1477,21 @@ function executeEffectChain(
   bus.setState(currentState);
 
   for (const effect of effects) {
-    const events = registry.execute(effect, ctx, currentState, rng, bus);
+    let events: GameEvent[];
+    try {
+      events = registry.execute(effect, ctx, currentState, rng, bus);
+    } catch (err) {
+      if (err instanceof ResolutionBudgetError) {
+        allEvents.push({
+          type: 'RESOLUTION_HALTED',
+          cardInstanceId: ctx.currentCardInstanceId,
+          reason: err.message,
+          seq: nextSeq(),
+        });
+        break;
+      }
+      throw err;
+    }
     allEvents.push(...events);
     for (const ev of events) {
       currentState = applyEventInline(currentState, ev);

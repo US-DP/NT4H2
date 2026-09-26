@@ -9,10 +9,17 @@
       "copies": 2,
       "printedAttack": 3,
       "effects": [
-        { "type": "LOSE_CARDS", "amount": { "kind": "CONSTANT", "value": 1 } }
+        {
+          "type": "LOSE_CARDS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Pierdes 1 carta."
     },
     {
       "id": "warrior.shield-charge",
@@ -22,10 +29,18 @@
       "copies": 1,
       "printedAttack": 2,
       "effects": [
-        { "type": "PREVENT_DAMAGE", "amount": { "kind": "CONSTANT", "value": 2 }, "duration": "HORDE_ATTACK" }
+        {
+          "type": "PREVENT_DAMAGE",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 2
+          },
+          "duration": "HORDE_ATTACK"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Previenes 2 de Daño."
     },
     {
       "id": "warrior.double-slash",
@@ -35,10 +50,17 @@
       "copies": 2,
       "printedAttack": 2,
       "effects": [
-        { "type": "LOSE_CARDS", "amount": { "kind": "CONSTANT", "value": 1 } }
+        {
+          "type": "LOSE_CARDS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Pierdes 1 carta."
     },
     {
       "id": "warrior.shield",
@@ -48,11 +70,20 @@
       "copies": 2,
       "printedAttack": 0,
       "effects": [
-        { "type": "PREVENT_ENEMY_DAMAGE", "target": { "kind": "SELECTED_ENEMY" }, "duration": "HORDE_ATTACK" },
-        { "type": "END_ATTACK" }
+        {
+          "type": "PREVENT_ENEMY_DAMAGE",
+          "target": {
+            "kind": "SELECTED_ENEMY"
+          },
+          "duration": "HORDE_ATTACK"
+        },
+        {
+          "type": "END_ATTACK"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Previenes el daño de un único enemigo. Finalizas el Ataque."
     },
     {
       "id": "warrior.sword-strike",
@@ -64,14 +95,25 @@
       "effects": [
         {
           "type": "CONDITIONAL",
-          "condition": { "kind": "FIRST_CARD_OF_NAME_THIS_TURN", "name": "Espadazo" },
+          "condition": {
+            "kind": "FIRST_CARD_OF_NAME_THIS_TURN",
+            "name": "Espadazo"
+          },
           "then": [
-            { "type": "DRAW_CARDS", "amount": { "kind": "CONSTANT", "value": 1 }, "source": "ABILITY_DECK" }
+            {
+              "type": "DRAW_CARDS",
+              "amount": {
+                "kind": "CONSTANT",
+                "value": 1
+              },
+              "source": "ABILITY_DECK"
+            }
           ]
         }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Roba 1 carta si es el primer “Espadazo” que juegas este turno."
     },
     {
       "id": "warrior.step-back",
@@ -81,10 +123,18 @@
       "copies": 2,
       "printedAttack": 0,
       "effects": [
-        { "type": "DRAW_CARDS", "amount": { "kind": "CONSTANT", "value": 2 }, "source": "ABILITY_DECK" }
+        {
+          "type": "DRAW_CARDS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 2
+          },
+          "source": "ABILITY_DECK"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Roba 2 cartas."
     },
     {
       "id": "warrior.all-or-nothing",
@@ -94,11 +144,19 @@
       "copies": 1,
       "printedAttack": 1,
       "effects": [
-        { "type": "DRAW_AND_ADD_ATTACK", "amount": { "kind": "CONSTANT", "value": 1 }, "source": "ABILITY_DECK" }
+        {
+          "type": "DRAW_AND_ADD_ATTACK",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          },
+          "source": "ABILITY_DECK"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR",
-      "_note": "Roba 1 carta, suma su dano al ataque de esta carta, y recupera la carta robada al fondo del mazo"
+      "verificationStatus": "CONFIRMED",
+      "_note": "Roba 1 carta, suma su dano al ataque de esta carta, y recupera la carta robada al fondo del mazo",
+      "altText": "Roba 1 carta y agrega su daño al de esta carta. Recupera la carta robada."
     },
     {
       "id": "warrior.voice-of-encouragement",
@@ -108,12 +166,32 @@
       "copies": 1,
       "printedAttack": 0,
       "effects": [
-        { "type": "ALL_HEROES_RECOVER", "amount": { "kind": "CONSTANT", "value": 2 } },
-        { "type": "DRAW_CARDS", "amount": { "kind": "CONSTANT", "value": 1 }, "source": "ABILITY_DECK" },
-        { "type": "GAIN_GLORY", "amount": { "kind": "CONSTANT", "value": 1 } }
+        {
+          "type": "ALL_HEROES_RECOVER",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 2
+          }
+        },
+        {
+          "type": "DRAW_CARDS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          },
+          "source": "ABILITY_DECK"
+        },
+        {
+          "type": "GAIN_GLORY",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "INFERRED"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Todos recuperan 2 cartas. Roba 1 carta y ganas 1 ficha de Gloria."
     }
   ]
 }

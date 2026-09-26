@@ -85,13 +85,30 @@ export function setupGame(
   };
 
   // === 1. Construir la Horda ===
-  const hordeCards = catalog.byType.get('HORDE') ?? [];
-  const warlordCards = catalog.byType.get('WARLORD') ?? [];
+  const hordeCardsAll = catalog.byType.get('HORDE') ?? [];
+  const warlordCardsAll = catalog.byType.get('WARLORD') ?? [];
 
-  // D406: comparar instancias totales (suma de copies), no definiciones
+  // Pools personalizados del Taller: si la config indica ids, sustituyen
+  // al pool oficial. Los Señores también pueden restringirse.
+  const hordeCards = config.hordeCardIds?.length
+    ? hordeCardsAll.filter(c => config.hordeCardIds!.includes(c.id))
+    : hordeCardsAll;
+  const warlordCards = config.warlordIds?.length
+    ? warlordCardsAll.filter(c => config.warlordIds!.includes(c.id))
+    : warlordCardsAll;
+
+  // D406: comparar instancias totales (suma de copies), no definiciones.
+  // El mínimo de 27 solo aplica al pool oficial: un pool personalizado
+  // puede ser más pequeño (la partida usa lo disponible).
   const totalHordeInstances = hordeCards.reduce((sum, c) => sum + c.copies, 0);
-  if (totalHordeInstances < 27) {
+  if (!config.hordeCardIds?.length && totalHordeInstances < 27) {
     errors.push(`Expected 27 Horde card instances, got ${totalHordeInstances}`);
+  }
+  if (config.hordeCardIds?.length && totalHordeInstances === 0) {
+    errors.push('Custom Horde pool is empty or has no valid HORDE cards');
+  }
+  if (config.warlordIds?.length && warlordCards.length === 0) {
+    errors.push('Custom Warlord pool has no valid WARLORD cards');
   }
 
   // Tamano de la Horda segun numero de jugadores (especificacion 3.2.1):
@@ -212,15 +229,20 @@ export function setupGame(
     }
     // D377: Filtrar mercado considerando tambien penaltyCapabilities
     // (un hero multiclase puede comprar cartas con penalizacion si tiene el icono penalizado).
-    // Misma semantica que isLegal en execute.ts: cada required puede sustituirse por
-    // cualquier penalty icon que el jugador posea.
+    // Misma semantica que isLegal en execute.ts: basta UN icono requerido
+    // (los iconos impresos son alternativas), o un icono penalizado.
     marketCards = marketCardsAll.filter(card => {
       if (!card.requiredCapabilities || card.requiredCapabilities.length === 0) return true;
-      return card.requiredCapabilities.every(cap =>
+      return card.requiredCapabilities.some(cap =>
         playerCapabilities.has(cap) ||
         (card.penaltyCapabilities?.some(p => playerCapabilities.has(p.icon)) ?? false)
       );
     });
+  }
+  // Pool de Mercado personalizado (Taller): sustituye al pool oficial
+  if (config.marketCardIds?.length) {
+    const wanted = new Set(config.marketCardIds);
+    marketCards = marketCards.filter(c => wanted.has(c.id));
   }
   const marketInstances: CardInstance[] = [];
   if (config.mode === 'SOLO') {
@@ -254,6 +276,11 @@ export function setupGame(
     if (config.mode === 'SOLO') {
       scenarioCards = scenarioCards.filter(s => s.id !== 'scenario.tears-of-aradiel' && s.id !== 'scenario.cemenmar-wastes');
     }
+    // scenarioIds: el jugador puede limitar qué escenarios entran en el mazo
+    if (config.scenarioIds && config.scenarioIds.length > 0) {
+      const wanted = new Set(config.scenarioIds);
+      scenarioCards = scenarioCards.filter(s => wanted.has(s.id));
+    }
     const scenarioInstances: CardInstance[] = scenarioCards.map(card => ({
       instanceId: nextInstanceId('scenario'),
       definitionId: card.id,
@@ -286,6 +313,17 @@ export function setupGame(
 
     const classCards = catalog.byClass.get(heroClass) ?? [];
 
+    const deckInstances: CardInstance[] = [];
+
+    // Taller: mazo personalizado — la config lleva el snapshot de ids (15 cartas)
+    const customDeck = heroConfig.customDeckId
+      ? config.customDecks?.find(d => d.id === heroConfig.customDeckId)
+      : undefined;
+    if (heroConfig.customDeckId && !customDeck) {
+      errors.push(`Custom deck not found in config: ${heroConfig.customDeckId}`);
+      continue;
+    }
+
     // D365-D366: Multiclase — construir mazo con 2 clases si secondDeckId está presente
     const secondDeckIdParts = heroConfig.secondDeckId?.split('.');
     const secondClass = secondDeckIdParts?.[0]?.toUpperCase() as 'EXPLORER' | 'WARRIOR' | 'MAGE' | 'ROGUE' | undefined;
@@ -293,8 +331,25 @@ export function setupGame(
       ? (catalog.byClass.get(secondClass) ?? [])
       : [];
 
-    const deckInstances: CardInstance[] = [];
-    if (secondClassCards.length > 0 && config.mode === 'MULTICLASS') {
+    if (customDeck) {
+      for (const defId of customDeck.cardDefinitionIds) {
+        const def = catalog.byId.get(defId);
+        if (!def || def.type !== 'ABILITY') {
+          errors.push(`Custom deck ${customDeck.id}: unknown/non-ability card ${defId}`);
+          continue;
+        }
+        deckInstances.push({
+          instanceId: nextInstanceId('ability'),
+          definitionId: def.id,
+          ownerId: heroConfig.playerId,
+          zone: 'ABILITY_DECK' as Zone,
+          name: def.name,
+        });
+      }
+      if (deckInstances.length !== 15) {
+        errors.push(`Custom deck ${customDeck.id}: ${deckInstances.length} cards (must be 15)`);
+      }
+    } else if (secondClassCards.length > 0 && config.mode === 'MULTICLASS') {
       // Multiclase: mínimo 5 de cada clase, 15 total
       // Tracker de copias usadas por definitionId para evitar duplicar copias
       const usedCopies = new Map<string, number>();
@@ -425,6 +480,7 @@ export function setupGame(
       trophies: [],
       shields: 0,
       prevention: 0,
+      armor: 0,
       damageCancellation: false,
       interceptedBy: null,
       modifiers: [],
@@ -433,6 +489,7 @@ export function setupGame(
       persistentCards: [],
       supportDecks: [],
       playerAge: heroConfig.playerAge,
+      evasionTokenUsed: false,
     };
 
     // Solitario: rellenar mazos de Apoyo (spec §4.2)
@@ -494,10 +551,21 @@ export function setupGame(
       isOrc: enemyDef.isOrc ?? false,
       specialIcons: enemyDef.specialIcons ?? [],
       damageDisabled: false,
+      statuses: [],
     };
 
     state.battlefield.push(enemy);
 
+    // ENEMY_REVEALED con el EnemyState completo: en un fold del eventLog el
+    // reducer lo inserta en el campo (idempotente — aquí ya está insertado).
+    events.push({
+      type: 'ENEMY_REVEALED',
+      enemyInstanceId: enemy.instanceId,
+      definitionId: enemy.definitionId,
+      fortitude: enemy.baseFortitude,
+      enemy,
+      seq: nextSeq(),
+    });
     // D401: Si el enemigo es Warlord, emitir WARLORD_REVEALED y marcarlo
     if (enemy.isWarlord) {
       events.push({
@@ -507,14 +575,6 @@ export function setupGame(
         seq: nextSeq(),
       });
       state.warlordRevealed = true;
-    } else {
-      events.push({
-        type: 'ENEMY_REVEALED',
-        enemyInstanceId: enemy.instanceId,
-        definitionId: enemy.definitionId,
-        fortitude: enemy.baseFortitude,
-        seq: nextSeq(),
-      });
     }
   }
 
@@ -529,19 +589,28 @@ export function setupGame(
     )?.instanceId;
     state.battlefield = state.battlefield.map(e => {
       if (e.isOrc && e.instanceId !== roghkillerInstanceId) {
+        const mod = {
+          id: `roghkiller-setup-${nextSeq()}`,
+          sourceId: 'roghkiller',
+          layer: 'FORTITUDE_MODIFIERS' as const,
+          timestamp: nextSeq(),
+          duration: 'WHILE_SOURCE_ACTIVE' as const,
+          amount: 1,
+        };
+        // Event-sourced: el aura también debe existir en el fold del eventLog
+        events.push({
+          type: 'MODIFIER_ADDED',
+          modifierId: mod.id,
+          targetId: e.instanceId,
+          layer: mod.layer,
+          amount: mod.amount,
+          sourceId: mod.sourceId,
+          duration: mod.duration,
+          seq: nextSeq(),
+        });
         return {
           ...e,
-          modifiers: [
-            ...e.modifiers,
-            {
-              id: `roghkiller-setup-${nextSeq()}`,
-              sourceId: 'roghkiller',
-              layer: 'FORTITUDE_MODIFIERS',
-              timestamp: nextSeq(),
-              duration: 'WHILE_SOURCE_ACTIVE' as const,
-              amount: 1,
-            },
-          ],
+          modifiers: [...e.modifiers, mod],
         };
       }
       return e;
@@ -665,9 +734,8 @@ export function resolveLeaderBid(
   // Recoger las cartas pujadas por cada jugador desde las pendingChoices resueltas
   // Las cartas elegidas se guardan en state.pendingChoices como relatedCardIds
   // tras ser resueltas. Aquí leemos el estado actual.
-  let leaderId = state.playerOrder[0];
-  let maxDamage = -1;
-
+  // Calcular el daño pujado por cada jugador y mover las cartas al fondo
+  const damageByPlayer = new Map<string, number>();
   for (const playerId of state.playerOrder) {
     const player = state.players[playerId];
     if (!player) continue;
@@ -682,20 +750,7 @@ export function resolveLeaderBid(
       const cardDef = catalog.byId.get(card.definitionId);
       bidDamage += cardDef?.printedAttack ?? 0;
     }
-
-    // Empate: gana el jugador con mayor edad (spec §3.2.6)
-    if (bidDamage > maxDamage) {
-      maxDamage = bidDamage;
-      leaderId = playerId;
-    } else if (bidDamage === maxDamage) {
-      const currentLeader = state.players[leaderId];
-      const challenger = state.players[playerId];
-      const currentAge = currentLeader?.playerAge ?? 0;
-      const challengerAge = challenger?.playerAge ?? 0;
-      if (challengerAge > currentAge) {
-        leaderId = playerId;
-      }
-    }
+    damageByPlayer.set(playerId, bidDamage);
 
     // Retirar las cartas pujadas de la mano y ponerlas al fondo del mazo
     // (con eventos para que el replay reconstruya el estado)
@@ -706,6 +761,7 @@ export function resolveLeaderBid(
         cardInstanceId: card.instanceId,
         from: 'HAND',
         to: 'ABILITY_DECK',
+        playerId,
         seq: nextSeq(),
       });
     }
@@ -720,6 +776,40 @@ export function resolveLeaderBid(
         },
       },
     };
+  }
+
+  // Determinar el Líder: mayor daño sumado. En empate (spec §3.2.6):
+  // - Si todos los empatados declararon edad, gana el mayor (regla de mesa).
+  // - Si no (la app no pide datos personales), sorteo determinista con el
+  //   RNG sembrado — reproducible en replay, sin datos privados.
+  const maxDamage = Math.max(0, ...damageByPlayer.values());
+  const tied = state.playerOrder.filter(pid => damageByPlayer.get(pid) === maxDamage);
+  let leaderId = tied[0] ?? state.playerOrder[0];
+  if (tied.length > 1) {
+    const ages = tied.map(pid => state.players[pid]?.playerAge);
+    const allHaveAge = ages.every(a => typeof a === 'number');
+    if (allHaveAge) {
+      const maxAge = Math.max(...(ages as number[]));
+      leaderId = tied.find(pid => state.players[pid].playerAge === maxAge) ?? tied[0];
+      events.push({
+        type: 'LEADER_TIE_BREAK',
+        tiedPlayerIds: tied,
+        winnerId: leaderId,
+        method: 'AGE',
+        seq: nextSeq(),
+      });
+    } else {
+      const rng = DeterministicRng.deserialize(state.rngState);
+      leaderId = rng.pick(tied);
+      state = { ...state, rngState: rng.serialize() };
+      events.push({
+        type: 'LEADER_TIE_BREAK',
+        tiedPlayerIds: tied,
+        winnerId: leaderId,
+        method: 'RANDOM_SEEDED',
+        seq: nextSeq(),
+      });
+    }
   }
 
   // Robar hasta tener 4 cartas en mano

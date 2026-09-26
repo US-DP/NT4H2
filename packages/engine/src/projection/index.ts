@@ -27,6 +27,12 @@ const PRIVATE_EVENT_TYPES = new Set([
   'CARDS_REVEALED_TO_PLAYER',
 ]);
 
+/** Eventos secretos para TODOS los viewers (orden futuro de la Horda). */
+const ALWAYS_PRIVATE = new Set(['HORDE_DECK_REORDERED']);
+
+/** Marcador para ids de carta redactados en eventos públicos. */
+const HIDDEN_CARD = 'hidden';
+
 export interface PlayerGameState {
   phase: string;
   activePlayerId: string;
@@ -62,6 +68,8 @@ export interface PlayerGameState {
     shields: number;
     prevention: number;
     damageCancellation: boolean;
+    /** Ficha de Evasión gastada (público: la ficha está boca arriba/abajo en mesa) */
+    evasionTokenUsed: boolean;
     /** Solo el propio jugador ve su mano */
     hand?: Array<{
       instanceId: string;
@@ -145,6 +153,7 @@ export function projectForPlayer(
       shields: playerState.shields,
       prevention: playerState.prevention,
       damageCancellation: playerState.damageCancellation,
+      evasionTokenUsed: playerState.evasionTokenUsed ?? false,
       capabilities: playerState.capabilities,
       persistentCards: playerState.persistentCards.map(c => ({
         instanceId: c.instanceId,
@@ -183,10 +192,10 @@ export function projectForPlayer(
       relatedCardIds: c.relatedCardIds,
     }));
 
-  // Filtrar eventos privados del log
-  const eventLog = (state.eventLog ?? []).filter(
-    (e: GameEvent) => !isPrivateEvent(e, viewerId),
-  );
+  // Filtrar/sanitizar eventos privados del log
+  const eventLog = (state.eventLog ?? [])
+    .map((e: GameEvent) => sanitizeEventForViewer(e, viewerId))
+    .filter((e): e is GameEvent => e !== null);
 
   return {
     phase: state.phase,
@@ -216,6 +225,59 @@ export function projectForPlayer(
  * Determinar si un evento contiene información privada que no debe
  * revelarse a un viewer específico.
  */
+/**
+ * Devuelve el evento seguro para el viewer, o null si debe ocultarse.
+ * Además de filtrar, REDACTA campos que revelan información oculta:
+ * - HORDE_DECK_REORDERED.newOrder filtra el orden futuro → oculto a todos.
+ * - CARD_MOVED que toca HAND filtra la mano/puja → el id real solo lo ve
+ *   el dueño (playerId o toPlayerId); el resto ve el hecho con id oculto.
+ * - EVASION_PERFORMED conserva el número de descartes pero oculta qué
+ *   cartas eran para los demás jugadores.
+ * - ENEMY_SWAPPED.newEnemyReward es defensivo: aunque un emisor lo
+ *   rellene, el botín solo se revela al derrotar al enemigo.
+ */
+function sanitizeEventForViewer(
+  event: GameEvent,
+  viewerId: string | null,
+): GameEvent | null {
+  if (isPrivateEvent(event, viewerId) || ALWAYS_PRIVATE.has(event.type)) {
+    return null;
+  }
+  if (event.type === 'CARD_MOVED') {
+    const e = event as { from: string; to: string; playerId?: string; toPlayerId?: string };
+    if (e.from === 'HAND' || e.to === 'HAND') {
+      const owner = e.playerId ?? e.toPlayerId;
+      if (owner === viewerId) return event;
+      return { ...event, cardInstanceId: HIDDEN_CARD } as GameEvent;
+    }
+    return event;
+  }
+  if (event.type === 'EVASION_PERFORMED') {
+    const e = event as { playerId?: string; discardedCardInstanceIds: string[] };
+    if (e.playerId === viewerId) return event;
+    return {
+      ...event,
+      discardedCardInstanceIds: e.discardedCardInstanceIds.map(() => HIDDEN_CARD),
+    } as GameEvent;
+  }
+  if (event.type === 'ENEMY_SWAPPED') {
+    const e = event as { newEnemyReward: unknown };
+    if (e.newEnemyReward !== null) {
+      return { ...event, newEnemyReward: null } as GameEvent;
+    }
+  }
+  if (event.type === 'ENEMY_REVEALED') {
+    // El payload `enemy` es necesario para el fold del eventLog, pero su
+    // `reward` es secreto hasta la derrota: redactarlo igual que
+    // ENEMY_SWAPPED.newEnemyReward y que el propio battlefield proyectado.
+    const e = event as { enemy?: { reward?: unknown } };
+    if (e.enemy && e.enemy.reward != null) {
+      return { ...event, enemy: { ...e.enemy, reward: null } } as GameEvent;
+    }
+  }
+  return event;
+}
+
 function isPrivateEvent(event: GameEvent, viewerId: string | null): boolean {
   if (!PRIVATE_EVENT_TYPES.has(event.type)) return false;
 
@@ -247,5 +309,7 @@ export function projectEventsForPlayer(
   events: GameEvent[],
   viewerId: string | null,
 ): GameEvent[] {
-  return events.filter(e => !isPrivateEvent(e, viewerId));
+  return events
+    .map(e => sanitizeEventForViewer(e, viewerId))
+    .filter((e): e is GameEvent => e !== null);
 }

@@ -103,10 +103,10 @@ describe('Nivel 0 - Validacion estatica del catalogo', () => {
       }
     });
 
-    it('debe haber 8 Huestes con F2 (fortaleza 2)', () => {
+    it('debe haber 5 Huestes con F2 (fortaleza 2)', () => {
       const horde = catalog.byType.get('HORDE') ?? [];
       const f2 = horde.filter(c => c.printedFortitude === 2);
-      expect(f2.length).toBe(8);
+      expect(f2.length).toBe(5);
     });
   });
 

@@ -11,11 +11,11 @@
  */
 
 import type { GameState, GameEvent, Command, PendingChoice, EnemyState, ResolutionContext } from '@nt4h/schema';
-import type { DeterministicRng } from '../rng/index.js';
+import { DeterministicRng } from '../rng/index.js';
 import { applyEvent, checkFortitudeDefeats } from '../events/applyEvent.js';
 import { useHeroAbility } from '../heroes/abilities.js';
 import { EffectRegistry, registerCoreEffects, drawCardsWithReshuffle, evalValue } from '../effects/registry.js';
-import { resolveCard, processHordeAttackTriggers } from '../effects/resolver.js';
+import { resolveCard, processHordeAttackTriggers, executeEffectChain } from '../effects/resolver.js';
 import { swapStartingCards, openSupportDeck, buySupportCard } from '../modes/solo.js';
 import { executeTurnStartEffect } from '../scenarios/index.js';
 import { applyEntryAuras } from '../modifiers/index.js';
@@ -40,6 +40,11 @@ export function isLegal(
   command: Command,
   catalog?: CatalogLoadResult,
 ): ValidationResult {
+  // playerId puede venir de un actorId arbitrario (payload/replay) —
+  // rechazar antes de indexar state.players[pid].hand etc.
+  if (!state.players[playerId]) {
+    return { ok: false, reason: 'Player not found' };
+  }
   // Validaciones basicas
   switch (command.type) {
     case 'PLAY_CARD': {
@@ -106,6 +111,11 @@ export function isLegal(
       if (state.activePlayerId !== playerId) {
         return { ok: false, reason: 'Not your turn' };
       }
+      // No permitir cerrar la fase con una elección obligatoria sin
+      // resolver (p.ej. descartes, objetivos pendientes de una carta).
+      if (state.pendingChoices.some(c => c.playerId === playerId && c.minSelections > 0)) {
+        return { ok: false, reason: 'Resolve pending choices first' };
+      }
       return { ok: true };
     }
 
@@ -126,6 +136,10 @@ export function isLegal(
         return { ok: false, reason: 'Duplicate card IDs in evasion' };
       }
       const player = state.players[playerId];
+      // Regla oficial: la Ficha de Evasión se descarta al usarla — una vez por partida
+      if (player.evasionTokenUsed) {
+        return { ok: false, reason: 'Evasion token already used this game' };
+      }
       // Verificar que las cartas pertenezcan a la mano del jugador
       for (const cardId of command.discardedCardInstanceIds) {
         const inHand = player.hand.some(c => c.instanceId === cardId);
@@ -163,18 +177,19 @@ export function isLegal(
           return { ok: false, reason: `Not enough coins (need ${cost}, have ${player.coins})` };
         }
         // Validar iconos de capacidad requeridos
-        // D: Un heroe puede comprar una carta si tiene todos los requiredCapabilities,
-        // o si tiene un penaltyCapability que sustituye al requerido (ej: Picaro con EXPERTISE usa RANGED con -1)
+        // Regla oficial: la carta muestra los iconos de las capacidades que
+        // pueden usarla; el heroe necesita AL MENOS UNO (ej: Piedra de Amolar
+        // muestra 3 iconos). Un penaltyCapability sustituye al requerido con -1
+        // de daño (ej: Picaro con EXPERTISE usa armas RANGED con -1).
         if (cardDef.requiredCapabilities && cardDef.requiredCapabilities.length > 0) {
-          const hasAll = cardDef.requiredCapabilities.every(icon =>
+          const hasAny = cardDef.requiredCapabilities.some(icon =>
             player.capabilities.includes(icon)
           );
-          if (!hasAll) {
+          if (!hasAny) {
             // Verificar si puede usarla con penalizacion
-            const canUseWithPenalty = cardDef.requiredCapabilities.every(reqIcon =>
-              player.capabilities.includes(reqIcon) ||
-              (cardDef.penaltyCapabilities?.some(p => player.capabilities.includes(p.icon)) ?? false)
-            );
+            const canUseWithPenalty = cardDef.penaltyCapabilities?.some(
+              p => player.capabilities.includes(p.icon)
+            ) ?? false;
             if (!canUseWithPenalty) {
               return { ok: false, reason: 'Hero lacks required capabilities' };
             }
@@ -191,6 +206,11 @@ export function isLegal(
       // D392: Validar jugador activo
       if (state.activePlayerId !== playerId) {
         return { ok: false, reason: 'Not your turn' };
+      }
+      // Elecciones obligatorias sin resolver (minSelections > 0) bloquean
+      // el fin de turno — sin esto se podían saltar descartes/selecciones.
+      if (state.pendingChoices.some(c => c.playerId === playerId && c.minSelections > 0)) {
+        return { ok: false, reason: 'Resolve pending choices first' };
       }
       return { ok: true };
     }
@@ -217,6 +237,11 @@ export function isLegal(
       // Héroes activos: solo durante el turno del jugador (no SETUP, FINISHED, etc.)
       if (!isReactiveHero && (state.phase === 'SETUP' || state.phase === 'FINISHED' || state.phase === 'GAME_END_CHECK')) {
         return { ok: false, reason: 'Cannot use hero ability in this phase' };
+      }
+      // Pericias no reactivas: únicamente en el propio turno — sin este
+      // chequeo un jugador podía gastar su uso en el turno de otro.
+      if (!isReactiveHero && playerId !== state.activePlayerId) {
+        return { ok: false, reason: 'Not your turn' };
       }
       return { ok: true };
     }
@@ -381,7 +406,7 @@ export function execute(
   const actingPlayer = state.players[playerId];
   if (
     actingPlayer
-    && actingPlayer.wounds >= (actingPlayer.maxWounds ?? 4)
+    && actingPlayer.wounds >= (actingPlayer.maxWounds ?? 3)
     && command.type !== 'PASS'
   ) {
     return {
@@ -455,6 +480,9 @@ export function execute(
             choiceState = {
               ...choiceState,
               pendingChoices: [...choiceState.pendingChoices, result.pendingChoice],
+              // El RNG puede haberse consumido en la resolución parcial;
+              // persistirlo evita divergencia si hay snapshot entre medias.
+              rngState: rng.serialize(),
             };
             return {
               accepted: true,
@@ -495,6 +523,7 @@ export function execute(
           cardInstanceId: card.instanceId,
           from: 'HAND',
           to: 'WEAR_PILE',
+          playerId,
           seq: reg.nextSeq(),
         });
       }
@@ -683,8 +712,7 @@ export function execute(
       );
       if (allBid && catalog) {
         // Resolver la puja inline (evita import circular con setup.ts)
-        let leaderId = state.playerOrder[0];
-        let maxDamage = -1;
+        const damageByPlayer = new Map<string, number>();
         for (const pid of state.playerOrder) {
           const p = state.players[pid];
           if (!p) continue;
@@ -696,19 +724,7 @@ export function execute(
             const cardDef = catalog.byId.get(card.definitionId);
             bidDamage += cardDef?.printedAttack ?? 0;
           }
-          if (bidDamage > maxDamage) {
-            maxDamage = bidDamage;
-            leaderId = pid;
-          } else if (bidDamage === maxDamage) {
-            // Empate: gana el jugador con mayor edad (spec §3.2.6)
-            const currentLeader = state.players[leaderId];
-            const challenger = state.players[pid];
-            const currentAge = currentLeader?.playerAge ?? 0;
-            const challengerAge = challenger?.playerAge ?? 0;
-            if (challengerAge > currentAge) {
-              leaderId = pid;
-            }
-          }
+          damageByPlayer.set(pid, bidDamage);
           // Retirar cartas pujadas de mano y ponerlas al fondo del mazo
           // (con eventos CARD_MOVED para que el replay reconstruya el estado)
           const bidIds = new Set(bidCards.map(c => c.instanceId));
@@ -718,6 +734,7 @@ export function execute(
               cardInstanceId: card.instanceId,
               from: 'HAND',
               to: 'ABILITY_DECK',
+              playerId: pid,
               seq: reg.nextSeq(),
             });
           }
@@ -760,6 +777,36 @@ export function execute(
               playerId: pid,
               count: drawnIds.length,
               cardInstanceIds: drawnIds,
+              seq: reg.nextSeq(),
+            });
+          }
+        }
+        // Desempate de Líder (misma lógica que setup.resolveLeaderBid):
+        // edad si todos los empatados la declararon; si no, sorteo con RNG sembrado.
+        const maxDamage = Math.max(0, ...damageByPlayer.values());
+        const tied = state.playerOrder.filter(pid => damageByPlayer.get(pid) === maxDamage);
+        let leaderId = tied[0] ?? state.playerOrder[0];
+        if (tied.length > 1) {
+          const ages = tied.map(pid => state.players[pid]?.playerAge);
+          if (ages.every(a => typeof a === 'number')) {
+            const maxAge = Math.max(...(ages as number[]));
+            leaderId = tied.find(pid => state.players[pid].playerAge === maxAge) ?? tied[0];
+            events.push({
+              type: 'LEADER_TIE_BREAK',
+              tiedPlayerIds: tied,
+              winnerId: leaderId,
+              method: 'AGE',
+              seq: reg.nextSeq(),
+            });
+          } else {
+            // Consumir el RNG en curso: el serialize final (al aplicar
+            // eventos) ya refleja el pick — un RNG local se perdería.
+            leaderId = rng.pick(tied);
+            events.push({
+              type: 'LEADER_TIE_BREAK',
+              tiedPlayerIds: tied,
+              winnerId: leaderId,
+              method: 'RANDOM_SEEDED',
               seq: reg.nextSeq(),
             });
           }
@@ -919,6 +966,7 @@ export function execute(
             cardInstanceId: failedCardId,
             from: 'ABILITY_DECK',
             to: 'HAND',
+            playerId,
             seq: reg.nextSeq(),
           });
           // Robar otra carta (D434: Herida + reciclaje si el mazo se agota)
@@ -990,6 +1038,7 @@ export function execute(
               cardInstanceId: handCard.instanceId,
               from: 'HAND',
               to: 'ABILITY_DECK',
+              playerId,
               seq: reg.nextSeq(),
             });
           }
@@ -998,6 +1047,7 @@ export function execute(
             cardInstanceId: foundCard.instanceId,
             from: 'ABILITY_DECK',
             to: 'HAND',
+            playerId,
             seq: reg.nextSeq(),
           });
           events.push(...newEvents);
@@ -1130,10 +1180,9 @@ export function execute(
           registerCoreEffects(reg);
           const triggerResult = processHordeAttackTriggers(state, rng, reg, catalog, chosenEnemyId);
           events.push(...triggerResult.events);
-          let resolvedState = triggerResult.state;
-          for (const ev of triggerResult.events) {
-            resolvedState = applyEvent(resolvedState, ev);
-          }
+          // D440: triggerResult.state YA tiene los eventos aplicados inline —
+          // re-aplicarlos duplicaría recompensas. Se usa directamente.
+          const resolvedState = triggerResult.state;
           state = { ...resolvedState, pendingChoices: resolvedState.pendingChoices.filter(c => c.choiceId !== command.choiceId) };
         } else {
           state = { ...state, pendingChoices: state.pendingChoices.filter(c => c.choiceId !== command.choiceId) };
@@ -1148,6 +1197,7 @@ export function execute(
           cardInstanceId: id,
           from: 'HAND' as const,
           to: 'WEAR_PILE' as const,
+          playerId,
           seq: reg.nextSeq(),
         }));
         events.push(...newEvents);
@@ -1195,8 +1245,8 @@ export function execute(
         const deckCard = player.abilityDeck.find(c => c.instanceId === deckCardId);
         if (handCard && deckCard) {
           const newEvents: GameEvent[] = [
-            { type: 'CARD_MOVED', cardInstanceId: handCard.instanceId, from: 'HAND', to: 'ABILITY_DECK', seq: reg.nextSeq() },
-            { type: 'CARD_MOVED', cardInstanceId: deckCard.instanceId, from: 'ABILITY_DECK', to: 'HAND', seq: reg.nextSeq() },
+            { type: 'CARD_MOVED', cardInstanceId: handCard.instanceId, from: 'HAND', to: 'ABILITY_DECK', playerId, seq: reg.nextSeq() },
+            { type: 'CARD_MOVED', cardInstanceId: deckCard.instanceId, from: 'ABILITY_DECK', to: 'HAND', playerId, seq: reg.nextSeq() },
           ];
           events.push(...newEvents);
           let resolvedState = state;
@@ -1334,7 +1384,7 @@ export function execute(
         // Descartar la carta elegida
         newEvents.push({
           type: 'CARD_MOVED', cardInstanceId: cardId,
-          from: 'HAND', to: 'WEAR_PILE', seq: reg.nextSeq(),
+          from: 'HAND', to: 'WEAR_PILE', playerId, seq: reg.nextSeq(),
         });
         // Robar 1 carta
         if (player.abilityDeck.length > 0) {
@@ -1428,8 +1478,9 @@ export function execute(
         const newEvents: GameEvent[] = [];
         let resolvedState = state;
         if (trophyDef && trophyDefId) {
-          // D398: Colocar el trofeo como enemigo en el campo. ENEMY_REVEALED es
-          // un no-op en applyEvent, asi que insertamos el EnemyState directamente.
+          // D398: Colocar el trofeo como enemigo en el campo. El evento
+          // transporta el EnemyState completo — el reducer lo reproduce en el
+          // fold (idempotente: aquí ya está insertado).
           const newEnemy: EnemyState = applyEntryAuras({
             instanceId: `trophy-${trophyInstanceId}-${reg.nextSeq()}`,
             definitionId: trophyDefId,
@@ -1451,20 +1502,29 @@ export function execute(
             enemyInstanceId: newEnemy.instanceId,
             definitionId: trophyDefId,
             fortitude: newEnemy.baseFortitude,
+            enemy: newEnemy,
             seq: reg.nextSeq(),
           });
           // D434 (spec §6.9 nota Brunmar): el trofeo colocado puede quedar
-          // derrotado si el aura reduce su Fortaleza efectiva a 0
+          // derrotado si el aura reduce su Fortaleza efectiva a 0.
+          // Solo acumular — el bucle de newEvents los aplica una vez.
           for (const ev of checkFortitudeDefeats(resolvedState, playerId, reg.nextSeq)) {
             newEvents.push(ev);
-            resolvedState = applyEvent(resolvedState, ev);
           }
         }
         events.push(...newEvents);
         for (const ev of newEvents) {
           resolvedState = applyEvent(resolvedState, ev);
         }
-        // Remover trofeo del jugador
+        // Remover trofeo del jugador (event-sourced: el fold del eventLog
+        // debe reproducir la retirada — sin el evento el trofeo sobrevive
+        // en replay y puntúa en el desempate final)
+        events.push({
+          type: 'TROPHY_REMOVED',
+          playerId,
+          trophyInstanceId,
+          seq: reg.nextSeq(),
+        });
         resolvedState = {
           ...resolvedState,
           players: {
@@ -1504,6 +1564,7 @@ export function execute(
               options: [state.activePlayerId],
               minSelections: 1,
               maxSelections: 1,
+              fromReactionWindow: true,
             }],
           };
           return { accepted: true, events, newState: { ...state, rngState: rng.serialize() }, rng };
@@ -1512,7 +1573,10 @@ export function execute(
       }
 
       // D371: SELECT_HERO originado de ventana de reacción → invocar useHeroAbility
-      if (choice.type === 'SELECT_HERO' && !choice.resolutionContext && choice.choiceId.startsWith('reaction-hero-')) {
+      // (marca explícita; el prefijo se conserva solo como fallback de
+      // estados serializados antiguos)
+      if (choice.type === 'SELECT_HERO' && !choice.resolutionContext
+        && (choice.fromReactionWindow ?? choice.choiceId.startsWith('reaction-hero-'))) {
         const targetHeroId = command.selectedIds[0];
         if (targetHeroId && catalog) {
           const abilityResult = useHeroAbility(state, playerId, rng, catalog, targetHeroId);
@@ -1544,6 +1608,94 @@ export function execute(
           state = { ...state, pendingChoices: state.pendingChoices.filter(c => c.choiceId !== command.choiceId) };
         }
         return { accepted: true, events, newState: { ...state, rngState: rng.serialize() }, rng };
+      }
+
+      // Taller DISCARD_FROM_HAND: el jugador eligió qué cartas descartar;
+      // se mueven al Desgaste y se continúan los efectos restantes.
+      if (choice.type === 'SELECT_CARD_FROM_HAND'
+        && choice.choiceId.startsWith('fx-discard-')
+        && choice.resolutionContext && catalog) {
+        const rctx = choice.resolutionContext;
+        const hand = state.players[playerId]?.hand ?? [];
+        const discardIds = command.selectedIds.filter(id => hand.some(c => c.instanceId === id));
+        const discardEvents: GameEvent[] = discardIds.map(id => ({
+          type: 'CARD_MOVED' as const,
+          cardInstanceId: id,
+          from: 'HAND' as const,
+          to: 'WEAR_PILE' as const,
+          playerId,
+          seq: reg.nextSeq(),
+        }));
+        let resolvedState = state;
+        for (const ev of discardEvents) resolvedState = applyEvent(resolvedState, ev);
+        const { events: chainEvents } = executeEffectChain(
+          rctx.pendingEffects ?? [], rctx, resolvedState, rng, reg, catalog, 0,
+        );
+        // Finalización: destino de la carta (igual que CHOOSE_EFFECT). El
+        // contexto ya lleva destinationAfterUse — no exige la carta en catálogo.
+        const dest = rctx.destinationAfterUse
+          ?? catalog.byId.get(rctx.currentCardId)?.destinationAfterUse;
+        const recovered = chainEvents.some(
+          e => e.type === 'CARDS_RECOVERED' && e.cardInstanceIds.includes(rctx.currentCardInstanceId)
+        );
+        const tailEvents: GameEvent[] = [];
+        if (dest && !recovered) {
+          if (dest === 'WEAR_PILE') {
+            tailEvents.push({
+              type: 'CARD_MOVED', cardInstanceId: rctx.currentCardInstanceId,
+              from: 'HAND', to: 'WEAR_PILE', playerId: rctx.activePlayerId, seq: reg.nextSeq(),
+            });
+          } else if (dest === 'REMOVED_FROM_GAME') {
+            tailEvents.push({
+              type: 'CARD_REMOVED_FROM_GAME', cardInstanceId: rctx.currentCardInstanceId,
+              seq: reg.nextSeq(),
+            });
+          }
+        }
+        for (const ev of [...chainEvents, ...tailEvents]) {
+          resolvedState = applyEvent(resolvedState, ev);
+        }
+        resolvedState = { ...resolvedState, pendingChoices: resolvedState.pendingChoices.filter(c => c.choiceId !== command.choiceId) };
+        events.push(...discardEvents, ...chainEvents, ...tailEvents);
+        return { accepted: true, events, newState: { ...resolvedState, rngState: rng.serialize() }, rng };
+      }
+
+      // Taller CHOOSE_ONE: ejecutar la rama elegida y despues los efectos
+      // restantes de la carta (guardados en resolutionContext).
+      const choiceEffects = choice.resolutionContext?.choiceEffects;
+      if (choice.type === 'CHOOSE_EFFECT' && choiceEffects && choice.resolutionContext && catalog) {
+        const rctx = choice.resolutionContext;
+        const idx = Math.max(0, choice.options.indexOf(command.selectedIds[0]));
+        const branch = choiceEffects[idx] ?? [];
+        const chain = [...branch, ...(rctx.pendingEffects ?? [])];
+        const { events: chainEvents } = executeEffectChain(chain, rctx, state, rng, reg, catalog, 0);
+        // Finalizacion: mover la carta a su destino (igual que resolveCard),
+        // salvo que la propia rama la haya recuperado (CARDS_RECOVERED).
+        const cardDef = catalog.byId.get(rctx.currentCardId);
+        const recovered = chainEvents.some(
+          e => e.type === 'CARDS_RECOVERED' && e.cardInstanceIds.includes(rctx.currentCardInstanceId)
+        );
+        const tailEvents: GameEvent[] = [];
+        if (cardDef && !recovered) {
+          if (cardDef.destinationAfterUse === 'WEAR_PILE') {
+            tailEvents.push({
+              type: 'CARD_MOVED', cardInstanceId: rctx.currentCardInstanceId,
+              from: 'HAND', to: 'WEAR_PILE', playerId: rctx.activePlayerId, seq: reg.nextSeq(),
+            });
+          } else if (cardDef.destinationAfterUse === 'REMOVED_FROM_GAME') {
+            tailEvents.push({
+              type: 'CARD_REMOVED_FROM_GAME', cardInstanceId: rctx.currentCardInstanceId,
+              seq: reg.nextSeq(),
+            });
+          }
+        }
+        let resolvedState = state;
+        for (const ev of [...chainEvents, ...tailEvents]) {
+          resolvedState = applyEvent(resolvedState, ev);
+        }
+        resolvedState = { ...resolvedState, pendingChoices: resolvedState.pendingChoices.filter(c => c.choiceId !== command.choiceId) };
+        events.push(...chainEvents, ...tailEvents);
+        return { accepted: true, events, newState: { ...resolvedState, rngState: rng.serialize() }, rng };
       }
 
       // Recuperar la carta original del contexto
@@ -1621,6 +1773,10 @@ function getPlayerIdFromCommand(command: Command, state: GameState, actingPlayer
     if (actingPlayerId && state.pendingChoices.some(c => c.choiceId === `leader-bid-${actingPlayerId}`)) {
       return actingPlayerId;
     }
+    // actorId (replay): usar el bid pendiente del actor declarado
+    if (command.actorId && state.pendingChoices.some(c => c.choiceId === `leader-bid-${command.actorId}`)) {
+      return command.actorId;
+    }
     const pendingBid = state.pendingChoices.find(
       c => c.choiceId.startsWith('leader-bid-') &&
         !state.players[c.playerId]?.leaderBidCards?.length
@@ -1631,6 +1787,12 @@ function getPlayerIdFromCommand(command: Command, state: GameState, actingPlayer
   // D427: con actingPlayerId autenticado, los comandos de turno se atribuyen
   // a ese jugador (isLegal ya valida "Not your turn" si no es el activo).
   if (actingPlayerId) return actingPlayerId;
+
+  // Replay/event-sourcing: el actor declarado restaura comandos de
+  // jugadores no activos (pericia reactiva en la ventana de la Horda).
+  // Sin actorId, una USE_HERO_ABILITY de Lisavette se atribuiría al
+  // jugador activo y el replay divergiría del estado online.
+  if (command.actorId) return command.actorId;
 
   return state.activePlayerId;
 }

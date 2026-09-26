@@ -54,8 +54,8 @@ describe('Solo mode — modo solitario', () => {
 
   it('tiene 1 Señor de la Guerra al final de la Horda', () => {
     const result = setupSoloMode(makeSoloConfig(), catalog);
-    // 27 Huestes - 8 de fortaleza 2 = 19, - 3 en campo = 16 + 1 Señor = 17
-    expect(result.state.hordeDeck).toHaveLength(17);
+    // 27 Huestes - 5 de fortaleza 2 = 22, - 3 en campo = 19 + 1 Señor = 17
+    expect(result.state.hordeDeck).toHaveLength(20);
   });
 
   it('crea mazo de Apoyo si se especifican heroes de apoyo', () => {

@@ -75,6 +75,7 @@ export function makePlayer(overrides: Partial<PlayerState> = {}): PlayerState {
     trophies: overrides.trophies ?? [],
     shields: overrides.shields ?? 0,
     prevention: overrides.prevention ?? 0,
+    armor: overrides.armor ?? 0,
     damageCancellation: overrides.damageCancellation ?? false,
     interceptedBy: overrides.interceptedBy ?? null,
     heroUsesRemaining: overrides.heroUsesRemaining ?? 2,

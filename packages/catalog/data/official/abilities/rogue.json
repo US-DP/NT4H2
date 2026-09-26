@@ -14,17 +14,33 @@
           "effects": [
             {
               "type": "CONDITIONAL",
-              "condition": { "kind": "FIRST_CARD_OF_NAME_THIS_TURN", "name": "Al Corazón" },
+              "condition": {
+                "kind": "FIRST_CARD_OF_NAME_THIS_TURN",
+                "name": "Al Corazón"
+              },
               "then": [
-                { "type": "GAIN_COINS", "amount": { "kind": "CONSTANT", "value": 1 } }
+                {
+                  "type": "GAIN_COINS",
+                  "amount": {
+                    "kind": "CONSTANT",
+                    "value": 1
+                  }
+                }
               ]
             }
           ]
         },
-        { "type": "LOSE_CARDS", "amount": { "kind": "CONSTANT", "value": 1 } }
+        {
+          "type": "LOSE_CARDS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Si derrotas un enemigo con este ataque, ganas 1 Moneda si no has jugado otro “Al corazón” este turno. Pierdes 1 carta."
     },
     {
       "id": "rogue.sneak-attack",
@@ -39,16 +55,26 @@
           "effects": [
             {
               "type": "CONDITIONAL",
-              "condition": { "kind": "FIRST_CARD_OF_NAME_THIS_TURN", "name": "Ataque Furtivo" },
+              "condition": {
+                "kind": "FIRST_CARD_OF_NAME_THIS_TURN",
+                "name": "Ataque Furtivo"
+              },
               "then": [
-                { "type": "GAIN_COINS", "amount": { "kind": "CONSTANT", "value": 1 } }
+                {
+                  "type": "GAIN_COINS",
+                  "amount": {
+                    "kind": "CONSTANT",
+                    "value": 1
+                  }
+                }
               ]
             }
           ]
         }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Si derrotas un enemigo con este ataque, ganas 1 Moneda si no has jugado otro “Ataque furtivo” este turno."
     },
     {
       "id": "rogue.precise-crossbow",
@@ -60,13 +86,17 @@
       "effects": [
         {
           "type": "CONDITIONAL",
-          "condition": { "kind": "ALREADY_USED_AGAINST_THIS_ENEMY", "name": "Ballesta Precisa" },
+          "condition": {
+            "kind": "ALREADY_USED_AGAINST_THIS_ENEMY",
+            "name": "Ballesta Precisa"
+          },
           "then": []
         }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR",
-      "_note": "Si ya utilizaste Ballesta Precisa contra el mismo enemigo, el dano es 3. Logica de dano variable en el motor."
+      "verificationStatus": "CONFIRMED",
+      "_note": "Si ya utilizaste Ballesta Precisa contra el mismo enemigo, el dano es 3. Logica de dano variable en el motor.",
+      "altText": "Si ya utilizaste una “Ballesta precisa” contra el mismo enemigo, el daño de esta carta es 3."
     },
     {
       "id": "rogue.in-the-shadows",
@@ -76,10 +106,18 @@
       "copies": 2,
       "printedAttack": 1,
       "effects": [
-        { "type": "PREVENT_DAMAGE", "amount": { "kind": "CONSTANT", "value": 2 }, "duration": "HORDE_ATTACK" }
+        {
+          "type": "PREVENT_DAMAGE",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 2
+          },
+          "duration": "HORDE_ATTACK"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Previenes 2 puntos de Daño."
     },
     {
       "id": "rogue.deceive",
@@ -89,11 +127,25 @@
       "copies": 1,
       "printedAttack": 0,
       "effects": [
-        { "type": "COST", "resource": "COINS", "amount": { "kind": "CONSTANT", "value": 2 } },
-        { "type": "DISABLE_ENEMY_DAMAGE", "target": { "kind": "SELECTED_ENEMY" }, "duration": "UNTIL_END_OF_TURN" }
+        {
+          "type": "COST",
+          "resource": "COINS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 2
+          }
+        },
+        {
+          "type": "DISABLE_ENEMY_DAMAGE",
+          "target": {
+            "kind": "SELECTED_ENEMY"
+          },
+          "duration": "UNTIL_END_OF_TURN"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "El enemigo elegido no causa Daño este turno. Debes gastar 2 Monedas para usar esta carta."
     },
     {
       "id": "rogue.pickpocket",
@@ -103,10 +155,20 @@
       "copies": 1,
       "printedAttack": 0,
       "effects": [
-        { "type": "STEAL_COINS", "amount": { "kind": "CONSTANT", "value": 1 }, "from": { "kind": "EACH_OTHER" } }
+        {
+          "type": "STEAL_COINS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          },
+          "from": {
+            "kind": "EACH_OTHER"
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Roba 1 Moneda a cada héroe."
     },
     {
       "id": "rogue.plunder-a",
@@ -116,11 +178,25 @@
       "copies": 1,
       "printedAttack": 0,
       "effects": [
-        { "type": "GAIN_COINS", "amount": { "kind": "SUM", "of": [ { "kind": "COUNT_LIVING_ENEMIES" }, { "kind": "COUNT_LIVING_ENEMIES" } ] } }
+        {
+          "type": "GAIN_COINS",
+          "amount": {
+            "kind": "SUM",
+            "of": [
+              {
+                "kind": "COUNT_LIVING_ENEMIES"
+              },
+              {
+                "kind": "COUNT_LIVING_ENEMIES"
+              }
+            ]
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR",
-      "_note": "Ganas 2 Monedas por cada enemigo vivo. SUM de 2x COUNT_LIVING_ENEMIES = 2 * count."
+      "verificationStatus": "CONFIRMED",
+      "_note": "Ganas 2 Monedas por cada enemigo vivo. SUM de 2x COUNT_LIVING_ENEMIES = 2 * count.",
+      "altText": "Ganas 2 Monedas por cada enemigo vivo."
     },
     {
       "id": "rogue.plunder-b",
@@ -130,12 +206,24 @@
       "copies": 1,
       "printedAttack": 0,
       "effects": [
-        { "type": "GAIN_COINS", "amount": { "kind": "COUNT_LIVING_ENEMIES" } },
-        { "type": "GAIN_GLORY", "amount": { "kind": "CONSTANT", "value": 1 } }
+        {
+          "type": "GAIN_COINS",
+          "amount": {
+            "kind": "COUNT_LIVING_ENEMIES"
+          }
+        },
+        {
+          "type": "GAIN_GLORY",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR",
-      "_note": "Variante B: 1 Moneda por enemigo vivo + 1 Gloria."
+      "verificationStatus": "CONFIRMED",
+      "_note": "Variante B: 1 Moneda por enemigo vivo + 1 Gloria.",
+      "altText": "Gana 1 Moneda de oro por cada enemigo vivo. Gana 1 Punto de Gloria."
     },
     {
       "id": "rogue.trap",
@@ -149,12 +237,19 @@
           "type": "PLACE_PERSISTENT",
           "trigger": "HORDE_ATTACK",
           "effects": [
-            { "type": "DEFEAT_ENEMY", "target": { "kind": "ENEMY_WITH_MAX_FORTITUDE" }, "loot": false }
+            {
+              "type": "DEFEAT_ENEMY",
+              "target": {
+                "kind": "ENEMY_WITH_MAX_FORTITUDE"
+              },
+              "loot": false
+            }
           ]
         }
       ],
       "destinationAfterUse": "IN_FRONT_OF_PLAYER",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Sitúa esta carta frente a ti. Al resolver el ataque de la Horda, derrotas al enemigo con más Fortaleza. El botín de ese enemigo se pierde."
     }
   ]
 }

@@ -378,6 +378,9 @@ export function executeTurnStartEffect(
             enemyInstanceId: enemyCard.instanceId,
             definitionId: enemyCard.definitionId,
             fortitude: enemyDef.printedFortitude ?? 1,
+            // EnemyState completo (con auras de entrada): el reducer lo
+            // reproduce en el fold del eventLog.
+            enemy: newEnemy,
             seq: nextSeq(),
           });
           // Si el enemigo revelado es el Señor de la Guerra, emitir WARLORD_REVEALED

@@ -7,17 +7,28 @@
       "type": "HERO",
       "copies": 1,
       "maxWounds": 2,
-      "capabilities": ["RANGED", "EXPERTISE"],
+      "capabilities": [
+        "RANGED",
+        "EXPERTISE"
+      ],
       "heroAbility": {
         "uses": 1,
         "effects": [
-          { "type": "SEARCH_DECK", "filter": {}, "action": "SWAP_WITH_HAND" },
-          { "type": "SHUFFLE_DECK", "deck": "ABILITY" }
+          {
+            "type": "SEARCH_DECK",
+            "filter": {},
+            "action": "SWAP_WITH_HAND"
+          },
+          {
+            "type": "SHUFFLE_DECK",
+            "deck": "ABILITY"
+          }
         ]
       },
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR",
-      "_peritiaText": "En cualquier momento, busca una carta en tu mazo de Habilidad y sustituyela por una de tu mano. Acto seguido baraja el mazo."
+      "verificationStatus": "CONFIRMED",
+      "_peritiaText": "En cualquier momento, busca una carta en tu mazo de Habilidad y sustituyela por una de tu mano. Acto seguido baraja el mazo.",
+      "altText": "En cualquier momento, busca una carta en tu mazo de Habilidad y sustitúyela por una de tu mano. Acto seguido baraja el mazo. Una vez por partida."
     },
     {
       "id": "hero.beleth-il",
@@ -25,15 +36,19 @@
       "type": "HERO",
       "copies": 1,
       "maxWounds": 3,
-      "capabilities": ["RANGED", "EXPERTISE"],
+      "capabilities": [
+        "RANGED",
+        "EXPERTISE"
+      ],
       "heroAbility": {
         "uses": 2,
         "effects": []
       },
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR",
+      "verificationStatus": "CONFIRMED",
       "_peritiaText": "Cuando utilices la carta Disparo rapido, la primera carta fallida que robes podras recuperarla y robar otra.",
-      "_peritiaTrigger": "DRAW_AND_CHECK_MISMATCH"
+      "_peritiaTrigger": "DRAW_AND_CHECK_MISMATCH",
+      "altText": "Cuando utilices la carta “Disparo rápido”, la primera carta fallida que robes podrás recuperarla y robar otra. Dos veces por partida."
     },
     {
       "id": "hero.neddia",
@@ -41,17 +56,30 @@
       "type": "HERO",
       "copies": 1,
       "maxWounds": 2,
-      "capabilities": ["MELEE", "EXPERTISE"],
+      "capabilities": [
+        "MELEE",
+        "EXPERTISE"
+      ],
       "heroAbility": {
         "uses": 1,
         "effects": [
-          { "type": "SEARCH_DECK", "filter": {}, "action": "SWAP_WITH_HAND", "deck": "MARKET", "amount": 2 },
-          { "type": "SHUFFLE_DECK", "deck": "MARKET" }
+          {
+            "type": "SEARCH_DECK",
+            "filter": {},
+            "action": "SWAP_WITH_HAND",
+            "deck": "MARKET",
+            "amount": 2
+          },
+          {
+            "type": "SHUFFLE_DECK",
+            "deck": "MARKET"
+          }
         ]
       },
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR",
-      "_peritiaText": "En cualquier momento, busca en el mazo de Mercado hasta 2 cartas y sustituyelas por cartas que ya estuvieran disponibles. Acto seguido baraja el mazo."
+      "verificationStatus": "CONFIRMED",
+      "_peritiaText": "En cualquier momento, busca en el mazo de Mercado hasta 2 cartas y sustituyelas por cartas que ya estuvieran disponibles. Acto seguido baraja el mazo.",
+      "altText": "En cualquier momento, busca en el mazo de Mercado hasta 2 cartas y sustitúyelas por cartas que ya estuvieran disponibles. Acto seguido baraja el mazo. Una vez por partida."
     },
     {
       "id": "hero.valerys",
@@ -59,17 +87,32 @@
       "type": "HERO",
       "copies": 1,
       "maxWounds": 3,
-      "capabilities": ["MELEE", "EXPERTISE"],
+      "capabilities": [
+        "MELEE",
+        "EXPERTISE"
+      ],
       "heroAbility": {
         "uses": 2,
         "effects": [
-          { "type": "INTERCEPT_DAMAGE", "from": { "kind": "OTHER_HERO" } },
-          { "type": "GAIN_GLORY", "amount": { "kind": "CONSTANT", "value": 1 } }
+          {
+            "type": "INTERCEPT_DAMAGE",
+            "from": {
+              "kind": "OTHER_HERO"
+            }
+          },
+          {
+            "type": "GAIN_GLORY",
+            "amount": {
+              "kind": "CONSTANT",
+              "value": 1
+            }
+          }
         ]
       },
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR",
-      "_peritiaText": "Al resolver el ataque de la Horda sobre otro Heroe, tu recibes el dano y ganas 1 ficha de Gloria."
+      "verificationStatus": "CONFIRMED",
+      "_peritiaText": "Al resolver el ataque de la Horda sobre otro Heroe, tu recibes el dano y ganas 1 ficha de Gloria.",
+      "altText": "Al resolver el ataque de la Horda sobre otro Héroe, tú recibes el daño y ganas 1 ficha de Gloria. Dos veces por partida."
     },
     {
       "id": "hero.taheral",
@@ -77,17 +120,35 @@
       "type": "HERO",
       "copies": 1,
       "maxWounds": 2,
-      "capabilities": ["RANGED", "EXPERTISE"],
+      "capabilities": [
+        "RANGED",
+        "EXPERTISE"
+      ],
       "heroAbility": {
         "uses": 1,
         "effects": [
-          { "type": "GAIN_COINS", "amount": { "kind": "MULTIPLY", "factors": [ { "kind": "CONSTANT", "value": 2 }, { "kind": "EVASION_DISCARDED_COUNT" } ] } }
+          {
+            "type": "GAIN_COINS",
+            "amount": {
+              "kind": "MULTIPLY",
+              "factors": [
+                {
+                  "kind": "CONSTANT",
+                  "value": 2
+                },
+                {
+                  "kind": "EVASION_DISCARDED_COUNT"
+                }
+              ]
+            }
+          }
         ]
       },
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR",
+      "verificationStatus": "CONFIRMED",
       "_peritiaText": "Al realizar la maniobra de Evasion, coge dos Monedas por cada carta que descartes en tu Pila de Desgaste.",
-      "_peritiaTrigger": "EVASION"
+      "_peritiaTrigger": "EVASION",
+      "altText": "Al realizar la maniobra de Evasión, coge dos Monedas por cada carta que descartes en tu Pila de Desgaste. Una vez por partida."
     },
     {
       "id": "hero.idril",
@@ -95,16 +156,28 @@
       "type": "HERO",
       "copies": 1,
       "maxWounds": 3,
-      "capabilities": ["RANGED", "EXPERTISE"],
+      "capabilities": [
+        "RANGED",
+        "EXPERTISE"
+      ],
       "heroAbility": {
         "uses": 2,
         "effects": [
-          { "type": "LOOK_AT_CARDS", "deck": "HORDE", "amount": { "kind": "CONSTANT", "value": 3 }, "action": "REORDER" }
+          {
+            "type": "LOOK_AT_CARDS",
+            "deck": "HORDE",
+            "amount": {
+              "kind": "CONSTANT",
+              "value": 3
+            },
+            "action": "REORDER"
+          }
         ]
       },
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR",
-      "_peritiaText": "En cualquier momento, puedes mirar las 3 cartas inferiores del mazo de la Horda y devolverlas en el orden que prefieras."
+      "verificationStatus": "CONFIRMED",
+      "_peritiaText": "En cualquier momento, puedes mirar las 3 cartas inferiores del mazo de la Horda y devolverlas en el orden que prefieras.",
+      "altText": "En cualquier momento, mira las 3 primeras cartas del mazo de la Horda y reordénalas. Dos veces por partida."
     },
     {
       "id": "hero.feldon",
@@ -112,15 +185,19 @@
       "type": "HERO",
       "copies": 1,
       "maxWounds": 2,
-      "capabilities": ["MELEE", "EXPERTISE"],
+      "capabilities": [
+        "MELEE",
+        "EXPERTISE"
+      ],
       "heroAbility": {
         "uses": 1,
         "effects": []
       },
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR",
+      "verificationStatus": "CONFIRMED",
       "_peritiaText": "Al resolver el Ataque de la Horda, tan solo pierde la mitad de cartas (redondeando hacia abajo) de las indicadas por el Dano.",
-      "_peritiaTrigger": "HORDE_ATTACK"
+      "_peritiaTrigger": "HORDE_ATTACK",
+      "altText": "Mientras otro Héroe se enfrenta a la Horda, tan solo pierde la mitad de cartas (redondeando hacia abajo) de las indicadas por el Daño."
     },
     {
       "id": "hero.lisavette",
@@ -128,15 +205,19 @@
       "type": "HERO",
       "copies": 1,
       "maxWounds": 3,
-      "capabilities": ["MELEE", "EXPERTISE"],
+      "capabilities": [
+        "MELEE",
+        "EXPERTISE"
+      ],
       "heroAbility": {
         "uses": 2,
         "effects": []
       },
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR",
+      "verificationStatus": "CONFIRMED",
       "_peritiaText": "Mientras otro Heroe se enfrenta a la Horda, utiliza una carta de Escudo para prevenir el dano de un enemigo. Roba hasta 2 Monedas de ese Heroe.",
-      "_peritiaTrigger": "HORDE_ATTACK_OTHER_PLAYER"
+      "_peritiaTrigger": "HORDE_ATTACK_OTHER_PLAYER",
+      "altText": "Al resolver el Ataque de la Horda, utiliza una carta de “Escudo” para prevenir el daño de un enemigo. Roba hasta 2 Monedas de ese Héroe. Dos veces por partida."
     }
   ]
 }

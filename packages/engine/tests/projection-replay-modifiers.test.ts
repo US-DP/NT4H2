@@ -86,6 +86,67 @@ describe('Projection — ocultación de información', () => {
     expect(filtered.length).toBe(2);
     expect(filtered.some(e => e.type === 'CARDS_DRAWN' && (e as { playerId: string }).playerId === 'p2')).toBe(false);
   });
+
+  it('HORDE_DECK_REORDERED (orden futuro) es secreto para todos', () => {
+    const events: GameEvent[] = [
+      { type: 'HORDE_DECK_REORDERED', newOrder: ['h9', 'h7', 'h3'], seq: 1 } as GameEvent,
+    ];
+    expect(projectEventsForPlayer(events, 'p1')).toHaveLength(0);
+    expect(projectEventsForPlayer(events, null)).toHaveLength(0);
+  });
+
+  it('CARD_MOVED de mano ajena redacta el instanceId', () => {
+    const events: GameEvent[] = [
+      // Puja de líder de p1: secreta para p2
+      { type: 'CARD_MOVED', cardInstanceId: 'ability-42', from: 'HAND', to: 'ABILITY_DECK', playerId: 'p1', seq: 1 } as GameEvent,
+      // Movimiento público (mercado): intacto
+      { type: 'CARD_MOVED', cardInstanceId: 'market-3', from: 'MARKET', to: 'MARKET_DECK', seq: 2 } as GameEvent,
+    ];
+    const forP2 = projectEventsForPlayer(events, 'p2');
+    expect((forP2[0] as { cardInstanceId: string }).cardInstanceId).toBe('hidden');
+    expect((forP2[1] as { cardInstanceId: string }).cardInstanceId).toBe('market-3');
+    // El dueño ve el id real
+    const forP1 = projectEventsForPlayer(events, 'p1');
+    expect((forP1[0] as { cardInstanceId: string }).cardInstanceId).toBe('ability-42');
+  });
+
+  it('EVASION_PERFORMED conserva el conteo pero oculta las cartas ajenas', () => {
+    const events: GameEvent[] = [
+      { type: 'EVASION_PERFORMED', playerId: 'p2', discardedCardInstanceIds: ['a1', 'a2'], seq: 1 } as GameEvent,
+    ];
+    const forP1 = projectEventsForPlayer(events, 'p1');
+    expect(forP1).toHaveLength(1);
+    const ev = forP1[0] as { discardedCardInstanceIds: string[] };
+    expect(ev.discardedCardInstanceIds).toHaveLength(2);
+    expect(ev.discardedCardInstanceIds).not.toContain('a1');
+    // El dueño ve los ids reales
+    const forP2 = projectEventsForPlayer(events, 'p2');
+    expect((forP2[0] as { discardedCardInstanceIds: string[] }).discardedCardInstanceIds).toEqual(['a1', 'a2']);
+  });
+
+  it('ENEMY_SWAPPED nunca revela el botín del enemigo nuevo', () => {
+    const events: GameEvent[] = [
+      { type: 'ENEMY_SWAPPED', oldEnemyInstanceId: 'e1', newEnemyInstanceId: 'e2', newEnemyDefinitionId: 'horde.x', newEnemyFortitude: 3, newEnemyReward: { coins: 5, glory: 2 }, newEnemyIsOrc: false, newEnemyIsWarlord: false, newEnemySpecialIcons: [], seq: 1 } as GameEvent,
+    ];
+    const forP1 = projectEventsForPlayer(events, 'p1');
+    expect((forP1[0] as { newEnemyReward: unknown }).newEnemyReward).toBeNull();
+  });
+
+  it('la puja de líder no filtra cartas ajenas en el eventLog proyectado', () => {
+    // El estado tras setup incluye CARD_MOVED de la puja con playerId
+    const projected = projectForPlayer(state, 'p1');
+    const bidMoves = projected.eventLog.filter(
+      e => e.type === 'CARD_MOVED' && e.from === 'HAND' && e.to === 'ABILITY_DECK',
+    );
+    // Solo quedan los movimientos del propio p1 con id real; los de p2
+    // aparecen redactados o no aparecen
+    for (const ev of bidMoves) {
+      const e = ev as { playerId?: string; cardInstanceId: string };
+      if (e.cardInstanceId !== 'hidden') {
+        expect(e.playerId === 'p1' || e.playerId === undefined).toBe(true);
+      }
+    }
+  });
 });
 
 describe('Replay — serialización y reproducción', () => {

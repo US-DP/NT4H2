@@ -8,21 +8,24 @@
       "copies": 2,
       "printedCost": 3,
       "printedAttack": 2,
-      "requiredCapabilities": ["RANGED"],
-      "penaltyCapabilities": [
-        { "icon": "EXPERTISE", "damagePenalty": 1 }
-      ],
       "effects": [
         {
           "type": "CONDITIONAL",
-          "condition": { "kind": "HAS_CAPABILITY", "icon": "RANGED" },
+          "condition": {
+            "kind": "HAS_CAPABILITY",
+            "icon": "EXPERTISE"
+          },
           "then": [
-            { "type": "RECOVER_THIS_CARD", "to": "HAND" }
+            {
+              "type": "RECOVER_THIS_CARD",
+              "to": "HAND"
+            }
           ]
         }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "REVISAR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Si el héroe tiene Pericia, recupera esta carta después de jugarla."
     },
     {
       "id": "market.healing-potion",
@@ -32,10 +35,17 @@
       "printedCost": 8,
       "printedAttack": 0,
       "effects": [
-        { "type": "HEAL_WOUNDS", "amount": { "kind": "CONSTANT", "value": 1 } }
+        {
+          "type": "HEAL_WOUNDS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          }
+        }
       ],
       "destinationAfterUse": "REMOVED_FROM_GAME",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Retira una ficha de Herida de tu Héroe."
     },
     {
       "id": "market.whetstone",
@@ -45,10 +55,23 @@
       "printedCost": 4,
       "printedAttack": 0,
       "effects": [
-        { "type": "MODIFY_DAMAGE", "modifier": { "kind": "CONSTANT", "value": 1 }, "scope": "THIS_TURN" }
+        {
+          "type": "MODIFY_DAMAGE",
+          "modifier": {
+            "kind": "CONSTANT",
+            "value": 1
+          },
+          "scope": "NEXT_CARD"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "REVISAR"
+      "verificationStatus": "CONFIRMED",
+      "requiredCapabilities": [
+        "RANGED",
+        "EXPERTISE",
+        "MELEE"
+      ],
+      "altText": "+1 al Daño en las cartas (con Daño) que utilices este turno."
     },
     {
       "id": "market.conjuration-vial",
@@ -58,10 +81,17 @@
       "printedCost": 5,
       "printedAttack": 0,
       "effects": [
-        { "type": "SEARCH_WEAR_PILE_PUT_IN_HAND", "amount": { "kind": "CONSTANT", "value": 1 } }
+        {
+          "type": "SEARCH_WEAR_PILE_PUT_IN_HAND",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "REVISAR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Busca una carta en tu pila de Desgaste y ponla en tu mano."
     },
     {
       "id": "market.concentration-elixir",
@@ -71,10 +101,18 @@
       "printedCost": 3,
       "printedAttack": 0,
       "effects": [
-        { "type": "DRAW_CARDS", "amount": { "kind": "CONSTANT", "value": 3 }, "source": "ABILITY_DECK" }
+        {
+          "type": "DRAW_CARDS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 3
+          },
+          "source": "ABILITY_DECK"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "REVISAR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Roba 3 cartas."
     },
     {
       "id": "market.elven-cloak",
@@ -84,10 +122,21 @@
       "printedCost": 3,
       "printedAttack": 0,
       "effects": [
-        { "type": "DISABLE_ENEMY_DAMAGE", "target": { "kind": "SELECTED_ENEMY" }, "duration": "UNTIL_END_OF_TURN" }
+        {
+          "type": "DISABLE_ENEMY_DAMAGE",
+          "target": {
+            "kind": "SELECTED_ENEMY"
+          },
+          "duration": "UNTIL_END_OF_TURN"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "REVISAR"
+      "verificationStatus": "CONFIRMED",
+      "requiredCapabilities": [
+        "RANGED",
+        "MAGIC"
+      ],
+      "altText": "El enemigo seleccionado no causa daño este turno."
     },
     {
       "id": "market.plate-armor",
@@ -97,10 +146,22 @@
       "printedCost": 4,
       "printedAttack": 0,
       "effects": [
-        { "type": "RECOVER_CARDS", "amount": { "kind": "CONSTANT", "value": 4 }, "from": "WEAR_PILE", "to": "BOTTOM_OF_DECK" }
+        {
+          "type": "RECOVER_CARDS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 4
+          },
+          "from": "WEAR_PILE",
+          "to": "BOTTOM_OF_DECK"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "REVISAR"
+      "verificationStatus": "CONFIRMED",
+      "requiredCapabilities": [
+        "MELEE"
+      ],
+      "altText": "Recuperas 4 cartas."
     },
     {
       "id": "market.orc-halberd",
@@ -109,10 +170,12 @@
       "copies": 1,
       "printedCost": 5,
       "printedAttack": 4,
-      "requiredCapabilities": ["MELEE"],
+      "requiredCapabilities": [
+        "MELEE"
+      ],
       "effects": [],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "REVISAR"
+      "verificationStatus": "CONFIRMED"
     },
     {
       "id": "market.composite-bow",
@@ -121,13 +184,18 @@
       "copies": 1,
       "printedCost": 5,
       "printedAttack": 4,
-      "requiredCapabilities": ["RANGED"],
+      "requiredCapabilities": [
+        "RANGED"
+      ],
       "penaltyCapabilities": [
-        { "icon": "EXPERTISE", "damagePenalty": 1 }
+        {
+          "icon": "EXPERTISE",
+          "damagePenalty": 1
+        }
       ],
       "effects": [],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "REVISAR"
+      "verificationStatus": "CONFIRMED"
     }
   ]
 }

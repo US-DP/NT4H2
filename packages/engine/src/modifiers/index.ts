@@ -347,3 +347,74 @@ export function expireModifiers(
     battlefield,
   };
 }
+
+// ============================================================================
+// Limpiezas de ciclo de vida (event-sourced vía EFFECTS_EXPIRED)
+//
+// Estas transformaciones son deterministas dado el estado y el scope, así que
+// el reducer de applyEvent puede reproducirlas exactamente en el fold del
+// eventLog. El camino directo (phases/engine.ts) usa las MISMAS funciones para
+// que no haya deriva entre ejecución y replay.
+// ============================================================================
+
+/** Limpieza al terminar el ataque de la Horda: defensas consumidas, daño de
+ *  enemigos rehabilitado y ventanas de reacción cerradas. */
+export function cleanupHordeAttackEnd(state: GameState): GameState {
+  const expired = expireModifiers(state, 'HORDE_ATTACK_END');
+  return {
+    ...expired,
+    pendingChoices: expired.pendingChoices.filter(c => c.type !== 'REACTION_WINDOW'),
+  };
+}
+
+/** Limpieza del Restablecimiento: defensas del héroe activo, daño de enemigos
+ *  rehabilitado, estados UNTIL_END_OF_TURN caducados, heridas temporales de
+ *  enemigos descartadas y modificadores de ataque expirados (spec §3.6). */
+export function cleanupRestoration(state: GameState): GameState {
+  const player = state.players[state.activePlayerId];
+  const players = player
+    ? {
+        ...state.players,
+        [state.activePlayerId]: {
+          ...player,
+          prevention: 0,
+          damageCancellation: false,
+          interceptedBy: null,
+          shields: 0,
+          armor: 0,
+        },
+      }
+    : state.players;
+  const battlefield = state.battlefield.map(e => ({
+    ...e,
+    damageDisabled: false,
+    statuses: (e.statuses ?? []).filter(s => s.duration !== 'UNTIL_END_OF_TURN'),
+    wounds: e.specialIcons?.includes('TEMPORARY_WOUNDS') ? 0 : e.wounds,
+    modifiers: e.modifiers.filter(
+      m => m.duration !== 'UNTIL_END_OF_TURN'
+        && m.duration !== 'HORDE_ATTACK'
+        && m.duration !== 'NEXT_HORDE_ATTACK',
+    ),
+  }));
+  return { ...state, players, battlefield };
+}
+
+/** Limpieza de fin de turno: modificadores UNTIL_END_OF_TURN (Piedra de
+ *  Amolar, Puerto de Eque, Flecha Corrosiva) y flags de cartas de Apoyo
+ *  prestadas del jugador que termina. */
+export function cleanupTurnEnd(state: GameState): GameState {
+  const expired = expireModifiers(state, 'END_OF_TURN');
+  const player = expired.players[expired.activePlayerId];
+  if (!player) return expired;
+  return {
+    ...expired,
+    players: {
+      ...expired.players,
+      [expired.activePlayerId]: {
+        ...player,
+        borrowedSupportCardIds: [],
+        supportCardUsedThisTurn: false,
+      },
+    },
+  };
+}

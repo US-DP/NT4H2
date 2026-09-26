@@ -64,6 +64,7 @@ function createPlayerState(
     trophies: [],
     shields: 0,
     prevention: 0,
+    armor: 0,
     damageCancellation: false,
     interceptedBy: null,
     modifiers: [],

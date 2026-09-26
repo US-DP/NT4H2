@@ -9,11 +9,20 @@
       "copies": 1,
       "printedAttack": 0,
       "effects": [
-        { "type": "CANCEL_ALL_DAMAGE", "duration": "NEXT_HORDE_ATTACK" },
-        { "type": "LOSE_CARDS", "amount": { "kind": "COUNT_ENEMIES_IN_FIELD" } }
+        {
+          "type": "CANCEL_ALL_DAMAGE",
+          "duration": "NEXT_HORDE_ATTACK"
+        },
+        {
+          "type": "LOSE_CARDS",
+          "amount": {
+            "kind": "COUNT_ENEMIES_IN_FIELD"
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Cancela todo el Daño sufrido durante el próximo Ataque de la Horda. Pierdes 1 carta por cada enemigo."
     },
     {
       "id": "mage.fireball",
@@ -23,12 +32,25 @@
       "copies": 1,
       "printedAttack": 2,
       "effects": [
-        { "type": "DEAL_DAMAGE_ALL_ENEMIES", "amount": { "kind": "CONSTANT", "value": 2 } },
-        { "type": "DEAL_DAMAGE_TO_OTHER_HEROES", "amount": { "kind": "CONSTANT", "value": 1 } }
+        {
+          "type": "DEAL_DAMAGE_ALL_ENEMIES",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 2
+          }
+        },
+        {
+          "type": "DEAL_DAMAGE_TO_OTHER_HEROES",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR",
-      "_note": "El motor suprime el ataque impreso (printedAttack=2) cuando la carta define DEAL_DAMAGE_ALL_ENEMIES, para evitar doble aplicación. DEAL_DAMAGE_ALL_ENEMIES daña a todos los enemigos con 2. DEAL_DAMAGE_TO_OTHER_HEROES daña al resto de héroes con 1."
+      "verificationStatus": "CONFIRMED",
+      "_note": "El motor suprime el ataque impreso (printedAttack=2) cuando la carta define DEAL_DAMAGE_ALL_ENEMIES, para evitar doble aplicación. DEAL_DAMAGE_ALL_ENEMIES daña a todos los enemigos con 2. DEAL_DAMAGE_TO_OTHER_HEROES daña al resto de héroes con 1.",
+      "altText": "Daña a todos los enemigos. El resto de héroes sufre 1 de Daño."
     },
     {
       "id": "mage.ice-shot",
@@ -38,11 +60,25 @@
       "copies": 2,
       "printedAttack": 1,
       "effects": [
-        { "type": "DISABLE_ENEMY_DAMAGE", "target": { "kind": "SELECTED_ENEMY" }, "duration": "UNTIL_END_OF_TURN" },
-        { "type": "DRAW_CARDS", "amount": { "kind": "CONSTANT", "value": 1 }, "source": "ABILITY_DECK" }
+        {
+          "type": "DISABLE_ENEMY_DAMAGE",
+          "target": {
+            "kind": "SELECTED_ENEMY"
+          },
+          "duration": "UNTIL_END_OF_TURN"
+        },
+        {
+          "type": "DRAW_CARDS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          },
+          "source": "ABILITY_DECK"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "El enemigo afectado no causa Daño este turno. Roba 1 carta."
     },
     {
       "id": "mage.corrosive-arrow",
@@ -52,11 +88,28 @@
       "copies": 1,
       "printedAttack": 1,
       "effects": [
-        { "type": "APPLY_VULNERABILITY", "target": { "kind": "SELECTED_ENEMY" }, "bonus": { "kind": "CONSTANT", "value": 1 }, "duration": "UNTIL_END_OF_TURN" },
-        { "type": "LOSE_CARDS", "amount": { "kind": "CONSTANT", "value": 1 } }
+        {
+          "type": "APPLY_VULNERABILITY",
+          "target": {
+            "kind": "SELECTED_ENEMY"
+          },
+          "bonus": {
+            "kind": "CONSTANT",
+            "value": 1
+          },
+          "duration": "UNTIL_END_OF_TURN"
+        },
+        {
+          "type": "LOSE_CARDS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Aumentas en 1 el daño de las siguientes cartas que causen Daño a este enemigo. Pierdes 1 carta."
     },
     {
       "id": "mage.staff-strike",
@@ -68,13 +121,17 @@
       "effects": [
         {
           "type": "CONDITIONAL",
-          "condition": { "kind": "ALREADY_USED_AGAINST_THIS_ENEMY", "name": "Golpe de Bastón" },
+          "condition": {
+            "kind": "ALREADY_USED_AGAINST_THIS_ENEMY",
+            "name": "Golpe de Bastón"
+          },
           "then": []
         }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR",
-      "_note": "Si ya utilizaste Golpe de Bastón contra el mismo enemigo, el daño de esta carta es 2. La lógica de daño variable se maneja en el motor de resolución con el historial cardsPlayedAgainstEnemy."
+      "verificationStatus": "CONFIRMED",
+      "_note": "Si ya utilizaste Golpe de Bastón contra el mismo enemigo, el daño de esta carta es 2. La lógica de daño variable se maneja en el motor de resolución con el historial cardsPlayedAgainstEnemy.",
+      "altText": "Si ya utilizaste “Golpe de bastón” contra el mismo enemigo, el daño de esta carta es 2."
     },
     {
       "id": "mage.healing-orb",
@@ -84,11 +141,24 @@
       "copies": 1,
       "printedAttack": 0,
       "effects": [
-        { "type": "ALL_HEROES_RECOVER", "amount": { "kind": "CONSTANT", "value": 2 } },
-        { "type": "HEAL_WOUNDS", "amount": { "kind": "CONSTANT", "value": 1 } }
+        {
+          "type": "ALL_HEROES_RECOVER",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 2
+          }
+        },
+        {
+          "type": "HEAL_WOUNDS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          }
+        }
       ],
-      "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "INFERRED"
+      "destinationAfterUse": "REMOVED_FROM_GAME",
+      "verificationStatus": "CONFIRMED",
+      "altText": "Todos los Héroes recuperan 2 cartas. Eliminas 1 Herida de tu Héroe."
     },
     {
       "id": "mage.fire-bolt",
@@ -98,10 +168,17 @@
       "copies": 3,
       "printedAttack": 2,
       "effects": [
-        { "type": "GAIN_GLORY", "amount": { "kind": "CONSTANT", "value": 1 } }
+        {
+          "type": "GAIN_GLORY",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Ganas 1 ficha de Gloria."
     },
     {
       "id": "mage.reconstitution",
@@ -111,11 +188,27 @@
       "copies": 1,
       "printedAttack": 0,
       "effects": [
-        { "type": "DRAW_CARDS", "amount": { "kind": "CONSTANT", "value": 1 }, "source": "ABILITY_DECK" },
-        { "type": "RECOVER_CARDS", "amount": { "kind": "CONSTANT", "value": 2 }, "from": "WEAR_PILE", "to": "BOTTOM_OF_DECK" }
+        {
+          "type": "DRAW_CARDS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          },
+          "source": "ABILITY_DECK"
+        },
+        {
+          "type": "RECOVER_CARDS",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 2
+          },
+          "from": "WEAR_PILE",
+          "to": "BOTTOM_OF_DECK"
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "Roba 1 carta. Recuperas 2 cartas."
     },
     {
       "id": "mage.light-torrent",
@@ -125,11 +218,24 @@
       "copies": 1,
       "printedAttack": 2,
       "effects": [
-        { "type": "OTHER_HEROES_RECOVER", "amount": { "kind": "CONSTANT", "value": 2 } },
-        { "type": "GAIN_GLORY", "amount": { "kind": "CONSTANT", "value": 1 } }
+        {
+          "type": "OTHER_HEROES_RECOVER",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 2
+          }
+        },
+        {
+          "type": "GAIN_GLORY",
+          "amount": {
+            "kind": "CONSTANT",
+            "value": 1
+          }
+        }
       ],
       "destinationAfterUse": "WEAR_PILE",
-      "verificationStatus": "OCR"
+      "verificationStatus": "CONFIRMED",
+      "altText": "El resto de héroes recuperan 2 cartas. Ganas 1 ficha de Gloria."
     }
   ]
 }
