@@ -7,9 +7,14 @@
 
 import express from 'express';
 import { z } from 'zod';
+import { mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync, existsSync } from 'fs';
+import { join, resolve } from 'path';
+import { pathToFileURL } from 'url';
+import { timingSafeEqual } from 'crypto';
 import { EffectRegistry, registerCoreEffects, setupGame, startFirstTurn, execute, processPhases, projectEventsForPlayer, DeterministicRng } from '@nt4h/engine';
-import { loadCatalog } from '@nt4h/catalog';
-import type { GameConfig, Command, GameState } from '@nt4h/schema';
+import { loadCatalog, mergeCustomCards, validateContentSet, type CatalogLoadResult } from '@nt4h/catalog';
+import { ContentSetSchema } from '@nt4h/schema';
+import type { GameConfig, Command, GameState, ContentSet } from '@nt4h/schema';
 
 /** definitionId centinela para cartas cuyo contenido es secreto */
 const HIDDEN_CARD = 'hidden.card';
@@ -64,20 +69,23 @@ const PaymentSchema = z.union([
   z.object({ type: z.literal('COINS'), amount: z.number().int().min(0) }),
 ]);
 
+// actorId (opcional): el runner lo sobrescribe con el playerId autenticado
+// tras validar — sirve para el log/replay, no para suplantar identidad.
+const actor = { actorId: idSchema.optional() };
 const CommandSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('PLAY_CARD'), cid: cidSchema, cardInstanceId: idSchema, targetEnemyId: idSchema.optional() }),
-  z.object({ type: z.literal('END_ATTACK'), cid: cidSchema }),
-  z.object({ type: z.literal('EVASION'), cid: cidSchema, discardedCardInstanceIds: z.array(idSchema).max(60) }),
-  z.object({ type: z.literal('BUY_CARD'), cid: cidSchema, marketCardInstanceId: idSchema }),
-  z.object({ type: z.literal('END_TURN'), cid: cidSchema }),
-  z.object({ type: z.literal('USE_HERO_ABILITY'), cid: cidSchema, targetId: idSchema.optional() }),
-  z.object({ type: z.literal('CHOOSE_LEADER_CARDS'), cid: cidSchema, cardInstanceIds: z.array(idSchema).min(1).max(2) }),
-  z.object({ type: z.literal('RESOLVE_CHOICE'), cid: cidSchema, choiceId: z.string().min(1).max(200), selectedIds: z.array(idSchema).max(60) }),
-  z.object({ type: z.literal('PASS'), cid: cidSchema }),
-  z.object({ type: z.literal('SWAP_STARTING_CARDS'), cid: cidSchema, cardInstanceIds: z.array(idSchema).max(10) }),
-  z.object({ type: z.literal('ACCEPT_TURN_START_EFFECT'), cid: cidSchema, accepted: z.boolean() }),
-  z.object({ type: z.literal('OPEN_SUPPORT_DECK'), cid: cidSchema, supportDeckIndex: z.number().int().min(0).max(10) }),
-  z.object({ type: z.literal('BUY_SUPPORT_CARD'), cid: cidSchema, supportDeckIndex: z.number().int().min(0).max(10), payment: PaymentSchema }),
+  z.object({ type: z.literal('PLAY_CARD'), cid: cidSchema, ...actor, cardInstanceId: idSchema, targetEnemyId: idSchema.optional() }),
+  z.object({ type: z.literal('END_ATTACK'), cid: cidSchema, ...actor }),
+  z.object({ type: z.literal('EVASION'), cid: cidSchema, ...actor, discardedCardInstanceIds: z.array(idSchema).max(60) }),
+  z.object({ type: z.literal('BUY_CARD'), cid: cidSchema, ...actor, marketCardInstanceId: idSchema }),
+  z.object({ type: z.literal('END_TURN'), cid: cidSchema, ...actor }),
+  z.object({ type: z.literal('USE_HERO_ABILITY'), cid: cidSchema, ...actor, targetId: idSchema.optional() }),
+  z.object({ type: z.literal('CHOOSE_LEADER_CARDS'), cid: cidSchema, ...actor, cardInstanceIds: z.array(idSchema).min(1).max(2) }),
+  z.object({ type: z.literal('RESOLVE_CHOICE'), cid: cidSchema, ...actor, choiceId: z.string().min(1).max(200), selectedIds: z.array(idSchema).max(60) }),
+  z.object({ type: z.literal('PASS'), cid: cidSchema, ...actor }),
+  z.object({ type: z.literal('SWAP_STARTING_CARDS'), cid: cidSchema, ...actor, cardInstanceIds: z.array(idSchema).max(10) }),
+  z.object({ type: z.literal('ACCEPT_TURN_START_EFFECT'), cid: cidSchema, ...actor, accepted: z.boolean() }),
+  z.object({ type: z.literal('OPEN_SUPPORT_DECK'), cid: cidSchema, ...actor, supportDeckIndex: z.number().int().min(0).max(10) }),
+  z.object({ type: z.literal('BUY_SUPPORT_CARD'), cid: cidSchema, ...actor, supportDeckIndex: z.number().int().min(0).max(10), payment: PaymentSchema }),
 ]);
 
 const CreateRoomSchema = z.object({
@@ -92,11 +100,23 @@ const CreateRoomSchema = z.object({
       deckId: z.string().max(128),
       secondDeckId: z.string().max(128).optional(),
       playerAge: z.number().int().min(0).optional(),
+      customDeckId: z.string().max(128).optional(),
     })).min(1).max(4),
     useScenarios: z.boolean(),
     scenarioIds: z.array(z.string().max(128)).optional(),
     soloMarketCardIds: z.array(z.string().max(128)).optional(),
     soloSupportHeroIds: z.array(z.string().max(128)).optional(),
+    // Pools personalizados del Taller (snapshot en la config)
+    customDecks: z.array(z.object({
+      id: z.string().max(128),
+      cardDefinitionIds: z.array(z.string().max(128)).max(60),
+    })).max(8).optional(),
+    hordeCardIds: z.array(z.string().max(128)).max(120).optional(),
+    warlordIds: z.array(z.string().max(128)).max(10).optional(),
+    marketCardIds: z.array(z.string().max(128)).max(120).optional(),
+    // Conjuntos del Taller como snapshot validado: el runner fusiona sus
+    // cartas con el catálogo oficial SOLO para esta sala.
+    customSets: z.array(z.unknown()).max(8).optional(),
   }),
 });
 
@@ -104,6 +124,10 @@ const CommandBodySchema = z.object({
   cid: cidSchema,
   playerId: idSchema,
   command: CommandSchema,
+  /** Revisión del estado que el cliente cree vigente (optimistic check) */
+  expectedRevision: z.number().int().min(0).optional(),
+  /** Secuencia monotónica por cliente (anti-reordenado/replay fuera de ventana cid) */
+  clientSequence: z.number().int().min(0).optional(),
 });
 
 // ============================================================================
@@ -132,7 +156,11 @@ function requireEngineAuth(req: express.Request, res: express.Response, next: ex
     return;
   }
   const token = req.headers['x-engine-token'];
-  if (typeof token !== 'string' || token !== ENGINE_TOKEN) {
+  // Comparación en tiempo constante: un `!==` permitiría medir por
+  // timing cuántos caracteres del secreto son correctos.
+  const expected = Buffer.from(ENGINE_TOKEN, 'utf8');
+  const given = typeof token === 'string' ? Buffer.from(token, 'utf8') : null;
+  if (!given || given.length !== expected.length || !timingSafeEqual(given, expected)) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
@@ -158,6 +186,10 @@ class BoundedCidSet {
       if (oldest !== undefined) this.map.delete(oldest);
     }
   }
+  /** Para snapshots: orden de antigüedad (el primero es el más viejo). */
+  toArray(): string[] {
+    return [...this.map.keys()];
+  }
 }
 
 const rooms = new Map<string, {
@@ -166,10 +198,157 @@ const rooms = new Map<string, {
   registry: EffectRegistry;
   processedCids: BoundedCidSet;
   lastActivity: number;
+  /** Revisión del estado: se incrementa con cada comando aceptado */
+  revision: number;
+  /** Última clientSequence procesada por jugador */
+  lastClientSeq: Map<string, number>;
+  /** Catálogo de la sala: oficial + sets custom de la config (si los hay) */
+  catalog: CatalogLoadResult;
+  /** Sets custom recibidos en la config (necesarios para re-fusionar en restore) */
+  customSets?: ContentSet[];
 }>();
+
+// ============================================================================
+// Persistencia de snapshots (opt-in): si ENGINE_RUNNER_STATE_DIR está definido,
+// cada sala se guarda tras cada comando aceptado y se restaura al arrancar.
+// Sin él el runner sigue siendo en memoria pura (dev).
+// ============================================================================
+
+const STATE_DIR = process.env.ENGINE_RUNNER_STATE_DIR ?? '';
+if (STATE_DIR) {
+  mkdirSync(STATE_DIR, { recursive: true });
+}
+
+interface RoomSnapshot {
+  state: GameState;
+  rngState: { seed: string; state: number };
+  revision: number;
+  cids: string[];
+  lastClientSeq: Record<string, number>;
+  customSets?: ContentSet[];
+  savedAt: number;
+}
+
+function snapshotPath(roomId: string): string {
+  // roomId es idSchema (≤128, sin '/'); filtrar por seguridad extra
+  const safe = roomId.replace(/[^A-Za-z0-9_-]/g, '_');
+  return join(STATE_DIR, `${safe}.json`);
+}
+
+function persistRoom(roomId: string, room: NonNullable<ReturnType<typeof rooms.get>>): void {
+  if (!STATE_DIR) return;
+  const snap: RoomSnapshot = {
+    state: room.state,
+    rngState: room.rng.serialize(),
+    revision: room.revision,
+    cids: room.processedCids.toArray(),
+    lastClientSeq: Object.fromEntries(room.lastClientSeq),
+    customSets: room.customSets,
+    savedAt: Date.now(),
+  };
+  const path = snapshotPath(roomId);
+  try {
+    // Escritura atómica: tmp + rename (evita snapshots a medias en crash)
+    writeFileSync(`${path}.tmp`, JSON.stringify(snap));
+    renameSync(`${path}.tmp`, path);
+  } catch (err) {
+    console.error(`persist ${roomId} failed:`, err);
+  }
+}
+
+// Escritura diferida: un comando aceptado marca la sala como "sucia" y el
+// flush agrupa todos los cambios en un tick (antes: stringify+rename de
+// todo el estado por CADA comando — trabajo redundante en ráfagas).
+const dirtyRooms = new Set<string>();
+let persistTimer: NodeJS.Timeout | null = null;
+const PERSIST_DEBOUNCE_MS = 500;
+
+function flushPersists(): void {
+  persistTimer = null;
+  for (const roomId of dirtyRooms) {
+    const room = rooms.get(roomId);
+    if (room) persistRoom(roomId, room);
+  }
+  dirtyRooms.clear();
+}
+
+function schedulePersist(roomId: string): void {
+  if (!STATE_DIR) return;
+  dirtyRooms.add(roomId);
+  if (!persistTimer) {
+    persistTimer = setTimeout(flushPersists, PERSIST_DEBOUNCE_MS);
+    persistTimer.unref?.();
+  }
+}
+
+function unpersistRoom(roomId: string): void {
+  if (!STATE_DIR) return;
+  dirtyRooms.delete(roomId); // no resucitar una sala borrada al flush
+  try { unlinkSync(snapshotPath(roomId)); } catch { /* no existe */ }
+}
+
+/** Chequeo de forma mínima del estado restaurado: sin esto un snapshot
+ *  corrupto pero JSON-válido se ejecutaría con estructuras rotas. */
+function isPlausibleState(state: unknown): state is GameState {
+  const s = state as GameState | null;
+  return Boolean(
+    s && typeof s === 'object'
+    && typeof s.phase === 'string'
+    && s.players && typeof s.players === 'object'
+    && Array.isArray(s.playerOrder)
+    && Array.isArray(s.battlefield)
+    && Array.isArray(s.eventLog)
+    && typeof s.rngState?.seed === 'string'
+    && typeof s.rngState?.state === 'number',
+  );
+}
+
+function loadPersistedRooms(): number {
+  if (!STATE_DIR || !existsSync(STATE_DIR)) return 0;
+  let loaded = 0;
+  for (const file of readdirSync(STATE_DIR)) {
+    if (!file.endsWith('.json')) continue;
+    try {
+      const snap = JSON.parse(readFileSync(join(STATE_DIR, file), 'utf-8')) as RoomSnapshot;
+      if (!isPlausibleState(snap?.state) || typeof snap.rngState?.state !== 'number') {
+        console.error(`snapshot ${file} con forma inválida — ignorado`);
+        continue;
+      }
+      const registry = new EffectRegistry();
+      registerCoreEffects(registry);
+      const cids = new BoundedCidSet();
+      for (const cid of snap.cids ?? []) cids.add(cid);
+      const roomId = file.slice(0, -5);
+      const roomCatalog = snap.customSets?.length
+        ? mergeCustomCards(catalog, snap.customSets)
+        : catalog;
+      rooms.set(roomId, {
+        state: snap.state,
+        rng: DeterministicRng.deserialize(snap.rngState),
+        registry,
+        processedCids: cids,
+        // TTL fresco al restaurar: con savedAt una sala guardada hace
+        // >24h moriría en el primer sweep aunque los jugadores reconecten
+        // tras el reinicio del runner.
+        lastActivity: Date.now(),
+        revision: snap.revision ?? 0,
+        lastClientSeq: new Map(Object.entries(snap.lastClientSeq ?? {})),
+        catalog: roomCatalog,
+        customSets: snap.customSets,
+      });
+      loaded++;
+    } catch (err) {
+      console.error(`snapshot ${file} corrupto — ignorado:`, err);
+    }
+  }
+  return loaded;
+}
 
 // D415: limite de salas en memoria para evitar memory leak / DoS
 const MAX_ROOMS = 1000;
+
+// Rate limiting por sala+jugador (ventana deslizante simple)
+const rateLimit = new Map<string, { count: number; windowStart: number }>();
 // Salas inactivas se eliminan tras 24h — evita leak de partidas abandonadas
 const ROOM_TTL_MS = 24 * 60 * 60 * 1000;
 const SWEEP_INTERVAL_MS = 30 * 60 * 1000;
@@ -179,7 +358,12 @@ const sweeper = setInterval(() => {
   for (const [roomId, room] of rooms) {
     if (now - room.lastActivity > ROOM_TTL_MS) {
       rooms.delete(roomId);
+      unpersistRoom(roomId);
       console.log(`room ${roomId} expirada por inactividad`);
+      // Limpiar también los contadores de rate limiting de esa sala
+      for (const key of rateLimit.keys()) {
+        if (key.startsWith(`${roomId}:`)) rateLimit.delete(key);
+      }
     }
   }
 }, SWEEP_INTERVAL_MS);
@@ -214,7 +398,13 @@ app.post('/rooms/:roomId/create', requireEngineAuth, (req, res) => {
     res.status(400).json({ error: 'Invalid roomId' });
     return;
   }
-  if (rooms.size >= MAX_ROOMS && !rooms.has(roomId)) {
+  // Una sala existente no se reinicia en silencio: crear sobre ella
+  // reseteaba estado/revisión sin avisar a los jugadores conectados.
+  if (rooms.has(roomId)) {
+    res.status(409).json({ error: 'Room already exists' });
+    return;
+  }
+  if (rooms.size >= MAX_ROOMS) {
     res.status(503).json({ error: 'Too many rooms' });
     return;
   }
@@ -226,14 +416,40 @@ app.post('/rooms/:roomId/create', requireEngineAuth, (req, res) => {
   }
   const config = parsed.data.config as unknown as GameConfig;
 
+  // Sets del Taller: validar contra el schema + reglas de contenido y
+  // fusionar en un catálogo propio de la sala (el oficial no se toca).
+  const rawSets = (parsed.data.config as { customSets?: unknown[] }).customSets ?? [];
+  const customSets: ContentSet[] = [];
+  let roomCatalog: CatalogLoadResult = catalog;
+  if (rawSets.length > 0) {
+    for (const raw of rawSets) {
+      const setParsed = ContentSetSchema.safeParse(raw);
+      if (!setParsed.success) {
+        res.status(400).json({ error: 'Invalid custom set' });
+        return;
+      }
+      const validation = validateContentSet(setParsed.data, catalog.byId);
+      if (!validation.ok) {
+        res.status(400).json({ error: 'Custom set failed validation', issues: validation.errors });
+        return;
+      }
+      customSets.push(setParsed.data);
+    }
+    roomCatalog = mergeCustomCards(catalog, customSets);
+    if (roomCatalog.errors.length > catalog.errors.length) {
+      res.status(400).json({ error: 'Custom set conflicts with catalog' });
+      return;
+    }
+  }
+
   try {
-    const result = setupGame(config, catalog);
+    const result = setupGame(config, roomCatalog);
     // D427: si hay pujas de Líder pendientes, la partida espera los
     // CHOOSE_LEADER_CARDS de cada jugador; si no, arranca el turno 1.
     const hasPendingBids = result.state.pendingChoices.some(c => c.choiceId.startsWith('leader-bid-'));
     const turnResult = hasPendingBids
       ? { state: result.state, events: result.events }
-      : startFirstTurn(result.state, result.rng, catalog);
+      : startFirstTurn(result.state, result.rng, roomCatalog);
     const registry = new EffectRegistry();
     registerCoreEffects(registry);
 
@@ -243,7 +459,12 @@ app.post('/rooms/:roomId/create', requireEngineAuth, (req, res) => {
       registry,
       processedCids: new BoundedCidSet(),
       lastActivity: Date.now(),
+      revision: 0,
+      lastClientSeq: new Map(),
+      catalog: roomCatalog,
+      customSets: customSets.length > 0 ? customSets : undefined,
     });
+    schedulePersist(roomId);
 
     res.json({ ok: true, roomId });
   } catch (err) {
@@ -266,18 +487,56 @@ app.post('/rooms/:roomId/command', requireEngineAuth, (req, res) => {
     res.status(400).json({ error: 'Missing or invalid command' });
     return;
   }
-  const { cid, playerId, command } = parsed.data;
+  const { cid, playerId, command, expectedRevision, clientSequence } = parsed.data;
   room.lastActivity = Date.now();
 
-  // Idempotencia: CID duplicado → ack cacheado
+  // Rate limiting por sala+jugador: máx 30 comandos por 10 s (anti-spam)
+  const rlKey = `${roomId}:${playerId}`;
+  const rl = rateLimit.get(rlKey) ?? { count: 0, windowStart: Date.now() };
+  if (Date.now() - rl.windowStart > 10_000) {
+    rl.count = 0;
+    rl.windowStart = Date.now();
+  }
+  rl.count++;
+  rateLimit.set(rlKey, rl);
+  if (rl.count > 30) {
+    res.status(429).json({ error: 'Rate limit exceeded', accepted: false });
+    return;
+  }
+
+  // Comando sobre revisión antigua → el cliente debe re-sincronizar
+  if (expectedRevision !== undefined && expectedRevision !== room.revision) {
+    res.status(409).json({
+      accepted: false,
+      error: 'stale_revision',
+      revision: room.revision,
+    });
+    return;
+  }
+
+  // Idempotencia: CID duplicado → ack cacheado. ANTES del check de
+  // clientSequence: un reintento del mismo comando (mismo cid y seq ya
+  // procesada) debe recibir el ack cacheado, no "out_of_order" por un
+  // comando que ya se aplicó.
   if (room.processedCids.has(cid)) {
-    res.json({ accepted: true, events: [], cached: true });
+    res.json({ accepted: true, events: [], cached: true, revision: room.revision });
+    return;
+  }
+
+  // Anti-reordenado: una clientSequence inferior a la última procesada es
+  // un comando duplicado fuera de la ventana de cids (D434 no lo coge)
+  const lastSeq = room.lastClientSeq.get(playerId);
+  if (clientSequence !== undefined && lastSeq !== undefined && clientSequence <= lastSeq) {
+    res.json({ accepted: false, reason: 'out_of_order_command', revision: room.revision });
     return;
   }
 
   try {
-    // Ejecutar comando — D423: pasar playerId autenticado por el backend
-    const result = execute(room.state, command as Command, room.rng, room.registry, catalog, playerId);
+    // Ejecutar comando — D423: pasar playerId autenticado por el backend.
+    // actorId queda sellado con el jugador autenticado: el valor enviado
+    // por el cliente (si venía) no puede suplantar a otro jugador.
+    const authenticatedCommand = { ...command, actorId: playerId } as Command;
+    const result = execute(room.state, authenticatedCommand, room.rng, room.registry, room.catalog, playerId);
 
     if (!result.accepted) {
       res.json({ accepted: false, reason: result.reason });
@@ -287,10 +546,13 @@ app.post('/rooms/:roomId/command', requireEngineAuth, (req, res) => {
     // Actualizar estado
     room.state = result.newState;
     room.processedCids.add(cid);
+    if (clientSequence !== undefined) room.lastClientSeq.set(playerId, clientSequence);
+    room.revision++;
 
     // Procesar fases automaticas
-    const phaseResult = processPhases(room.state, room.rng, catalog);
+    const phaseResult = processPhases(room.state, room.rng, room.catalog);
     room.state = phaseResult.state;
+    schedulePersist(roomId);
 
     // D435: NO devolver el estado completo — la respuesta va al backend,
     // que difunde eventos y cada cliente pide su vista proyectada.
@@ -298,6 +560,7 @@ app.post('/rooms/:roomId/command', requireEngineAuth, (req, res) => {
       accepted: true,
       events: [...result.events, ...phaseResult.events],
       stateChanged: true,
+      revision: room.revision,
     });
   } catch (err) {
     console.error(`command ${cid} en ${roomId} failed:`, err);
@@ -316,7 +579,7 @@ app.get('/rooms/:roomId/state', requireEngineAuth, (req, res) => {
   // devuelve la vista de espectador (sin informacion privada), nunca el
   // estado completo (evita fuga de manos/mazos/RNG).
   const playerId = typeof req.query.playerId === 'string' ? req.query.playerId : SPECTATOR_ID;
-  res.json({ state: sanitizeForPlayer(room.state, playerId) });
+  res.json({ state: sanitizeForPlayer(room.state, playerId), revision: room.revision });
 });
 
 // D416: eliminar sala (cleanup)
@@ -326,6 +589,7 @@ app.delete('/rooms/:roomId', requireEngineAuth, (req, res) => {
     res.status(404).json({ error: 'Room not found' });
     return;
   }
+  unpersistRoom(roomId);
   res.json({ ok: true });
 });
 
@@ -334,18 +598,49 @@ app.delete('/rooms/:roomId', requireEngineAuth, (req, res) => {
 // ============================================================================
 
 const PORT = Number(process.env.ENGINE_RUNNER_PORT ?? 3001);
-const server = app.listen(PORT, () => {
-  console.log(`engine-runner listening on port ${PORT}`);
+const restored = loadPersistedRooms();
+if (restored > 0) console.log(`${restored} sala(s) restauradas desde disco`);
+// Sin middleware de error, un JSON malformado devolvía la página HTML por
+// defecto de Express (con stack fuera de producción): responder JSON 400.
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  if (err && typeof err === 'object' && (err as { type?: string }).type === 'entity.parse.failed') {
+    res.status(400).json({ error: 'Invalid JSON body' });
+    return;
+  }
+  console.error('unhandled error:', err);
+  res.status(500).json({ error: 'Internal error' });
 });
 
-function shutdown(signal: string): void {
-  console.log(`engine-runner received ${signal}, shutting down`);
-  server.close(() => {
-    process.exit(0);
-  });
-  // Si hay conexiones persistentes que no cierran, forzar salida
-  setTimeout(() => process.exit(0), 5000).unref();
-}
+const exportedApp: express.Express = app;
+export { exportedApp as app };
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+// Solo escuchar cuando se ejecuta como proceso principal — los tests
+// importan `app` y la montan en un puerto efímero.
+const isMain = process.argv[1] !== undefined
+  && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+
+if (isMain) {
+  const server = app.listen(PORT, () => {
+    console.log(`engine-runner listening on port ${PORT}`);
+  });
+
+  function shutdown(signal: string): void {
+    console.log(`engine-runner received ${signal}, shutting down`);
+    if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; }
+    // Dejar de aceptar conexiones PRIMERO: los comandos aceptados durante
+    // el drain marcarían dirty después del volcado y se perderían.
+    // server.close espera a que las peticiones en vuelo terminen.
+    server.close(() => {
+      flushPersists();
+      process.exit(0);
+    });
+    // Si hay conexiones persistentes que no cierran, volcar y forzar salida
+    setTimeout(() => {
+      flushPersists();
+      process.exit(0);
+    }, 5000).unref();
+  }
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+}
