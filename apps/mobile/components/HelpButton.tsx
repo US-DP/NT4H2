@@ -5,18 +5,20 @@
  */
 
 import { Pressable, Text, StyleSheet } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 interface HelpButtonProps {
   onPress: () => void;
 }
 
 export function HelpButton({ onPress }: HelpButtonProps) {
+  const { t } = useTranslation();
   return (
     <Pressable
       onPress={onPress}
       style={styles.button}
       accessibilityRole="button"
-      accessibilityLabel="Ayuda"
+      accessibilityLabel={t('panels.help')}
     >
       <Text style={styles.text}>?</Text>
     </Pressable>

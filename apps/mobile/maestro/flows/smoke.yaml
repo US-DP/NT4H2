@@ -1,0 +1,37 @@
+# Maestro smoke flow — recorrido crítico nativo.
+#
+# Ejecutar con la app en un emulador/dispositivo:
+#   maestro test maestro/flows/smoke.yaml
+#
+# Cubre: arranque → portada → colección → reglamento → asistente →
+# accesibilidad (texto al 200 % sigue navegable) → inicio.
+appId: com.nt4h.digital
+---
+- launchApp
+- assertVisible: "No Time for Heroes"
+# Colección (galería + detalle en bottom sheet en pantalla estrecha)
+- tapOn: "Colección"
+- assertVisible: "Buscar"
+- back
+# Reglamento (búsqueda + índice)
+- tapOn: "Reglamento"
+- assertVisible: "Reglamento"
+- back
+# Nueva partida (asistente)
+- tapOn: "Nueva partida"
+- assertVisible: "Nueva partida"
+- back
+# Accesibilidad: la interfaz sigue navegable con texto al 200 %
+- tapOn: "Perfil"
+- tapOn: "Máximo · 200 %"
+- assertVisible: "Perfil y accesibilidad"
+- back
+- assertVisible: "No Time for Heroes"
+# Volver a Perfil y restaurar el 100 % para dejar el estado limpio
+- tapOn: "Perfil"
+- tapOn: "Predeterminado · 100 %"
+- back
+# Catálogo de componentes (dev showcase)
+- tapOn: "Perfil"
+- tapOn: "Catálogo de componentes (dev)"
+- assertVisible: "NtButton"

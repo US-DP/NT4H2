@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ReactModule from 'react';
 
 // --- Mock hooks: proporcionar implementaciones funcionales sin React fiber ---
 
@@ -66,12 +67,12 @@ vi.mock('../store/gameStore', () => ({
 
 vi.mock('expo-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
+  useLocalSearchParams: () => ({}),
 }));
 
 // Mock react module with working hooks
-const ReactMock = await import('react');
 vi.mock('react', async () => {
-  const actual = await vi.importActual<typeof ReactMock>('react');
+  const actual = await vi.importActual<typeof ReactModule>('react');
   return {
     ...actual,
     useState: <T,>(initial: T | (() => T)): [T, (v: T) => void] => {
@@ -153,21 +154,37 @@ describe('StudyScreen — Estudio de creación (Fase 12)', () => {
     resetHooks();
   });
 
-  it('UI-240: muestra las 12 pestañas de navegación secundaria', () => {
+  it('UI-240: muestra las 12 pestañas de navegación secundaria', async () => {
     resetHooks();
+    // Ancho: el sidebar agrupado muestra todas las pestañas siempre.
+    const { Dimensions } = await import('react-native');
+    const prevGet = Dimensions.get;
+    Dimensions.get = () => ({ width: 1200, height: 800 }) as ReturnType<typeof Dimensions.get>;
+    try {
+      const { root } = renderDebug(React.createElement(StudyScreen));
+      const texts = findAllText(root);
+      const tabLabels = ['Resumen', 'Héroes', 'Habilidades', 'Mazos', 'Huestes', 'Señores', 'Mercado', 'Escenarios', 'Reglas', 'Conjuntos', 'Pruebas', 'Versiones'];
+      for (const label of tabLabels) {
+        expect(texts.some(t => t.includes(label))).toBe(true);
+      }
+    } finally {
+      Dimensions.get = prevGet;
+    }
+  });
+
+  it('UI-240b: en estrecho el índice se colapsa tras "Taller · <sección>"', () => {
+    resetHooks();
+    // 375px (mock por defecto): solo el selector compacto, no la barra.
     const { root } = renderDebug(React.createElement(StudyScreen));
     const texts = findAllText(root);
-    const tabLabels = ['Resumen', 'Héroes', 'Habilidades', 'Mazos', 'Huestes', 'Jefes', 'Mercado', 'Escenarios', 'Reglas', 'Conjuntos', 'Pruebas', 'Versiones'];
-    for (const label of tabLabels) {
-      expect(texts.some(t => t.includes(label))).toBe(true);
-    }
+    expect(texts.some(t => t.includes('Taller'))).toBe(true);
   });
 
   it('UI-241: muestra migas de pan con jerarquía', () => {
     resetHooks();
     const { root } = renderDebug(React.createElement(StudyScreen));
     const texts = findAllText(root);
-    expect(texts.some(t => t.includes('Estudio'))).toBe(true);
+    expect(texts.some(t => t.includes('Taller'))).toBe(true);
   });
 
   it('UI-242/243: muestra botón de guardar borrador', () => {

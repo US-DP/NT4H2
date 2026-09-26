@@ -1,1 +1,3 @@
-module.exports = { Image: () => null };
+module.exports = {
+  Image: Object.assign(() => null, { prefetch: async () => true }),
+};

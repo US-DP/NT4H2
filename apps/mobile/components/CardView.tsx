@@ -1,6 +1,10 @@
 /**
  * CardView — componente que muestra una carta del juego.
  *
+ * Diseño tipo TCG moderno (Hearthstone/MTG Arena): el PNG es la carta
+ * completa a sangre; los stats se muestran como insignias-orbe en las
+ * esquinas (no texto duplicado) y los estados como anillos brillantes.
+ *
  * Cumple UI-PNG-001..011: usa PNG oficiales como representación visual principal.
  * Cumple UI-PNG-020..022: capas dinámicas (selección, objetivo, bloqueo) sobre el PNG.
  * Cumple UI-ACCESS-PNG-001..006: descripción accesible estructurada.
@@ -8,8 +12,16 @@
  */
 
 import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming } from 'react-native-reanimated';
+import { useTranslation } from 'react-i18next';
 import type { CardDefinition } from '@nt4h/schema';
 import { cardImage, buildAccessibleLabel } from '../store/cardImage';
+import { colors } from '../lib/theme';
+import { cardAccentColor } from '../lib/classTokens';
+import { useColors } from '../lib/useTheme';
+import { useSettingsSafe } from '../lib/useTheme';
+
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
 interface CardViewProps {
   card: CardDefinition;
@@ -30,19 +42,11 @@ interface CardViewProps {
   imageVariant?: 'front' | 'back' | 'thumbnail' | 'game' | 'preview';
   /** Progreso de selección de objetivos (UI-107) */
   targetProgress?: string;
+  /** Sufijo accesible de posición en lista ("Carta 2 de 7") — srListPositions */
+  positionLabel?: string;
 }
 
-const CLASS_COLORS: Record<string, string> = {
-  WARRIOR: '#c0392b',
-  EXPLORER: '#27ae60',
-  ROGUE: '#8e44ad',
-  MAGE: '#2980b9',
-  HORDE: '#2c3e50',
-  WARLORD: '#7f1a1a',
-  MARKET: '#d4a017',
-  HERO: '#e67e22',
-  SCENARIO: '#16a085',
-};
+
 
 export function CardView({
   card,
@@ -56,102 +60,280 @@ export function CardView({
   blockedReason,
   imageVariant = 'game',
   targetProgress,
+  positionLabel,
 }: CardViewProps) {
-  const color = CLASS_COLORS[card.heroClass ?? card.type] ?? '#555';
+  const themed = useColors();
+  const { t } = useTranslation();
+  const reduceMotion = useSettingsSafe((s) => s.reduceMotion);
+  const srExpanded = useSettingsSafe((s) => s.srExpandedLabels);
+  const color = cardAccentColor(card);
   const variant = showBack ? 'back' : imageVariant;
   const { path, showPlaceholder } = cardImage(card.id, variant);
-  const accessibleLabel = buildAccessibleLabel(card);
+  // Descripción accesible estructurada (UI-ACCESS-PNG-001) — ya resuelta
+  // via i18n dentro de buildAccessibleLabel. srExpandedLabels añade
+  // tipo, clase y estadísticas completas; sin el ajuste solo nombre+tipo.
+  const accessibleLabel = buildAccessibleLabel(card, srExpanded)
+    + (positionLabel ? ` ${positionLabel}` : '');
 
-  // Construir estilo de borde según capas (UI-PNG-020)
-  const borderStyle: Record<string, unknown> = { borderColor: color };
+  // Animación: la carta seleccionada se eleva y crece con muelle;
+  // con "reducir movimiento" el cambio es instantáneo (sin muelle)
+  const scale = useSharedValue(1);
+  const lift = useSharedValue(0);
+  const targetScale = selected ? 1.06 : 1;
+  const targetLift = selected ? -8 : 0;
+  scale.value = reduceMotion ? targetScale : withSpring(targetScale, { damping: 14, stiffness: 200 });
+  lift.value = reduceMotion ? targetLift : withSpring(targetLift, { damping: 14, stiffness: 200 });
+  const animStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }, { translateY: lift.value }],
+    zIndex: selected ? 5 : 0,
+  }));
+
+  // Estado visual como anillo (nunca solo color: forma + etiqueta accesible)
+  const ringStyle: Record<string, unknown> = { borderColor: color };
   if (selected) {
-    borderStyle.borderColor = '#f1c40f';
-    borderStyle.borderWidth = 3;
+    ringStyle.borderColor = themed.accent;
+    ringStyle.borderWidth = 3;
+    ringStyle.shadowColor = themed.accent;
+    ringStyle.shadowOpacity = 0.9;
+    ringStyle.shadowRadius = 10;
   } else if (validTarget) {
-    borderStyle.borderColor = '#2ecc71';
-    borderStyle.borderWidth = 3;
+    ringStyle.borderColor = themed.success;
+    ringStyle.borderWidth = 3;
+    ringStyle.shadowColor = themed.success;
+    ringStyle.shadowOpacity = 0.9;
+    ringStyle.shadowRadius = 8;
   } else if (blocked) {
-    borderStyle.borderColor = '#e74c3c';
-    borderStyle.borderWidth = 2;
-    borderStyle.opacity = 0.6;
+    ringStyle.borderColor = colors.textFaint;
+    ringStyle.borderWidth = 2;
   }
 
+  const badgeSize = compact ? 22 : 30;
+
   return (
-    <Pressable
+    <AnimatedPressable
       onPress={onPress}
       onLongPress={onLongPress}
-      style={[styles.container, borderStyle, selected && styles.selected]}
+      onPressIn={() => { if (!reduceMotion) scale.value = withTiming(0.94, { duration: 90 }); }}
+      onPressOut={() => { scale.value = reduceMotion ? (selected ? 1.06 : 1) : withSpring(selected ? 1.06 : 1, { damping: 14 }); }}
+      style={[
+        styles.container,
+        compact && styles.containerCompact,
+        ringStyle,
+        animStyle,
+        blocked && styles.blockedDim,
+      ]}
       accessibilityRole="button"
       accessibilityLabel={accessibleLabel}
       accessibilityHint={blocked ? blockedReason : undefined}
+      accessibilityState={{ selected: !!selected, disabled: !!blocked }}
     >
       {path && !showPlaceholder ? (
-        // PNG real (UI-PNG-001, UI-GAME-001)
+        // PNG real a sangre (UI-PNG-001, UI-GAME-001)
+        // Escenarios: apaisados (~1.48); resto de cartas: verticales (0.656)
         <Image
           source={{ uri: path }}
-          style={styles.cardImage}
-          resizeMode="contain"
+          style={[
+            styles.cardImage,
+            card.type === 'SCENARIO' && styles.cardImageLandscape,
+          ]}
+          resizeMode="cover"
           accessibilityLabel={accessibleLabel}
         />
       ) : (
         // Marcador de placeholder (UI-PNG-007, UI-PNG-008)
         <View style={[styles.placeholder, { backgroundColor: color }]}>
-          <Text style={styles.placeholderText}>Imagen no disponible</Text>
+          <Text style={styles.placeholderText}>{t('cardui.imageUnavailable')}</Text>
           <Text style={styles.placeholderName}>{card.name}</Text>
           <Text style={styles.placeholderType}>
-            {card.type === 'ABILITY' && card.heroClass ? `Habilidad de ${card.heroClass}` : card.type}
+            {card.type === 'ABILITY' && card.heroClass ? t('cardui.abilityOfClass', { class: card.heroClass }) : card.type}
           </Text>
-          <Text style={styles.placeholderStatus}>PNG pendiente</Text>
+          <Text style={styles.placeholderStatus}>{t('cardui.pngPending')}</Text>
         </View>
       )}
 
-      {/* Capas dinámicas (UI-PNG-020..022) — no ocultan nombre/valores */}
-      {!compact && (
-        <View style={styles.overlay}>
-          <Text style={styles.name}>{card.name}</Text>
-          {card.printedAttack !== undefined && card.printedAttack > 0 && (
-            <Text style={styles.stat}>⚔ {card.printedAttack}</Text>
-          )}
-          {card.printedFortitude !== undefined && (
-            <Text style={styles.stat}>🛡 {card.printedFortitude}</Text>
-          )}
-          {card.printedCost !== undefined && (
-            <Text style={styles.stat}>💰 {card.printedCost}</Text>
-          )}
-          {blocked && blockedReason && (
-            <Text style={styles.blockedReason}>{blockedReason}</Text>
-          )}
-          {targetProgress && (
-            <Text style={styles.targetProgress}>{targetProgress}</Text>
-          )}
+      {/* Insignias-orbe de stats (esquinas, estilo TCG) */}
+      {card.printedAttack !== undefined && card.printedAttack > 0 && (
+        <View style={[styles.badge, styles.badgeAttack, { width: badgeSize, height: badgeSize, borderRadius: badgeSize / 2, backgroundColor: themed.dangerPressed }]}>
+          <Text style={[styles.badgeText, compact && styles.badgeTextCompact]}>⚔{card.printedAttack}</Text>
         </View>
       )}
-    </Pressable>
+      {card.printedFortitude !== undefined && (
+        <View style={[styles.badge, styles.badgeFortitude, { width: badgeSize, height: badgeSize, borderRadius: badgeSize / 2, backgroundColor: themed.primaryPressed }]}>
+          <Text style={[styles.badgeText, compact && styles.badgeTextCompact]}>🛡{card.printedFortitude}</Text>
+        </View>
+      )}
+      {card.printedCost !== undefined && (
+        <View style={[styles.badge, styles.badgeCost, { width: badgeSize, height: badgeSize, borderRadius: badgeSize / 2, backgroundColor: themed.warning }]}>
+          <Text style={[styles.badgeText, compact && styles.badgeTextCompact]}>💰{card.printedCost}</Text>
+        </View>
+      )}
+
+      {/* Nombre en píldora inferior (legible sobre el arte) */}
+      {!compact && (
+        <View style={styles.namePill}>
+          <Text style={styles.name} numberOfLines={1}>{card.name}</Text>
+        </View>
+      )}
+
+      {/* Capas dinámicas de estado */}
+      {blocked && (
+        <View style={styles.blockedVeil}>
+          <Text style={styles.blockedIcon}>🔒</Text>
+          {blockedReason && <Text style={styles.blockedReason}>{blockedReason}</Text>}
+        </View>
+      )}
+      {targetProgress && (
+        <View style={styles.progressBar}>
+          <Text style={styles.targetProgress}>{targetProgress}</Text>
+        </View>
+      )}
+      {selected && (
+        <View style={styles.selectedFlag}>
+          <Text style={styles.selectedFlagText}>✓</Text>
+        </View>
+      )}
+    </AnimatedPressable>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     borderWidth: 2,
-    borderRadius: 8,
+    borderRadius: 10,
     margin: 4,
-    minWidth: 120,
-    maxWidth: 180,
-    backgroundColor: '#1a1a2e',
+    width: 132,
+    backgroundColor: colors.surface,
     overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
   },
-  selected: {
-    transform: [{ scale: 1.05 }],
+  containerCompact: {
+    width: 104,
+    margin: 2,
+  },
+  blockedDim: {
+    opacity: 0.55,
   },
   cardImage: {
     width: '100%',
-    height: 160,
+    // Los PNG oficiales son ~800x1219 → aspecto 0.656
+    aspectRatio: 0.656,
+    borderRadius: 8,
+  },
+  cardImageLandscape: {
+    // Escenarios: PNG ~711x479 → apaisado
+    aspectRatio: 1.48,
+  },
+  badge: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.text,
+    shadowColor: '#000',
+    shadowOpacity: 0.6,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 4,
+  },
+  badgeAttack: {
+    bottom: 6,
+    left: 6,
+    backgroundColor: colors.dangerPressed,
+  },
+  badgeFortitude: {
+    bottom: 6,
+    right: 6,
+    backgroundColor: colors.info,
+  },
+  badgeCost: {
+    top: 6,
+    right: 6,
+    backgroundColor: colors.accentDim,
+  },
+  badgeText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 13,
+    textShadowColor: '#000',
+    textShadowRadius: 2,
+  },
+  badgeTextCompact: {
+    fontSize: 10,
+  },
+  namePill: {
+    position: 'absolute',
+    bottom: 6,
+    left: 34,
+    right: 34,
+    backgroundColor: 'rgba(10,10,20,0.78)',
+    borderRadius: 8,
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+  },
+  name: {
+    color: colors.text,
+    fontWeight: 'bold',
+    fontSize: 11,
+    textAlign: 'center',
+  },
+  blockedVeil: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(20,20,30,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 6,
+  },
+  blockedIcon: {
+    fontSize: 18,
+    marginBottom: 2,
+  },
+  blockedReason: {
+    color: colors.danger,
+    fontSize: 10,
+    textAlign: 'center',
+    fontWeight: 'bold',
+  },
+  progressBar: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    right: 4,
+    backgroundColor: 'rgba(10,10,20,0.8)',
     borderRadius: 6,
+    padding: 3,
+    alignItems: 'center',
+  },
+  targetProgress: {
+    color: colors.accent,
+    fontSize: 10,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  selectedFlag: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectedFlagText: {
+    color: colors.surface,
+    fontSize: 12,
+    fontWeight: 'bold',
   },
   placeholder: {
     width: '100%',
-    height: 160,
-    borderRadius: 6,
+    aspectRatio: 0.656,
+    borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 8,
@@ -169,41 +351,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   placeholderType: {
-    color: '#ecf0f1',
+    color: colors.textMuted,
     fontSize: 10,
     fontStyle: 'italic',
     marginTop: 2,
   },
   placeholderStatus: {
-    color: '#bdc3c7',
+    color: colors.textMuted,
     fontSize: 9,
     marginTop: 4,
-  },
-  overlay: {
-    padding: 4,
-    alignItems: 'center',
-  },
-  name: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 12,
-    textAlign: 'center',
-  },
-  stat: {
-    color: '#ecf0f1',
-    fontSize: 11,
-  },
-  blockedReason: {
-    color: '#e74c3c',
-    fontSize: 9,
-    textAlign: 'center',
-    marginTop: 2,
-  },
-  targetProgress: {
-    color: '#f1c40f',
-    fontSize: 9,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginTop: 2,
   },
 });

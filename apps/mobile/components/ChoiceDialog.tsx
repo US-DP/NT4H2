@@ -8,7 +8,9 @@
  * Cumple UI-135: si no hay opción legal, no se bloquea.
  */
 
+import { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Modal, ScrollView } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 export interface ChoiceOption {
   id: string;
@@ -60,22 +62,24 @@ export function ChoiceDialog({
   onSkip,
   onClose,
 }: ChoiceDialogProps) {
-  const selected = new Set<string>();
+  const { t } = useTranslation();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const toggle = (id: string, disabled?: boolean) => {
     if (disabled) return;
-    if (selected.has(id)) {
-      selected.delete(id);
-    } else {
-      if (selected.size >= maxSelections) {
-        if (maxSelections === 1) {
-          selected.clear();
-        } else {
-          return;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        if (next.size >= maxSelections) {
+          if (maxSelections === 1) next.clear();
+          else return prev;
         }
+        next.add(id);
       }
-      selected.add(id);
-    }
+      return next;
+    });
   };
 
   const validOptions = options.filter((o) => !o.disabled);
@@ -87,37 +91,38 @@ export function ChoiceDialog({
         <View style={styles.dialog}>
           <View style={styles.header}>
             <Text style={styles.source}>{source}</Text>
-            {isPrivate && <Text style={styles.privateBadge}>Privada</Text>}
+            {isPrivate && <Text style={styles.privateBadge}>{t('panels.choicePrivate')}</Text>}
           </View>
 
           {waitingForOther ? (
             // UI-133: otros jugadores ven espera
             <Text style={styles.waitingText}>
-              Esperando una decisión de {decider}.
+              {t('panels.choiceWaiting', { decider })}
             </Text>
           ) : (
             <>
-              <Text style={styles.decider}>Decisión de: {decider}</Text>
+              <Text style={styles.decider}>{t('panels.choiceDecider', { decider })}</Text>
               <Text style={styles.instruction}>{instruction}</Text>
 
               {timeRemaining !== undefined && (
-                <Text style={styles.timer}>⏱ {timeRemaining}s</Text>
+                <Text style={styles.timer}>{t('panels.choiceTimer', { seconds: timeRemaining })}</Text>
               )}
 
               <Text style={styles.selectionInfo}>
-                Selecciona {minSelections}
-                {minSelections !== maxSelections ? `-${maxSelections}` : ''}
-                {' '}opción{maxSelections > 1 ? 'es' : ''}.
+                {t('panels.choiceSelect', {
+                  count: maxSelections,
+                  range: minSelections !== maxSelections ? `${minSelections}-${maxSelections}` : `${minSelections}`,
+                })}
               </Text>
 
               {noLegalOption ? (
                 // UI-135: sin opción legal
                 <View style={styles.noOption}>
                   <Text style={styles.noOptionText}>
-                    No hay opciones válidas disponibles.
+                    {t('panels.choiceNoOptions')}
                   </Text>
                   <Pressable style={styles.noOptionButton} onPress={() => onSelect([])}>
-                    <Text style={styles.buttonText}>Continuar</Text>
+                    <Text style={styles.buttonText}>{t('panels.choiceContinue')}</Text>
                   </Pressable>
                 </View>
               ) : (
@@ -127,9 +132,20 @@ export function ChoiceDialog({
                       key={opt.id}
                       onPress={() => toggle(opt.id, opt.disabled)}
                       disabled={opt.disabled}
-                      style={[styles.option, opt.disabled && styles.optionDisabled]}
+                      style={[
+                        styles.option,
+                        selected.has(opt.id) && styles.optionSelected,
+                        opt.disabled && styles.optionDisabled,
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityState={{
+                        selected: selected.has(opt.id),
+                        disabled: !!opt.disabled,
+                      }}
                     >
-                      <Text style={styles.optionLabel}>{opt.label}</Text>
+                      <Text style={styles.optionLabel}>
+                        {selected.has(opt.id) ? '☑ ' : '☐ '}{opt.label}
+                      </Text>
                       {opt.description && (
                         <Text style={styles.optionDesc}>{opt.description}</Text>
                       )}
@@ -144,20 +160,25 @@ export function ChoiceDialog({
               <View style={styles.actions}>
                 {canSkip && onSkip && (
                   <Pressable style={styles.skipButton} onPress={onSkip}>
-                    <Text style={styles.buttonText}>Omitir</Text>
+                    <Text style={styles.buttonText}>{t('panels.choiceSkip')}</Text>
                   </Pressable>
                 )}
                 {!noLegalOption && (
                   <Pressable
-                    style={styles.confirmButton}
+                    style={[styles.confirmButton, selected.size < minSelections && styles.confirmDisabled]}
                     onPress={() => onSelect(Array.from(selected))}
+                    disabled={selected.size < minSelections}
+                    accessibilityRole="button"
+                    accessibilityState={{ disabled: selected.size < minSelections }}
                   >
-                    <Text style={styles.buttonText}>Confirmar</Text>
+                    <Text style={styles.buttonText}>
+                      {t('panels.choiceConfirm', { selected: selected.size, min: minSelections })}
+                    </Text>
                   </Pressable>
                 )}
                 {onClose && (
                   <Pressable style={styles.closeButton} onPress={onClose}>
-                    <Text style={styles.buttonText}>Cerrar</Text>
+                    <Text style={styles.buttonText}>{t('panels.close')}</Text>
                   </Pressable>
                 )}
               </View>
@@ -241,6 +262,11 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     minHeight: 44,
   },
+  optionSelected: {
+    borderColor: '#f1c40f',
+    borderWidth: 2,
+    backgroundColor: '#3d3d20',
+  },
   optionDisabled: {
     backgroundColor: '#555',
     opacity: 0.5,
@@ -295,6 +321,10 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     minWidth: 80,
     alignItems: 'center',
+  },
+  confirmDisabled: {
+    backgroundColor: '#3a5a47',
+    opacity: 0.6,
   },
   closeButton: {
     backgroundColor: '#555',

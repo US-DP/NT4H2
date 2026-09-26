@@ -19,6 +19,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { render, expectText, findAllText } from './renderer';
+import { colors } from '../lib/theme';
 
 // Importar funciones del catálogo de imágenes
 import {
@@ -269,7 +270,7 @@ describe('PNG — UI-PNG-020..022 (capas dinámicas)', () => {
       }
       return false;
     }
-    expect(findBorderColor(root, '#2ecc71')).toBe(true);
+    expect(findBorderColor(root, colors.success)).toBe(true);
   });
 
   it('CardView muestra estado bloqueado con motivo', () => {

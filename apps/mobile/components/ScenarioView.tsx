@@ -10,6 +10,8 @@
  */
 
 import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
+import { useTranslation } from 'react-i18next';
+import '../lib/i18n';
 import { useGameStore } from '../store/gameStore';
 import { cardImage } from '../store/cardImage';
 import type { CardDefinition } from '@nt4h/schema';
@@ -19,6 +21,7 @@ interface ScenarioViewProps {
 }
 
 export function ScenarioView({ onUseScenario }: ScenarioViewProps) {
+  const { t } = useTranslation();
   const gameState = useGameStore((s) => s.gameState);
   const catalog = useGameStore((s) => s.catalog);
 
@@ -28,8 +31,8 @@ export function ScenarioView({ onUseScenario }: ScenarioViewProps) {
   if (!scenarioInstanceId) {
     return (
       <View style={styles.container}>
-        <Text style={styles.title}>Escenario</Text>
-        <Text style={styles.empty}>No hay escenario activo.</Text>
+        <Text style={styles.title}>{t('hud.scenarioTitle')}</Text>
+        <Text style={styles.empty}>{t('hud.noActiveScenario')}</Text>
       </View>
     );
   }
@@ -45,8 +48,8 @@ export function ScenarioView({ onUseScenario }: ScenarioViewProps) {
   if (!scenarioDef) {
     return (
       <View style={styles.container}>
-        <Text style={styles.title}>Escenario</Text>
-        <Text style={styles.empty}>Definición no encontrada.</Text>
+        <Text style={styles.title}>{t('hud.scenarioTitle')}</Text>
+        <Text style={styles.empty}>{t('hud.scenarioDefMissing')}</Text>
       </View>
     );
   }
@@ -54,25 +57,27 @@ export function ScenarioView({ onUseScenario }: ScenarioViewProps) {
   const hasAction = scenarioDef.effects && scenarioDef.effects.length > 0;
 
   return (
-    <View style={styles.container} accessibilityLabel={`Escenario: ${scenarioDef.name}`}>
-      <Text style={styles.title}>Escenario activo</Text>
+    <View style={styles.container} accessibilityLabel={t('hud.scenarioA11y', { name: scenarioDef.name })}>
+      <Text style={styles.title}>{t('hud.scenarioActiveTitle')}</Text>
       <View style={styles.scenarioCard}>
         {path && !showPlaceholder ? (
-          <Image source={{ uri: path }} style={styles.image} resizeMode="contain" />
+          <Image source={{ uri: path }} style={styles.image} resizeMode="cover" />
         ) : (
           <View style={styles.imagePlaceholder}>
-            <Text style={styles.placeholderText}>Sin ilustración</Text>
+            <Text style={styles.placeholderText}>{t('hud.noIllustration')}</Text>
           </View>
         )}
-        <Text style={styles.name}>{scenarioDef.name}</Text>
-        <Text style={styles.effectSummary}>
-          {scenarioDef.effects?.length ?? 0} efecto(s) activo(s)
-        </Text>
-        {hasAction && onUseScenario && (
-          <Pressable style={styles.useButton} onPress={onUseScenario} >
-            <Text style={styles.useText}>Usar {scenarioDef.name}</Text>
-          </Pressable>
-        )}
+        <View style={styles.info}>
+          <Text style={styles.name}>{scenarioDef.name}</Text>
+          <Text style={styles.effectSummary}>
+            {t('hud.scenarioActiveEffects', { count: scenarioDef.effects?.length ?? 0 })}
+          </Text>
+          {hasAction && onUseScenario && (
+            <Pressable style={styles.useButton} onPress={onUseScenario} >
+              <Text style={styles.useText}>{t('hud.use')}</Text>
+            </Pressable>
+          )}
+        </View>
       </View>
     </View>
   );
@@ -94,26 +99,30 @@ const styles = StyleSheet.create({
   },
   scenarioCard: {
     backgroundColor: '#2c3e50',
-    padding: 8,
+    padding: 6,
     borderRadius: 8,
+    flexDirection: 'row',
     alignItems: 'center',
-    width: '100%',
-    maxWidth: 200,
+    gap: 10,
+    alignSelf: 'center',
   },
   image: {
-    width: '100%',
-    height: 120,
+    // Las cartas de escenario son apaisadas (~1.48), no verticales
+    width: 104,
+    aspectRatio: 1.48,
     borderRadius: 6,
-    marginBottom: 6,
   },
   imagePlaceholder: {
-    width: '100%',
-    height: 100,
+    width: 104,
+    aspectRatio: 1.48,
     backgroundColor: '#34495e',
     borderRadius: 6,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 6,
+  },
+  info: {
+    alignItems: 'flex-start',
+    maxWidth: 160,
   },
   placeholderText: {
     color: '#7f8c8d',
@@ -123,7 +132,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 13,
     fontWeight: 'bold',
-    textAlign: 'center',
   },
   effectSummary: {
     color: '#bdc3c7',

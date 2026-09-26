@@ -10,6 +10,8 @@
 
 import { View, Text, Pressable, StyleSheet, Modal } from 'react-native';
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import '../lib/i18n';
 
 export interface EnemyContribution {
   enemyName: string;
@@ -37,13 +39,14 @@ export function HordeAttackSummary({
   totalFinalDamage,
   onClose,
 }: HordeAttackSummaryProps) {
+  const { t } = useTranslation();
   const [showDetails, setShowDetails] = useState(false);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <View style={styles.dialog}>
-          <Text style={styles.title}>Ataque de la Horda</Text>
+          <Text style={styles.title}>{t('hud.phase.HORDE_ATTACK')}</Text>
 
           {/* Resumen por enemigo (UI-160) */}
           <View style={styles.section}>
@@ -52,8 +55,8 @@ export function HordeAttackSummary({
                 <Text style={styles.enemyName}>{e.enemyName}</Text>
                 <Text style={styles.enemyDamage}>
                   {e.finalDamage === null
-                    ? 'anulado'
-                    : `${e.finalDamage} (base ${e.baseDamage})`}
+                    ? t('hud.annulled')
+                    : t('hud.enemyDamageLine', { final: e.finalDamage, base: e.baseDamage })}
                 </Text>
               </View>
             ))}
@@ -61,17 +64,17 @@ export function HordeAttackSummary({
 
           {/* Totales (UI-161) */}
           <View style={styles.totals}>
-            <Text style={styles.totalLine}>Daño base: {totalBaseDamage}</Text>
+            <Text style={styles.totalLine}>{t('hud.baseDamage', { value: totalBaseDamage })}</Text>
             {totalPrevented > 0 && (
-              <Text style={styles.totalLine}>Prevención: -{totalPrevented}</Text>
+              <Text style={styles.totalLine}>{t('hud.preventionLine', { value: totalPrevented })}</Text>
             )}
-            <Text style={styles.finalLine}>Daño final: {totalFinalDamage}</Text>
+            <Text style={styles.finalLine}>{t('hud.finalDamage', { value: totalFinalDamage })}</Text>
           </View>
 
           {/* Ampliar cálculo (UI-162) */}
           <Pressable onPress={() => setShowDetails(!showDetails)} style={styles.detailToggle}>
             <Text style={styles.detailText}>
-              {showDetails ? 'Ocultar detalles' : 'Ver detalles del cálculo'}
+              {showDetails ? t('hud.hideDetails') : t('hud.showCalcDetails')}
             </Text>
           </Pressable>
 
@@ -81,10 +84,10 @@ export function HordeAttackSummary({
                 <View key={i} style={styles.detailRow}>
                   <Text style={styles.detailName}>{e.enemyName}:</Text>
                   <Text style={styles.detailCalc}>
-                    base {e.baseDamage}
-                    {e.modifiedDamage !== e.baseDamage && ` → mod ${e.modifiedDamage}`}
+                    {t('hud.calcBase', { base: e.baseDamage })}
+                    {e.modifiedDamage !== e.baseDamage && t('hud.calcMod', { value: e.modifiedDamage })}
                     {e.modifiers?.length ? ` (${e.modifiers.join(', ')})` : ''}
-                    {e.finalDamage === null ? ' → anulado' : ` → ${e.finalDamage}`}
+                    {e.finalDamage === null ? ` → ${t('hud.annulled')}` : ` → ${e.finalDamage}`}
                   </Text>
                 </View>
               ))}
@@ -92,7 +95,7 @@ export function HordeAttackSummary({
           )}
 
           <Pressable style={styles.closeButton} onPress={onClose}>
-            <Text style={styles.closeButtonText}>Continuar</Text>
+            <Text style={styles.closeButtonText}>{t('hud.continueGame')}</Text>
           </Pressable>
         </View>
       </View>

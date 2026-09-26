@@ -16,6 +16,18 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, expectText, press } from './renderer';
 
+/** Pulsa el elemento interactivo cuyo accessibilityLabel coincide */
+function pressByLabel(nodes: any[], label: string): void {
+  function walk(node: any): boolean {
+    if (node.props?.onPress && node.props?.accessibilityLabel === label) {
+      node.props.onPress();
+      return true;
+    }
+    return (node.children ?? []).some(walk);
+  }
+  if (!nodes.some(walk)) throw new Error(`No pressable with label: ${label}`);
+}
+
 const mockStoreState: Record<string, unknown> = {};
 
 vi.mock('../store/gameStore', () => ({
@@ -273,22 +285,132 @@ describe('Flujo — selección de objetivo', () => {
     expect(selectEnemy).toHaveBeenCalled();
   });
 
-  it('con carta seleccionada, pulsar enemigo juega la carta', () => {
+  it('con carta de objetivo seleccionada, pulsar enemigo lo elige como objetivo', () => {
     const selectEnemy = vi.fn();
     const playCard = vi.fn();
     setMockStore({
       gameState: makeGameState({
         battlefield: [makeEnemy({ instanceId: 'target-1' })],
       }),
-      catalog: makeCatalog([makeCardDef({ id: 'horde.001', name: 'Orco' })]),
+      catalog: makeCatalog([
+        makeCardDef({ id: 'horde.001', name: 'Orco' }),
+        makeCardDef({
+          id: 'test-card',
+          name: 'Flecha',
+          effects: [{ type: 'DEAL_DAMAGE', amount: 1, target: { kind: 'SELECTED_ENEMY' } }],
+        } as any),
+      ]),
       ui: { selectedCardInstanceId: 'card-inst-1', selectedEnemyInstanceId: null },
       selectEnemy,
       playCard,
     });
     const { root } = render(<Battlefield />);
     press(root);
-    // Con carta seleccionada, pulsar enemigo llama a playCard
-    expect(playCard).toHaveBeenCalledWith('card-inst-1', 'target-1');
+    // El enemigo se elige como objetivo; la carta se confirma en HandView
+    expect(selectEnemy).toHaveBeenCalledWith('target-1');
+    expect(playCard).not.toHaveBeenCalled();
+  });
+
+  it('carta con objetivo requiere elegir enemigo antes de jugar', () => {
+    const playCard = vi.fn();
+    const targetingCard = {
+      type: 'DEAL_DAMAGE', amount: 2, target: { kind: 'SELECTED_ENEMY' },
+    };
+    setMockStore({
+      gameState: makeGameState({
+        battlefield: [makeEnemy({ instanceId: 'enemy-1' })],
+      }),
+      catalog: makeCatalog([
+        makeCardDef({ id: 'test-card', name: 'Flecha', effects: [targetingCard] } as any),
+        makeCardDef({ id: 'horde.001', name: 'Orco' }),
+      ]),
+      ui: { selectedCardInstanceId: 'card-inst-1', selectedEnemyInstanceId: null },
+      playCard,
+      selectEnemy: vi.fn(),
+    });
+    const { root } = render(<HandView />);
+    // Se explica que la carta necesita un enemigo
+    expectText(root, /Elige un enemigo/);
+    expectText(root, /campo de batalla/);
+    // El botón está deshabilitado sin objetivo
+    pressByLabel(root, 'Jugar carta contra el enemigo elegido');
+    expect(playCard).not.toHaveBeenCalled();
+  });
+
+  it('carta con objetivo se juega contra el enemigo elegido', () => {
+    const playCard = vi.fn();
+    const selectEnemy = vi.fn();
+    const targetingCard = {
+      type: 'DEAL_DAMAGE', amount: 2, target: { kind: 'SELECTED_ENEMY' },
+    };
+    setMockStore({
+      gameState: makeGameState({
+        battlefield: [makeEnemy({ instanceId: 'enemy-1' })],
+      }),
+      catalog: makeCatalog([
+        makeCardDef({ id: 'test-card', name: 'Flecha', effects: [targetingCard] } as any),
+        makeCardDef({ id: 'horde.001', name: 'Orco' }),
+      ]),
+      ui: { selectedCardInstanceId: 'card-inst-1', selectedEnemyInstanceId: 'enemy-1' },
+      playCard,
+      selectEnemy,
+    });
+    const { root } = render(<HandView />);
+    expectText(root, /Objetivo: Orco/);
+    pressByLabel(root, 'Jugar carta contra el enemigo elegido');
+    expect(playCard).toHaveBeenCalledWith('card-inst-1', 'enemy-1');
+  });
+
+  it('carta que afecta a todos no requiere elegir objetivo', () => {
+    const playCard = vi.fn();
+    setMockStore({
+      gameState: makeGameState(),
+      catalog: makeCatalog([
+        makeCardDef({
+          id: 'test-card',
+          name: 'Onda Expansiva',
+          effects: [{ type: 'DEAL_DAMAGE_ALL_ENEMIES', amount: 1 }],
+        } as any),
+      ]),
+      ui: { selectedCardInstanceId: 'card-inst-1', selectedEnemyInstanceId: null },
+      playCard,
+    });
+    const { root } = render(<HandView />);
+    expectText(root, /Afecta a todos los enemigos/);
+    pressByLabel(root, 'Jugar carta');
+    expect(playCard).toHaveBeenCalledWith('card-inst-1', undefined);
+  });
+
+  it('enemigo inválido por filtro se atenúa y explica el motivo', () => {
+    const setMessage = vi.fn();
+    const selectEnemy = vi.fn();
+    setMockStore({
+      gameState: makeGameState({
+        battlefield: [makeEnemy({ instanceId: 'enemy-1', isOrc: false })],
+      }),
+      catalog: makeCatalog([
+        makeCardDef({
+          id: 'test-card',
+          name: 'Mataorcos',
+          effects: [{
+            type: 'DEAL_DAMAGE', amount: 3,
+            target: { kind: 'ONE_ENEMY', filter: { isOrc: true } },
+          }],
+        } as any),
+        makeCardDef({ id: 'horde.001', name: 'Goblin' }),
+      ]),
+      ui: { selectedCardInstanceId: 'card-inst-1', selectedEnemyInstanceId: null },
+      selectEnemy,
+      setMessage,
+      playCard: vi.fn(),
+    });
+    const { root } = render(<Battlefield />);
+    // Se indica el filtro "solo orcos"
+    expectText(root, /solo orcos/);
+    press(root);
+    // No se selecciona; se explica el motivo
+    expect(selectEnemy).not.toHaveBeenCalled();
+    expect(setMessage).toHaveBeenCalledWith(expect.stringContaining('Solo afecta a orcos'));
   });
 });
 

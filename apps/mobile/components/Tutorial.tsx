@@ -7,6 +7,7 @@
  */
 
 import { View, Text, Pressable, StyleSheet, Modal } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 interface TutorialStep {
   title: string;
@@ -25,6 +26,7 @@ interface TutorialProps {
 }
 
 export function Tutorial({ steps, visible, currentStep = 0, onStepChange, onClose }: TutorialProps) {
+  const { t } = useTranslation();
   const index = currentStep;
   const setIndex = onStepChange ?? (() => {});
 
@@ -39,7 +41,7 @@ export function Tutorial({ steps, visible, currentStep = 0, onStepChange, onClos
       <View style={styles.overlay}>
         <View style={styles.dialog}>
           <Text style={styles.stepCounter}>
-            Paso {index + 1} de {steps.length}
+            {t('panels.tutorialStep', { current: index + 1, total: steps.length })}
           </Text>
           <Text style={styles.title}>{step.title}</Text>
           {step.context && <Text style={styles.context}>{step.context}</Text>}
@@ -51,18 +53,18 @@ export function Tutorial({ steps, visible, currentStep = 0, onStepChange, onClos
               disabled={isFirst}
               style={[styles.controlButton, isFirst && styles.disabledButton]}
             >
-              <Text style={styles.controlText}>Anterior</Text>
+              <Text style={styles.controlText}>{t('panels.tutorialPrev')}</Text>
             </Pressable>
             <Pressable
               onPress={() => (isLast ? onClose() : setIndex(Math.min(steps.length - 1, index + 1)))}
               style={styles.controlButton}
             >
-              <Text style={styles.controlText}>{isLast ? 'Finalizar' : 'Siguiente'}</Text>
+              <Text style={styles.controlText}>{isLast ? t('panels.tutorialFinish') : t('panels.tutorialNext')}</Text>
             </Pressable>
           </View>
 
           <Pressable onPress={onClose} style={styles.closeLink}>
-            <Text style={styles.closeText}>Cerrar tutorial</Text>
+            <Text style={styles.closeText}>{t('panels.tutorialClose')}</Text>
           </Pressable>
         </View>
       </View>

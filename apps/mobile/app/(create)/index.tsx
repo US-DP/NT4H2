@@ -4,12 +4,15 @@
 
 import { View, StyleSheet } from 'react-native';
 import { CreateGameFlow } from '../../components/CreateGameFlow';
-import { AppNav } from '../../components/AppNav';
+import { AppNav, useNavSidebarWidth } from '../../components/AppNav';
 
 export default function CreateGameScreen() {
+  const navWidth = useNavSidebarWidth();
   return (
     <View style={styles.container}>
-      <CreateGameFlow />
+      <View style={[styles.content, { marginLeft: navWidth }]}>
+        <CreateGameFlow />
+      </View>
       <AppNav />
     </View>
   );
@@ -17,6 +20,9 @@ export default function CreateGameScreen() {
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+  },
+  content: {
     flex: 1,
   },
 });

@@ -33,7 +33,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 /** Timeout por defecto para llamadas REST (ms) */
-export const FETCH_TIMEOUT_MS = 10_000;
+const FETCH_TIMEOUT_MS = 10_000;
 
 /**
  * fetch con timeout via AbortController — una promesa colgada no deja la

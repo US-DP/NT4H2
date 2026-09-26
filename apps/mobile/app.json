@@ -6,6 +6,36 @@
     "orientation": "portrait",
     "scheme": "nt4h",
     "userInterfaceStyle": "dark",
+    "icon": "./assets/icon.png",
+    "primaryColor": "#0f0f1e",
+    "backgroundColor": "#0f0f1e",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0f0f1e"
+    },
+    "ios": {
+      "bundleIdentifier": "com.nt4h.digital",
+      "buildNumber": "1",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.nt4h.digital",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0f0f1e"
+      },
+      "permissions": ["VIBRATE"],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": false,
+          "data": [{ "scheme": "nt4h", "host": "rooms", "pathPrefix": "/" }],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
+    },
     "web": {
       "bundler": "metro",
       "output": "static",

@@ -6,33 +6,38 @@
  */
 
 import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { useTranslation } from 'react-i18next';
+import '../lib/i18n';
 import { useGameStore } from '../store/gameStore';
 
 export function PrivacyScreen() {
+  const { t } = useTranslation();
   const gameState = useGameStore((s) => s.gameState);
   const catalog = useGameStore((s) => s.catalog);
   const passPrivacy = useGameStore((s) => s.passPrivacy);
+  const viewerId = useGameStore((s) => s.viewerId);
 
   if (!gameState || !catalog) return null;
 
-  const activePlayer = gameState.players[gameState.activePlayerId];
-  if (!activePlayer) return null;
-
-  const heroDef = catalog.byId.get(activePlayer.heroId);
+  // Durante la puja de Líder no hay activePlayerId — el que toma el
+  // dispositivo es el viewer (siguiente jugador con decisión pendiente)
+  const player = gameState.players[gameState.activePlayerId]
+    ?? (viewerId ? gameState.players[viewerId] : undefined);
+  const heroDef = player ? catalog.byId.get(player.heroId) : undefined;
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Pasa el dispositivo</Text>
-      <Text style={styles.subtitle}>Es el turno de:</Text>
+      <Text style={styles.title}>{t('common.privacy.passDevice')}</Text>
+      <Text style={styles.subtitle}>{t('common.privacy.turnOf')}</Text>
       <View style={styles.heroBadge}>
-        <Text style={styles.heroName}>{heroDef?.name ?? '???'}</Text>
-        <Text style={styles.heroClass}>{heroDef?.heroClass ?? ''}</Text>
+        <Text style={styles.heroName}>{heroDef?.name ?? t('common.privacy.nextPlayer')}</Text>
+        {heroDef?.heroClass && <Text style={styles.heroClass}>{heroDef.heroClass}</Text>}
       </View>
       <Text style={styles.warning}>
-        Asegurate de que nadie mas este mirando la pantalla antes de continuar.
+        {t('common.privacy.warning')}
       </Text>
       <Pressable style={styles.button} onPress={passPrivacy}>
-        <Text style={styles.buttonText}>Estoy listo</Text>
+        <Text style={styles.buttonText}>{t('common.privacy.ready')}</Text>
       </Pressable>
     </View>
   );

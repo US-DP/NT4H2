@@ -3,6 +3,7 @@ import tseslint from 'typescript-eslint';
 import security from 'eslint-plugin-security';
 import react from 'eslint-plugin-react';
 import reactHooks from 'eslint-plugin-react-hooks';
+import unusedImports from 'eslint-plugin-unused-imports';
 
 export default tseslint.config(
   {
@@ -12,8 +13,16 @@ export default tseslint.config(
       'web-build/**',
       '.expo/**',
       'metro.config.js',
+      'babel.config.js',
       'vitest.config.ts',
       'tests/renderer.ts',
+      // Artefactos generados y scripts de depuración sueltos (no son código fuente)
+      'playwright-report/**',
+      'test-results/**',
+      'coverage/**',
+      '_*.js',
+      // Scripts Node de utilidad (gen-icons): globals de Node + CommonJS
+      'scripts/**',
     ],
   },
   js.configs.recommended,
@@ -24,6 +33,7 @@ export default tseslint.config(
       security,
       react,
       'react-hooks': reactHooks,
+      'unused-imports': unusedImports,
     },
     rules: {
       // Seguridad
@@ -41,6 +51,8 @@ export default tseslint.config(
       'react-hooks/exhaustive-deps': 'warn',
       // TypeScript
       '@typescript-eslint/no-explicit-any': 'warn',
+      // unused-imports es auto-fixable y más preciso que no-unused-vars para imports
+      'unused-imports/no-unused-imports': 'warn',
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       '@typescript-eslint/consistent-type-imports': 'warn',
       // Calidad

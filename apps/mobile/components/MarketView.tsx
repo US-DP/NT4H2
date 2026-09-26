@@ -11,11 +11,14 @@
  */
 
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { useTranslation } from 'react-i18next';
+import '../lib/i18n';
 import { CardView } from './CardView';
 import { useGameStore } from '../store/gameStore';
 import type { CardInstance } from '@nt4h/schema';
 
 export function MarketView() {
+  const { t } = useTranslation();
   const gameState = useGameStore((s) => s.gameState);
   const catalog = useGameStore((s) => s.catalog);
   const buyCard = useGameStore((s) => s.buyCard);
@@ -30,11 +33,11 @@ export function MarketView() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Mercado ({gameState.market.length})</Text>
+        <Text style={styles.title}>{t('hud.marketTitle', { count: gameState.market.length })}</Text>
         <Text style={styles.coins}>💰 {player.coins}</Text>
       </View>
       {gameState.market.length === 0 ? (
-        <Text style={styles.empty}>No hay cartas en el mercado</Text>
+        <Text style={styles.empty}>{t('hud.marketEmpty')}</Text>
       ) : (
         <ScrollView horizontal style={styles.market}>
           {gameState.market.map((cardInstance: CardInstance) => {
@@ -67,7 +70,7 @@ export function MarketView() {
                   compact
                   blocked={!canBuy && isMarketPhase}
                   blockedReason={buyReason}
-                  targetProgress={penalty ? `-${penalty.damagePenalty} daño` : undefined}
+                  targetProgress={penalty ? t('hud.penaltyShort', { value: penalty.damagePenalty }) : undefined}
                 />
                 <View style={styles.buyInfo}>
                   {/* UI-142: descuento visual */}
@@ -79,12 +82,12 @@ export function MarketView() {
                   </View>
                   {missingCapabilities.length > 0 && (
                     <Text style={styles.incompatible}>
-                      Requiere: {missingCapabilities.join(', ')}
+                      {t('hud.requiresCaps', { list: missingCapabilities.join(', ') })}
                     </Text>
                   )}
                   {penalty && (
                     <Text style={styles.penalty}>
-                      Penalización: -{penalty.damagePenalty} daño
+                      {t('hud.penaltyLine', { value: penalty.damagePenalty })}
                     </Text>
                   )}
                 </View>
@@ -93,10 +96,10 @@ export function MarketView() {
                   disabled={!canBuy}
                   style={[styles.buyButton, !canBuy && styles.buyButtonDisabled]}
                   accessibilityRole="button"
-                  accessibilityLabel={canBuy ? `Comprar ${cardDef.name}` : `No puedes comprar ${cardDef.name}`}
+                  accessibilityLabel={canBuy ? t('hud.buyA11y', { name: cardDef.name }) : t('hud.cannotBuyA11y', { name: cardDef.name })}
                   accessibilityHint={buyReason}
                 >
-                  <Text style={styles.buyText}>{canBuy ? 'Comprar' : 'Bloqueado'}</Text>
+                  <Text style={styles.buyText}>{canBuy ? t('hud.buy') : t('hud.blocked')}</Text>
                 </Pressable>
               </View>
             );
@@ -104,7 +107,7 @@ export function MarketView() {
         </ScrollView>
       )}
       {!isMarketPhase && (
-        <Text style={styles.hint}>El mercado solo está disponible en fase Mercado</Text>
+        <Text style={styles.hint}>{t('hud.marketPhaseHint')}</Text>
       )}
     </View>
   );

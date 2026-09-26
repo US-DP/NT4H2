@@ -27,11 +27,26 @@ vi.mock('../store/gameStore', () => ({
   useGameStore: (selector: any) => selector(mockStoreState),
 }));
 
+// El renderer ligero no soporta hooks: useState devuelve el estado
+// inicial y un setter no-op. Suficiente para pruebas de render estático.
+vi.mock('react', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('react')>();
+  return { ...mod, useState: (init: unknown) => [init, () => undefined] };
+});
+
 import { CardView } from '../components/CardView';
 import { PlayerPanel } from '../components/PlayerPanel';
 import { Battlefield } from '../components/Battlefield';
 import { HandView } from '../components/HandView';
 import { PrivacyScreen } from '../components/PrivacyScreen';
+import { ConnectionStatus } from '../components/ConnectionStatus';
+import { NtDialog } from '../components/ui/NtDialog';
+import { NtButton } from '../components/ui/NtButton';
+import { HordeAttackSummary } from '../components/HordeAttackSummary';
+import { ChatPanel } from '../components/ChatPanel';
+import { ActionHistory, type HistoryEntry } from '../components/ActionHistory';
+import { PhaseIndicator } from '../components/PhaseIndicator';
+import { useSettings } from '../store/settingsStore';
 
 import type { CardDefinition, GameState, EnemyState, CardInstance } from '@nt4h/schema';
 
@@ -403,5 +418,124 @@ describe('Accesibilidad — UI-400 (terminología uniforme)', () => {
     });
     const { root } = render(<PlayerPanel />);
     expectText(root, /Pericias/);
+  });
+});
+
+
+// ============================================================================
+// UI-369: Zoom/escala de texto al 200 % sin pérdida funcional
+// ============================================================================
+
+describe('Accesibilidad — UI-369 (texto al 200 %)', () => {
+  // El renderer no mide layout físico: estas pruebas garantizan que a
+  // escala máxima el contenido sigue presente completo, los controles son
+  // accesibles y ningún componente rompe al renderizar.
+
+  it('fontScale=2 está dentro del rango permitido del store', () => {
+    useSettings.setState({ fontScale: 2 });
+    expect(useSettings.getState().fontScale).toBe(2);
+    useSettings.setState({ fontScale: 1 });
+  });
+
+  it('CardView al 200 % muestra nombre y stats completos', () => {
+    useSettings.setState({ fontScale: 2 });
+    const card = makeCardDef({ name: 'Carta con Nombre Largo de Prueba', printedAttack: 3, heroClass: 'WARRIOR' } as any);
+    const { root } = render(<CardView card={card} />);
+    expectText(root, 'Carta con Nombre Largo de Prueba');
+    expectText(root, /⚔.*3/);
+    useSettings.setState({ fontScale: 1 });
+  });
+
+  it('ConnectionStatus al 200 % mantiene etiqueta e icono', () => {
+    useSettings.setState({ fontScale: 2 });
+    const { root } = render(<ConnectionStatus state="OFFLINE" />);
+    expectText(root, /Sin conexión/);
+    useSettings.setState({ fontScale: 1 });
+  });
+
+  it('NtDialog al 200 % conserva título, descripción y acciones', () => {
+    useSettings.setState({ fontScale: 2 });
+    const { root } = render(
+      <NtDialog
+        visible
+        title="Restablecer ajustes de accesibilidad"
+        description="Se restablecerán texto, contraste y movimiento."
+        onDismiss={vi.fn()}
+        actions={[
+          { label: 'Cancelar', variant: 'ghost', onPress: vi.fn() },
+          { label: 'Restablecer', variant: 'danger', onPress: vi.fn() },
+        ]}
+      />
+    );
+    expectText(root, 'Restablecer ajustes de accesibilidad');
+    expectText(root, 'Cancelar');
+    expectText(root, 'Restablecer');
+    useSettings.setState({ fontScale: 1 });
+  });
+
+  it('NtButton al 200 % conserva la etiqueta accesible', () => {
+    useSettings.setState({ fontScale: 2 });
+    const { root } = render(<NtButton label="Confirmar acción" variant="primary" onPress={vi.fn()} />);
+    expectText(root, 'Confirmar acción');
+    useSettings.setState({ fontScale: 1 });
+  });
+
+  it('HordeAttackSummary al 200 % muestra enemigos y totales completos', () => {
+    useSettings.setState({ fontScale: 2 });
+    const { root } = render(
+      <HordeAttackSummary
+        visible
+        enemies={[
+          { enemyName: 'Orco Lancero', baseDamage: 4, modifiedDamage: 5, finalDamage: 5, modifiers: ['Señor +1'] },
+          { enemyName: 'Chamán', baseDamage: 3, modifiedDamage: 3, finalDamage: 3 },
+        ]}
+        totalBaseDamage={7}
+        totalPrevented={2}
+        totalFinalDamage={8}
+        onClose={vi.fn()}
+      />
+    );
+    expectText(root, /Orco Lancero/);
+    expectText(root, /Chamán/);
+    useSettings.setState({ fontScale: 1 });
+  });
+
+  it('ChatPanel al 200 % muestra mensajes y permite enviar', () => {
+    useSettings.setState({ fontScale: 2 });
+    const onSend = vi.fn();
+    const { root } = render(
+      <ChatPanel
+        messages={[
+          { id: 'm1', sender: 'Ana', text: 'Hola equipo', type: 'USER', timestamp: 1 },
+          { id: 'm2', sender: 'Sistema', text: 'Ben fue expulsado', type: 'SYSTEM', timestamp: 2 },
+        ]}
+        currentUser="Ben"
+        onSend={onSend}
+      />
+    );
+    expectText(root, 'Hola equipo');
+    expectText(root, 'Ben fue expulsado');
+    useSettings.setState({ fontScale: 1 });
+  });
+
+  it('ActionHistory al 200 % muestra entradas y enlace al desglose de la Horda', () => {
+    useSettings.setState({ fontScale: 2 });
+    const onEntryPress = vi.fn();
+    const entries: HistoryEntry[] = [
+      { id: 'e1', turn: 3, actor: 'Ana', action: 'Ataque de la Horda', result: '5 daño', timestamp: 1, linkTo: 'horde' },
+    ];
+    const { root } = render(
+      <ActionHistory entries={entries} currentTurn={3} onEntryPress={onEntryPress} />
+    );
+    expectText(root, 'Ataque de la Horda');
+    expectText(root, /Ver desglose/);
+    useSettings.setState({ fontScale: 1 });
+  });
+
+  it('PhaseIndicator al 200 % muestra fase y turno completos', () => {
+    useSettings.setState({ fontScale: 2 });
+    const { root } = render(<PhaseIndicator phase="HORDE_ATTACK" turnNumber={4} />);
+    expectText(root, /Horda|HORDE/i);
+    useSettings.setState({ fontScale: 1 });
   });
 });

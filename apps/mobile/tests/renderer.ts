@@ -21,7 +21,8 @@ type RenderNode = {
  * - Componentes funcionales
  * - Componentes nativos (View, Text, Pressable, etc.)
  * - Props y children
- * - Hooks básicos (useState, useMemo, useEffect no se ejecutan)
+ * - Hooks básicos (useState, useMemo, useEffect no se ejecutan;
+ *   los tests que necesitan hooks los mockean con vi.mock('react'))
  */
 function renderElement(element: React.ReactElement | string | number | null | undefined | boolean): RenderNode[] {
   if (element == null || typeof element === 'boolean') return [];

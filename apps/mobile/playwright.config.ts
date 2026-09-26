@@ -35,6 +35,7 @@ export default defineConfig({
     command: 'pnpm web',
     url: 'http://localhost:8081',
     reuseExistingServer: !process.env.CI,
-    timeout: 120 * 1000,
+    // Metro en frío (Windows, sin caché) puede tardar >2 min en el primer bundle
+    timeout: 300 * 1000,
   },
 });

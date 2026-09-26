@@ -12,7 +12,10 @@
  */
 
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { useTranslation } from 'react-i18next';
+import '../lib/i18n';
 import { useGameStore } from '../store/gameStore';
+import { classColor as heroClassColor } from '../lib/classTokens';
 
 interface PlayerPanelProps {
   /** Al pulsar el nombre de un héroe, abre su detalle */
@@ -20,6 +23,7 @@ interface PlayerPanelProps {
 }
 
 export function PlayerPanel({ onSelectHero }: PlayerPanelProps) {
+  const { t } = useTranslation();
   const gameState = useGameStore((s) => s.gameState);
   const catalog = useGameStore((s) => s.catalog);
   const viewerId = useGameStore((s) => s.viewerId);
@@ -29,7 +33,7 @@ export function PlayerPanel({ onSelectHero }: PlayerPanelProps) {
   const playerOrder = gameState.playerOrder ?? Object.keys(gameState.players);
 
   return (
-    <ScrollView horizontal style={styles.container} accessibilityLabel="Paneles de jugadores">
+    <ScrollView horizontal style={styles.container} accessibilityLabel={t('hud.playerPanelsA11y')}>
       {playerOrder.map((playerId) => {
         const player = gameState.players[playerId];
         if (!player) return null;
@@ -38,50 +42,88 @@ export function PlayerPanel({ onSelectHero }: PlayerPanelProps) {
         const isViewer = playerId === viewerId;
         const isEliminated = player.wounds >= player.maxWounds;
         const capabilities = heroDef?.capabilities ?? player.capabilities;
+        const classColor = heroClassColor(heroDef?.heroClass);
 
         return (
           <View
             key={playerId}
             style={[
               styles.panel,
+              classColor ? { borderLeftColor: classColor, borderLeftWidth: 4 } : null,
               isActive && styles.activePanel,
               isEliminated && styles.eliminatedPanel,
             ]}
-            accessibilityLabel={`Jugador ${heroDef?.name ?? '???'}. ${isActive ? 'Jugador activo.' : ''} ${isEliminated ? 'Eliminado.' : ''}`}
+            accessibilityLabel={
+              t('hud.playerA11y', { name: heroDef?.name ?? '???' })
+              + (isActive ? ` ${t('hud.playerActive')}` : '')
+              + (isEliminated ? ` ${t('hud.playerEliminated')}` : '')
+            }
           >
             <View style={styles.header}>
-              <Pressable onPress={() => onSelectHero?.(player.heroId)} disabled={!onSelectHero}>
-                <Text style={styles.heroName}>{heroDef?.name ?? '???'}</Text>
+              <Pressable
+                onPress={() => onSelectHero?.(player.heroId)}
+                disabled={!onSelectHero}
+                accessibilityRole="button"
+                accessibilityHint={t('hud.heroDetailHint')}
+              >
+                <Text style={styles.heroName} numberOfLines={1}>
+                  {heroDef?.name ?? '???'} {onSelectHero ? 'ⓘ' : ''}
+                </Text>
               </Pressable>
-              {isActive && <Text style={styles.phase}>Fase: {gameState.phase}</Text>}
-              {isActive && <Text style={styles.activeBadge}>● ACTIVO</Text>}
-              {isEliminated && <Text style={styles.eliminatedBadge}>ELIMINADO</Text>}
+              {isActive && (
+                <View style={styles.activePill}>
+                  <Text style={styles.activeBadge}>{t('hud.activeBadge')}</Text>
+                </View>
+              )}
+              {isEliminated && <Text style={styles.eliminatedBadge}>{t('hud.eliminatedBadge')}</Text>}
             </View>
+            {isActive && (
+              <Text style={styles.phase}>{t('hud.phaseLabel', { phase: gameState.phase })}</Text>
+            )}
 
             <View style={styles.stats}>
-              <Text style={styles.stat}>🏆 Gloria: {player.glory}</Text>
-              <Text style={styles.stat}>💰 Monedas: {player.coins}</Text>
+              <Text style={styles.stat}>{t('hud.gloryStat', { value: player.glory })}</Text>
+              <Text style={styles.stat}>{t('hud.coinsStat', { value: player.coins })}</Text>
               <Text style={[styles.stat, player.wounds >= player.maxWounds && styles.statCritical]}>
-                🩹 Heridas: {player.wounds}/{player.maxWounds}
+                {t('hud.woundsStat', { wounds: player.wounds, max: player.maxWounds })}
               </Text>
               {player.shields > 0 && (
-                <Text style={styles.stat}>🛡 Escudos: {player.shields}</Text>
+                <Text style={styles.stat}>{t('hud.shieldsStat', { value: player.shields })}</Text>
+              )}
+              {(player.blockNext ?? 0) > 0 && (
+                <Text style={styles.stat}>{t('hud.blockStat', { value: player.blockNext })}</Text>
+              )}
+              {(player.armor ?? 0) > 0 && (
+                <Text style={styles.stat}>{t('hud.armorStat', { value: player.armor })}</Text>
+              )}
+              {(player.persistentCards ?? []).length > 0 && (
+                <Text style={styles.stat}>
+                  {t('hud.persistentStat', {
+                    list: player.persistentCards
+                      .map((c) => catalog.byId.get(c.definitionId)?.name ?? c.definitionId)
+                      .join(', '),
+                  })}
+                </Text>
               )}
               {/* UI-083: manos ajenas solo número de cartas */}
               <Text style={styles.stat}>
-                📋 Mano: {isViewer ? player.hand.length : `${player.hand.length} (oculta)`}
+                {t('hud.handStat', { count: player.hand.length })}
+                {isViewer ? '' : t('hud.handHidden')}
               </Text>
-              <Text style={styles.stat}>📚 Mazo: {player.abilityDeck.length}</Text>
-              <Text style={styles.stat}>🗑 Desgaste: {player.wearPile.length}</Text>
-              <Text style={styles.stat}>🏆 Trofeos: {player.trophies.length}</Text>
+              <Text style={styles.stat}>{t('hud.deckStat', { count: player.abilityDeck.length })}</Text>
+              <Text style={styles.stat}>{t('hud.wearStat', { count: player.wearPile.length })}</Text>
+              <Text style={styles.stat}>{t('hud.trophiesStat', { count: player.trophies.length })}</Text>
               {/* UI-085: usos limitados explícitos */}
               <Text style={[styles.stat, player.heroUsesRemaining === 0 && styles.statDepleted]}>
-                ✨ Pericias: {player.heroUsesRemaining}/{player.heroMaxUses}
+                {t('hud.abilitiesStat', {
+                  remaining: player.heroUsesRemaining,
+                  max: player.heroMaxUses,
+                })}
               </Text>
               {/* UI-084: capacidades del héroe */}
               {capabilities.length > 0 && (
                 <Text style={styles.capabilities}>
-                  Capacidades: {capabilities.join(', ')}
+                  {t('hud.capabilitiesLabel', { list: capabilities.join(', ') })}
                 </Text>
               )}
             </View>
@@ -132,6 +174,14 @@ const styles = StyleSheet.create({
   phase: {
     color: '#3498db',
     fontSize: 10,
+    fontStyle: 'italic',
+    marginBottom: 4,
+  },
+  activePill: {
+    backgroundColor: 'rgba(241,196,15,0.15)',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
   },
   activeBadge: {
     color: '#f1c40f',

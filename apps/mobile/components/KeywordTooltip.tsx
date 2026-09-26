@@ -5,6 +5,7 @@
  */
 
 import { View, Text, Pressable, StyleSheet, Modal } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 interface KeywordTooltipProps {
   keyword: string;
@@ -16,9 +17,10 @@ interface KeywordTooltipProps {
 }
 
 export function KeywordTooltip({ keyword, description, children, visible = false, onToggle }: KeywordTooltipProps) {
+  const { t } = useTranslation();
   return (
     <View style={styles.inline}>
-      <Pressable onPress={() => onToggle?.(!visible)} accessibilityLabel={`Palabra clave: ${keyword}`}>
+      <Pressable onPress={() => onToggle?.(!visible)} accessibilityLabel={t('panels.keywordA11y', { keyword })}>
         {children}
       </Pressable>
 

@@ -13,8 +13,11 @@
  * Cumple UI-189: sin adjuntos en MVP.
  */
 
-import { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, TextInput } from 'react-native';
+import { format } from 'date-fns';
+import { useTranslation } from 'react-i18next';
+import { useColors } from '../lib/useTheme';
+import type { Colors } from '../lib/theme';
 
 export type ChatMessageType = 'USER' | 'SYSTEM' | 'CONNECTION' | 'MODERATION';
 
@@ -24,12 +27,19 @@ export interface ChatMessage {
   text: string;
   type: ChatMessageType;
   timestamp: number;
+  /** Estado de entrega de mensajes propios (online): sending → sent / failed */
+  status?: 'sending' | 'sent' | 'failed';
+  /** ID de cliente estable entre reintentos (dedupe en el servidor) */
+  clientMessageId?: string;
+  /** Ping estructurado (emote con objetivo) — el servidor solo reenvía
+   *  campos blanqueados (kind + target). */
+  meta?: { kind: 'ping'; target?: string };
 }
 
 interface ChatPanelProps {
   messages: ChatMessage[];
   currentUser: string;
-  onSend: (text: string) => void;
+  onSend: (text: string, meta?: ChatMessage['meta']) => void;
   /** Texto del borrador (controlado) */
   draftText?: string;
   /** Cambio del borrador */
@@ -40,21 +50,42 @@ interface ChatPanelProps {
   unreadCount?: number;
   /** Callback para cerrar/ocultar el chat */
   onClose?: () => void;
+  /** Remitentes silenciados localmente (los controla el padre) */
+  mutedSenders?: string[];
+  /** Silenciar/dejar de silenciar un remitente */
+  onToggleMute?: (sender: string) => void;
+  /** Reintentar un mensaje propio fallido */
+  onRetry?: (msg: ChatMessage) => void;
+  /** Descartar un mensaje pendiente/fallido */
+  onDiscard?: (msg: ChatMessage) => void;
 }
 
-const TYPE_LABELS: Record<ChatMessageType, string> = {
+const TYPE_LABEL_KEYS: Record<ChatMessageType, string> = {
   USER: '',
-  SYSTEM: 'Sistema',
-  CONNECTION: 'Conexión',
-  MODERATION: 'Moderación',
+  SYSTEM: 'typeSystem',
+  CONNECTION: 'typeConnection',
+  MODERATION: 'typeModeration',
 };
 
-const TYPE_COLORS: Record<ChatMessageType, string> = {
-  USER: '#ecf0f1',
-  SYSTEM: '#f1c40f',
-  CONNECTION: '#3498db',
-  MODERATION: '#e74c3c',
-};
+/** Mensajes rápidos tácticos — cubren la mayoría de la coordinación
+ *  sin escribir texto libre (limita exposición del chat abierto).
+ *  Claves de lobby.chat.qm* resueltas con t() en el render. */
+const QUICK_MESSAGE_KEYS = [
+  'qmGoodLuck',
+  'qmOnIt',
+  'qmWaitTurn',
+  'qmNeedHeal',
+  'qmHitLeader',
+  'qmSaveForWarlord',
+  'qmWatchEnemy',
+  'qmMarket',
+  'qmNicePlay',
+  'qmHelpMe',
+] as const;
+
+/** Claves que viajan como ping estructurado (meta.kind='ping') — el
+ *  servidor las reenvía con metadata y la UI las destaca. */
+const PING_KEYS = new Set(['qmWatchEnemy', 'qmMarket', 'qmNeedHeal', 'qmHelpMe', 'qmHitLeader']);
 
 export function ChatPanel({
   messages,
@@ -65,23 +96,30 @@ export function ChatPanel({
   fullScreen = false,
   unreadCount = 0,
   onClose,
+  mutedSenders = [],
+  onToggleMute,
+  onRetry,
+  onDiscard,
 }: ChatPanelProps) {
+  const c = useColors();
+  const { t } = useTranslation();
+  // Sin useMemo: el renderer ligero de tests invoca los componentes
+  // directamente y los hooks de React lanzan fuera de un render real.
+  const styles = createStyles(c);
+  const typeColors: Record<ChatMessageType, string> = {
+    USER: c.text,
+    SYSTEM: c.accent,
+    CONNECTION: c.info,
+    MODERATION: c.danger,
+  };
+
   const text = draftText;
   const setText = onDraftChange ?? (() => {});
 
   // Silencio local: oculta mensajes de remitentes silenciados (solo afecta
   // a este cliente — el backend no persiste moderación de chat)
-  const [mutedSenders, setMutedSenders] = useState<Set<string>>(new Set());
-  const toggleMute = (sender: string) => {
-    setMutedSenders((prev) => {
-      const next = new Set(prev);
-      if (next.has(sender)) next.delete(sender);
-      else next.add(sender);
-      return next;
-    });
-  };
   const visibleMessages = messages.filter(
-    (m) => m.type !== 'USER' || m.sender === currentUser || !mutedSenders.has(m.sender)
+    (m) => m.type !== 'USER' || m.sender === currentUser || !mutedSenders.includes(m.sender)
   );
 
   // Contador para límite de longitud (UI-187)
@@ -99,14 +137,20 @@ export function ChatPanel({
   return (
     <View style={[styles.container, fullScreen && styles.fullScreen]}>
       <View style={styles.header}>
-        <Text style={styles.title}>Chat</Text>
+        <Text style={styles.title}>{t('lobby.chat.title')}</Text>
         {unreadCount > 0 && (
           <View style={styles.unreadBadge}>
             <Text style={styles.unreadText}>{unreadCount}</Text>
           </View>
         )}
         {onClose && (
-          <Pressable onPress={onClose} style={styles.closeBtn} accessibilityLabel="Ocultar chat">
+          <Pressable
+            onPress={onClose}
+            style={styles.closeBtn}
+            accessibilityRole="button"
+            accessibilityLabel={t('lobby.chat.hideChat')}
+            hitSlop={4}
+          >
             <Text style={styles.closeText}>✕</Text>
           </Pressable>
         )}
@@ -114,11 +158,12 @@ export function ChatPanel({
 
       <ScrollView style={styles.messages}>
         {visibleMessages.length === 0 ? (
-          <Text style={styles.empty}>No hay mensajes.</Text>
+          <Text style={styles.empty}>{t('lobby.chat.empty')}</Text>
         ) : (
           visibleMessages.map((msg) => {
             const isMine = msg.sender === currentUser && msg.type === 'USER';
-            const typeLabel = TYPE_LABELS[msg.type];
+            const typeKey = TYPE_LABEL_KEYS[msg.type];
+            const typeLabel = typeKey ? t(`lobby.chat.${typeKey}`) : '';
             return (
               <View
                 key={msg.id}
@@ -126,23 +171,53 @@ export function ChatPanel({
                   styles.message,
                   isMine && styles.myMessage,
                   msg.type !== 'USER' && styles.systemMessage,
+                  msg.meta?.kind === 'ping' && styles.pingMessage,
                 ]}
               >
                 <View style={styles.messageHeader}>
-                  <Text style={[styles.sender, { color: TYPE_COLORS[msg.type] }]}>
+                  <Text style={[styles.sender, { color: typeColors[msg.type] }]}>
                     {msg.sender}{typeLabel ? ` (${typeLabel})` : ''}
                   </Text>
-                  <Text style={styles.time}>{new Date(msg.timestamp).toLocaleTimeString()}</Text>
+                  <Text style={styles.time}>{format(new Date(msg.timestamp), 'HH:mm')}</Text>
                 </View>
-                <Text style={styles.messageText}>{msg.text}</Text>
-                {msg.type === 'USER' && !isMine && (
+                <Text style={styles.messageText}>
+                  {msg.meta?.kind === 'ping' ? '🎯 ' : ''}{msg.text}
+                  {msg.meta?.target ? ` — ${msg.meta.target}` : ''}
+                </Text>
+                {isMine && msg.status === 'sending' && (
+                  <Text style={styles.sendStatus}>{t('lobby.chat.sending')}</Text>
+                )}
+                {isMine && msg.status === 'failed' && (
+                  <View style={styles.retryRow}>
+                    <Pressable
+                      onPress={() => onRetry?.(msg)}
+                      disabled={!onRetry}
+                      accessibilityRole="button"
+                      accessibilityLabel={t('lobby.chat.retryA11y', { text: msg.text })}
+                    >
+                      <Text style={[styles.sendStatus, styles.sendFailed]}>{t('lobby.chat.notSentRetry')}</Text>
+                    </Pressable>
+                    {onDiscard && (
+                      <Pressable
+                        onPress={() => onDiscard(msg)}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('lobby.chat.discardA11y', { text: msg.text })}
+                      >
+                        <Text style={styles.sendStatus}>{t('lobby.chat.discard')}</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                )}
+                {msg.type === 'USER' && !isMine && onToggleMute && (
                   <View style={styles.menu}>
                     <Pressable
                       style={styles.menuItem}
-                      onPress={() => toggleMute(msg.sender)}
-                      accessibilityLabel={`Silenciar a ${msg.sender}`}
+                      onPress={() => onToggleMute(msg.sender)}
+                      accessibilityRole="button"
+                      accessibilityLabel={t('lobby.chat.muteA11y', { sender: msg.sender })}
+                      hitSlop={6}
                     >
-                      <Text style={styles.menuText}>Silenciar</Text>
+                      <Text style={styles.menuText}>{t('lobby.chat.mute')}</Text>
                     </Pressable>
                   </View>
                 )}
@@ -153,15 +228,33 @@ export function ChatPanel({
       </ScrollView>
 
       <View style={styles.inputArea}>
+        {/* Mensajes rápidos: un toque, sin teclado */}
+        <View style={styles.quickRow} accessibilityLabel={t('lobby.chat.quickRow')}>
+          {QUICK_MESSAGE_KEYS.map((key) => {
+            const qm = t(`lobby.chat.${key}`);
+            return (
+              <Pressable
+                key={key}
+                style={styles.quickChip}
+                onPress={() => onSend(qm, PING_KEYS.has(key) ? { kind: 'ping' } : undefined)}
+                accessibilityRole="button"
+                accessibilityLabel={t('lobby.chat.sendQuickA11y', { text: qm })}
+                hitSlop={6}
+              >
+                <Text style={styles.quickChipText}>{qm}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
         <TextInput
           style={styles.input}
           value={text}
           onChangeText={setText}
-          placeholder="Escribe un mensaje..."
-          placeholderTextColor="#777"
+          placeholder={t('lobby.chat.placeholder')}
+          placeholderTextColor={c.textFaint}
           maxLength={maxLength}
           multiline
-          accessibilityLabel="Mensaje de chat"
+          accessibilityLabel={t('lobby.chat.inputA11y')}
         />
         <View style={styles.inputFooter}>
           <Text style={[styles.counter, nearLimit && styles.counterNear]}>
@@ -172,23 +265,23 @@ export function ChatPanel({
             disabled={!canSend}
             style={[styles.sendButton, !canSend && styles.sendButtonDisabled]}
             accessibilityRole="button"
-            accessibilityLabel="Enviar mensaje"
+            accessibilityLabel={t('lobby.chat.sendA11y')}
           >
-            <Text style={styles.sendText}>Enviar</Text>
+            <Text style={styles.sendText}>{t('lobby.chat.send')}</Text>
           </Pressable>
         </View>
         {/* UI-189: sin adjuntos */}
-        <Text style={styles.noAttachments}>Adjuntos no disponibles en el MVP.</Text>
+        <Text style={styles.noAttachments}>{t('lobby.chat.noAttachments')}</Text>
       </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors) => StyleSheet.create({
   container: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: c.surface,
     borderLeftWidth: 1,
-    borderLeftColor: '#333',
+    borderLeftColor: c.border,
     width: 280,
     padding: 8,
     maxHeight: 400,
@@ -204,12 +297,12 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   title: {
-    color: '#f1c40f',
+    color: c.accent,
     fontSize: 14,
     fontWeight: 'bold',
   },
   unreadBadge: {
-    backgroundColor: '#e74c3c',
+    backgroundColor: c.danger,
     borderRadius: 10,
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -220,10 +313,10 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   closeBtn: {
-    padding: 4,
+    padding: 12,
   },
   closeText: {
-    color: '#bdc3c7',
+    color: c.textMuted,
     fontSize: 16,
   },
   messages: {
@@ -231,22 +324,27 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   empty: {
-    color: '#777',
+    color: c.textMuted,
     fontSize: 12,
     textAlign: 'center',
     padding: 16,
   },
   message: {
-    backgroundColor: '#2c3e50',
+    backgroundColor: c.surfaceRaised,
     padding: 8,
     borderRadius: 6,
     marginBottom: 6,
   },
   myMessage: {
-    backgroundColor: '#2980b9',
+    backgroundColor: c.infoSurface,
   },
   systemMessage: {
-    backgroundColor: '#3a2a1a',
+    backgroundColor: c.dangerSurface,
+  },
+  pingMessage: {
+    borderLeftWidth: 3,
+    borderLeftColor: c.accent,
+    backgroundColor: c.infoSurface,
   },
   messageHeader: {
     flexDirection: 'row',
@@ -258,12 +356,27 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   time: {
-    color: '#7f8c8d',
+    color: c.textFaint,
     fontSize: 9,
   },
   messageText: {
-    color: '#ecf0f1',
+    color: c.text,
     fontSize: 12,
+  },
+  sendStatus: {
+    color: c.textFaint,
+    fontSize: 10,
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
+  retryRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
+  },
+  sendFailed: {
+    color: c.danger,
+    fontWeight: '700',
   },
   menu: {
     flexDirection: 'row',
@@ -271,22 +384,41 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   menuItem: {
-    backgroundColor: '#34495e',
-    padding: 4,
+    backgroundColor: c.border,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
     borderRadius: 4,
   },
   menuText: {
-    color: '#bdc3c7',
+    color: c.textMuted,
     fontSize: 9,
   },
   inputArea: {
     borderTopWidth: 1,
-    borderTopColor: '#333',
+    borderTopColor: c.border,
     paddingTop: 8,
   },
+  quickRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 8,
+  },
+  quickChip: {
+    backgroundColor: c.surfaceRaised,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    minHeight: 36,
+    justifyContent: 'center',
+  },
+  quickChipText: {
+    color: c.textMuted,
+    fontSize: 11,
+  },
   input: {
-    backgroundColor: '#2c3e50',
-    color: '#ecf0f1',
+    backgroundColor: c.surfaceRaised,
+    color: c.text,
     padding: 8,
     borderRadius: 6,
     minHeight: 44,
@@ -299,30 +431,30 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   counter: {
-    color: '#7f8c8d',
+    color: c.textFaint,
     fontSize: 10,
   },
   counterNear: {
-    color: '#f39c12',
+    color: c.warning,
     fontWeight: 'bold',
   },
   sendButton: {
-    backgroundColor: '#27ae60',
+    backgroundColor: c.primary,
     padding: 8,
     borderRadius: 6,
     minWidth: 60,
     alignItems: 'center',
   },
   sendButtonDisabled: {
-    backgroundColor: '#555',
+    backgroundColor: c.border,
   },
   sendText: {
-    color: '#fff',
+    color: c.textOnAccent,
     fontSize: 12,
     fontWeight: 'bold',
   },
   noAttachments: {
-    color: '#7f8c8d',
+    color: c.textFaint,
     fontSize: 9,
     fontStyle: 'italic',
     marginTop: 4,

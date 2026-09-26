@@ -9,6 +9,7 @@
  */
 
 import { getImagePath, hasFrontImage, type ImageVariant } from '@nt4h/catalog';
+import i18n from '../lib/i18n';
 
 export interface CardImageResult {
   /** Ruta de la imagen, o undefined si no hay PNG disponible */
@@ -23,11 +24,13 @@ export function cardImage(
   cardId: string,
   variant: ImageVariant = 'game',
 ): CardImageResult {
-  const path = getImagePath(cardId, variant);
+  const relPath = getImagePath(cardId, variant);
   const hasImage = hasFrontImage(cardId);
 
+  // Los PNGs se sirven desde public/ → URI absoluta '/assets/cards/...'
+  // (metro.config.js sirve public/ en dev; expo export la copia en prod)
   return {
-    path,
+    path: relPath ? `/${relPath}` : undefined,
     hasImage,
     showPlaceholder: !hasImage,
   };
@@ -44,40 +47,30 @@ export function buildAccessibleLabel(card: {
   printedAttack?: number;
   printedFortitude?: number;
   printedCost?: number;
-}): string {
+}, expanded = true): string {
   const parts: string[] = [card.name];
 
-  const typeLabels: Record<string, string> = {
-    ABILITY: 'Habilidad',
-    HERO: 'Héroe',
-    HORDE: 'Hueste',
-    WARLORD: 'Señor de la Guerra',
-    MARKET: 'Objeto de Mercado',
-    SCENARIO: 'Escenario',
-  };
-
-  const classLabels: Record<string, string> = {
-    WARRIOR: 'Guerrero',
-    EXPLORER: 'Explorador',
-    ROGUE: 'Pícaro',
-    MAGE: 'Mago',
-  };
-
-  const typeLabel = typeLabels[card.type] ?? card.type;
-  if (card.heroClass && classLabels[card.heroClass]) {
-    parts.push(`de ${classLabels[card.heroClass]}`);
+  const classLabel = card.heroClass
+    ? i18n.t(`create.classes.${card.heroClass}`, { defaultValue: '' })
+    : '';
+  if (card.heroClass && classLabel) {
+    parts.push(i18n.t('cardui.a11y.ofClass', { class: classLabel }));
   } else {
-    parts.push(typeLabel);
+    parts.push(i18n.t(`cardui.types.${card.type}`, { defaultValue: card.type }));
   }
 
-  if (card.printedAttack !== undefined && card.printedAttack > 0) {
-    parts.push(`Ataque ${card.printedAttack}`);
-  }
-  if (card.printedFortitude !== undefined) {
-    parts.push(`Fortaleza ${card.printedFortitude}`);
-  }
-  if (card.printedCost !== undefined) {
-    parts.push(`Coste ${card.printedCost}`);
+  // srExpandedLabels: con el ajuste OFF la etiqueta se queda en
+  // nombre + tipo/clase; ON añade ataque, fortaleza y coste.
+  if (expanded) {
+    if (card.printedAttack !== undefined && card.printedAttack > 0) {
+      parts.push(i18n.t('cardui.a11y.attack', { n: card.printedAttack }));
+    }
+    if (card.printedFortitude !== undefined) {
+      parts.push(i18n.t('cardui.a11y.fortitude', { n: card.printedFortitude }));
+    }
+    if (card.printedCost !== undefined) {
+      parts.push(i18n.t('cardui.a11y.cost', { n: card.printedCost }));
+    }
   }
 
   return parts.join('. ') + '.';

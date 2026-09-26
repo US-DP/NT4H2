@@ -16,41 +16,104 @@
  */
 
 import { View, Text, Pressable, StyleSheet } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withSequence, withTiming, Easing, FadeIn } from 'react-native-reanimated';
+import { useTranslation } from 'react-i18next';
+import '../lib/i18n';
 import { useGameStore } from '../store/gameStore';
+import { useSettingsSafe, useColors } from '../lib/useTheme';
+import { Crosshair } from 'lucide-react-native';
 import { CardView } from './CardView';
+import { getCardTargeting, isValidEnemyTarget } from '../lib/targeting';
 import type { EnemyState } from '@nt4h/schema';
 
+/** Halo sobre un objetivo válido: dos pulsos breves y luego borde
+ *  estable — llamar la atención sin una animación infinita.
+ *  Con reducir movimiento: borde estático, sin animación. */
+function TargetPulse() {
+  const reduceMotion = useSettingsSafe((s) => s.reduceMotion);
+  const c = useColors();
+  const opacity = useSharedValue(0.4);
+  if (!reduceMotion) {
+    opacity.value = withSequence(
+      withTiming(1, { duration: 600, easing: Easing.inOut(Easing.quad) }),
+      withTiming(0.4, { duration: 600, easing: Easing.inOut(Easing.quad) }),
+      withTiming(1, { duration: 600, easing: Easing.inOut(Easing.quad) }),
+      withTiming(0.85, { duration: 300 }),
+    );
+  } else {
+    opacity.value = 0.85;
+  }
+  const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  return (
+    <Animated.View style={[styles.targetPulse, style, { borderColor: c.success ?? c.accent }]} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+      {/* Icono de objetivo: el pulso no depende solo de color/animación */}
+      <Crosshair size={22} color={c.accent} />
+    </Animated.View>
+  );
+}
+
 export function Battlefield() {
+  const { t } = useTranslation();
   const gameState = useGameStore((s) => s.gameState);
   const catalog = useGameStore((s) => s.catalog);
   const selectedEnemy = useGameStore((s) => s.ui.selectedEnemyInstanceId);
   const selectEnemy = useGameStore((s) => s.selectEnemy);
-  const playCard = useGameStore((s) => s.playCard);
+  const setMessage = useGameStore((s) => s.setMessage);
   const selectedCard = useGameStore((s) => s.ui.selectedCardInstanceId);
+  const viewerId = useGameStore((s) => s.viewerId);
+  const reduceMotion = useSettingsSafe((s) => s.reduceMotion);
+  const autoPlayAnimations = useSettingsSafe((s) => s.autoPlayAnimations);
 
   if (!gameState || !catalog) return null;
 
-  const handleEnemyPress = (enemyId: string, isDefeated: boolean) => {
+  // ¿La carta seleccionada necesita elegir enemigo? Derivar el requisito
+  // de sus efectos (con filtros), no asumir que todo enemigo vale.
+  const playerId = viewerId ?? gameState.activePlayerId;
+  const selectedInstance = selectedCard
+    ? gameState.players[playerId]?.hand.find(c => c.instanceId === selectedCard)
+    : undefined;
+  const selectedDef = selectedInstance
+    ? catalog.byId.get(selectedInstance.definitionId)
+    : undefined;
+  const targeting = getCardTargeting(selectedDef);
+  const pickingEnemy = targeting.mode === 'enemy';
+
+  const handleEnemyPress = (enemy: EnemyState, isDefeated: boolean) => {
     if (isDefeated) return;
-    if (selectedCard) {
-      playCard(selectedCard, enemyId);
+    if (pickingEnemy) {
+      const check = isValidEnemyTarget(targeting, enemy, gameState);
+      if (!check.ok) {
+        const name = catalog.byId.get(enemy.definitionId)?.name ?? t('hud.enemyThis');
+        setMessage?.(t('hud.targetError', { name, reason: check.reason ?? '' }));
+        return;
+      }
+      // Elegir/deselegir objetivo — la carta se confirma en HandView
+      selectEnemy(enemy.instanceId === selectedEnemy ? null : enemy.instanceId);
     } else {
-      selectEnemy(enemyId === selectedEnemy ? null : enemyId);
+      selectEnemy(enemy.instanceId === selectedEnemy ? null : enemy.instanceId);
     }
   };
 
-  // Daño base aportado por la Horda este turno (UI-094): simplificado
-  const hordeDamageContribution = gameState.battlefield.reduce(
-    (sum, e) => sum + Math.max(0, e.baseFortitude - e.wounds),
-    0,
-  );
+  // Daño aportado por la Horda este turno (UI-094, spec 3.4):
+  // Σ máx(0, fortaleza efectiva − heridas) de enemigos que dañan.
+  const hordeDamageContribution = gameState.battlefield
+    .filter((e) => !e.damageDisabled)
+    .reduce(
+      (sum, e) => sum + Math.max(0, (e.effectiveFortitude ?? e.baseFortitude) - e.wounds),
+      0,
+    );
 
   return (
-    <View style={styles.container} accessibilityLabel={`Campo de Batalla, ${gameState.battlefield.length} enemigos`}>
+    <View style={styles.container} accessibilityLabel={t('hud.battlefieldA11y', { count: gameState.battlefield.length })}>
       <View style={styles.header}>
-        <Text style={styles.title}>Campo de Batalla ({gameState.battlefield.length})</Text>
-        <Text style={styles.hordeDamage}>Daño aportado: {hordeDamageContribution}</Text>
+        <Text style={styles.title}>{t('hud.battlefieldTitle', { count: gameState.battlefield.length })}</Text>
+        <Text style={styles.hordeDamage}>{t('hud.damageContributed', { count: hordeDamageContribution })}</Text>
       </View>
+      {pickingEnemy && (
+        <Text style={styles.pickingHint} accessibilityLiveRegion="polite">
+          🎯 {targeting.description}
+        </Text>
+      )}
       <View style={styles.enemies}>
         {gameState.battlefield.map((enemy: EnemyState) => {
           const enemyDef = catalog.byId.get(enemy.definitionId);
@@ -59,23 +122,34 @@ export function Battlefield() {
           const wounds = enemy.wounds;
           const isDefeated = wounds >= effectiveFortitude;
           const isSelected = selectedEnemy === enemy.instanceId;
-          const isValidTarget = !!selectedCard && !isDefeated;
+          // Solo destacar como objetivo si la carta lo admite (filtros incluidos)
+          const targetCheck = pickingEnemy && !isDefeated
+            ? isValidEnemyTarget(targeting, enemy, gameState)
+            : { ok: false };
+          const isValidTarget = targetCheck.ok;
 
           return (
-            <View key={enemy.instanceId} style={styles.enemyWrapper}>
+            <Animated.View
+              key={enemy.instanceId}
+              style={styles.enemyWrapper}
+              // Entrada al campo: fundido breve al aparecer el enemigo
+              // (feedback de jugada); desactivado con reducir movimiento
+              entering={reduceMotion || !autoPlayAnimations ? undefined : FadeIn.duration(320)}
+            >
+              {isValidTarget && <TargetPulse />}
               {enemyDef ? (
                 <CardView
                   card={enemyDef}
-                  onPress={() => handleEnemyPress(enemy.instanceId, isDefeated)}
+                  onPress={() => handleEnemyPress(enemy, isDefeated)}
                   selected={isSelected}
                   validTarget={isValidTarget}
-                  blocked={isDefeated}
-                  blockedReason={isDefeated ? 'Derrotado' : undefined}
+                  blocked={isDefeated || (pickingEnemy && !isValidTarget)}
+                  blockedReason={isDefeated ? t('hud.defeated') : (pickingEnemy && !isValidTarget ? targetCheck.reason : undefined)}
                   compact
                 />
               ) : (
                 <Pressable
-                  onPress={() => handleEnemyPress(enemy.instanceId, isDefeated)}
+                  onPress={() => handleEnemyPress(enemy, isDefeated)}
                   style={[
                     styles.enemyFallback,
                     isSelected && styles.selected,
@@ -91,21 +165,45 @@ export function Battlefield() {
               <View style={styles.enemyInfo}>
                 <Text style={styles.enemyName}>{enemyDef?.name ?? '???'}</Text>
                 <Text style={styles.fortitude}>
-                  🛡 {effectiveFortitude}  ⚔ Heridas: {wounds}/{effectiveFortitude}
-                  {effectiveFortitude !== baseFortitude && ` (base ${baseFortitude})`}
+                  {t('hud.enemyStat', { fortitude: effectiveFortitude, wounds })}
+                  {effectiveFortitude !== baseFortitude && t('hud.enemyStatBase', { base: baseFortitude })}
                 </Text>
                 <Text style={styles.resistance}>
-                  Resistencia: {Math.max(0, effectiveFortitude - wounds)}
+                  {t('hud.resistance', { count: Math.max(0, effectiveFortitude - wounds) })}
                 </Text>
-                {enemy.isWarlord && <Text style={styles.warlordBadge}>SEÑOR</Text>}
-                {enemy.damageDisabled && <Text style={styles.disabled}>SIN DAÑO</Text>}
+                {enemy.isWarlord && <Text style={styles.warlordBadge}>{t('hud.warlordBadge')}</Text>}
+                {enemy.damageDisabled && <Text style={styles.disabled}>{t('hud.noDamage')}</Text>}
+                {enemy.specialIcons?.includes('ANTI_MAGIC') && (
+                  <Text style={styles.iconBadge}>
+                    {t('hud.antiMagic', { value: enemyDef?.antiMagicValue ?? 1 })}
+                  </Text>
+                )}
+                {enemy.specialIcons?.includes('TEMPORARY_WOUNDS') && (
+                  <Text style={styles.iconBadge}>{t('hud.tempWounds')}</Text>
+                )}
+                {enemy.specialIcons?.includes('IMPROVED_LOOT') && (
+                  <Text style={styles.iconBadge}>{t('hud.improvedLoot')}</Text>
+                )}
+                {(enemy.statuses ?? []).length > 0 && (
+                  <Text style={styles.iconBadge}>
+                    {t('hud.statusesList', {
+                      list: (enemy.statuses ?? [])
+                        .map((s) => `${s.id}${s.stacks > 1 ? ` ×${s.stacks}` : ''}`)
+                        .join(', '),
+                    })}
+                  </Text>
+                )}
                 {enemy.modifiers.length > 0 && (
                   <Text style={styles.modifiers}>
-                    Modificadores: {enemy.modifiers.map((m) => `${m.layer} ${m.amount}`).join(', ')}
+                    {t('hud.modifiersList', {
+                      list: enemy.modifiers
+                        .map((m) => `${t(`hud.layer.${m.layer}`)} ${m.amount}`)
+                        .join(', '),
+                    })}
                   </Text>
                 )}
               </View>
-            </View>
+            </Animated.View>
           );
         })}
       </View>
@@ -136,6 +234,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
   },
+  pickingHint: {
+    color: '#f1c40f',
+    fontSize: 11,
+    marginBottom: 6,
+    fontWeight: 'bold',
+  },
   enemies: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -144,6 +248,20 @@ const styles = StyleSheet.create({
   enemyWrapper: {
     alignItems: 'center',
     maxWidth: 160,
+  },
+  targetPulse: {
+    position: 'absolute',
+    top: -2,
+    left: -2,
+    right: -2,
+    bottom: -2,
+    borderRadius: 10,
+    borderWidth: 2,
+    // borderColor se fija por tema en el componente (era '#2ecc71' fijo)
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+    pointerEvents: 'none',
   },
   enemyFallback: {
     backgroundColor: '#2c3e50',
@@ -196,6 +314,12 @@ const styles = StyleSheet.create({
     color: '#3498db',
     fontSize: 10,
     marginTop: 2,
+  },
+  iconBadge: {
+    color: '#b8a9e8',
+    fontSize: 10,
+    marginTop: 2,
+    fontStyle: 'italic',
   },
   modifiers: {
     color: '#9b59b6',

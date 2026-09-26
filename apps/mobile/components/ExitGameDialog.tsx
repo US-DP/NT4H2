@@ -2,9 +2,12 @@
  * ExitGameDialog — confirma salir de la partida sin perder progreso.
  *
  * Cumple UI-024: distinguir entre salir (guardar y salir) y abandonar (perder progreso).
+ * Construido sobre NtDialog (sistema de componentes NT4H / Unistyles).
  */
 
-import { View, Text, Pressable, StyleSheet, Modal } from 'react-native';
+import { View, Text, Platform } from 'react-native';
+import { useTranslation } from 'react-i18next';
+import { NtDialog } from './ui/NtDialog';
 
 interface ExitGameDialogProps {
   visible: boolean;
@@ -13,6 +16,8 @@ interface ExitGameDialogProps {
   onExitWithoutSaving: () => void;
   onAbandon: () => void;
   onCancel: () => void;
+  /** Línea de diagnóstico opcional (modo, sala, revisión, eventos…) */
+  diagnostics?: string;
 }
 
 export function ExitGameDialog({
@@ -22,99 +27,62 @@ export function ExitGameDialog({
   onExitWithoutSaving,
   onAbandon,
   onCancel,
+  diagnostics,
 }: ExitGameDialogProps) {
+  const { t } = useTranslation();
+  const SHORTCUTS: [string, string][] = [
+    ['1-5', t('panels.exitShortcutZone')],
+    ['H / E / C', t('panels.exitShortcutPanels')],
+    ['Esc', t('panels.exitShortcutClose')],
+  ];
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <View style={styles.overlay}>
-        <View style={styles.dialog}>
-          <Text style={styles.title}>Salir de la partida</Text>
-          <Text style={styles.description}>
-            {hasUnsavedChanges
-              ? 'Tienes cambios sin guardar. ¿Qué quieres hacer?'
-              : '¿Seguro que quieres salir?'}
-          </Text>
-
-          <View style={styles.actions}>
-            {hasUnsavedChanges && (
-              <Pressable style={[styles.button, styles.saveButton]} onPress={onSaveAndExit}>
-                <Text style={styles.buttonText}>Guardar y salir</Text>
-              </Pressable>
-            )}
-
-            <Pressable
-              style={[styles.button, styles.exitButton]}
-              onPress={hasUnsavedChanges ? onExitWithoutSaving : onSaveAndExit}
-            >
-              <Text style={styles.buttonText}>
-                {hasUnsavedChanges ? 'Salir sin guardar' : 'Salir'}
+    <NtDialog
+      visible={visible}
+      title={t('panels.exitTitle')}
+      description={
+        hasUnsavedChanges
+          ? t('panels.exitUnsaved')
+          : t('panels.exitSure')
+      }
+      children={
+        <View>
+          {Platform.OS === 'web' && (
+            <View accessibilityLabel={t('panels.exitShortcuts')} style={{ marginBottom: 8 }}>
+              <Text style={{ color: '#a8b0bc', fontSize: 12, fontWeight: '700', marginBottom: 4 }}>
+                {t('panels.exitShortcuts')}
               </Text>
-            </Pressable>
-
-            <Pressable style={[styles.button, styles.abandonButton]} onPress={onAbandon}>
-              <Text style={styles.buttonText}>Abandonar partida</Text>
-            </Pressable>
-
-            <Pressable style={[styles.button, styles.cancelButton]} onPress={onCancel}>
-              <Text style={styles.buttonText}>Cancelar</Text>
-            </Pressable>
-          </View>
+              {SHORTCUTS.map(([keys, desc]) => (
+                <View key={keys} style={{ flexDirection: 'row', gap: 12, marginBottom: 2 }}>
+                  <Text style={{ color: '#f1c40f', fontSize: 11, fontFamily: 'monospace', minWidth: 64 }}>
+                    {keys}
+                  </Text>
+                  <Text style={{ color: '#a8b0bc', fontSize: 11 }}>{desc}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+          {diagnostics && (
+            <Text style={{ color: '#8a8fa3', fontSize: 10, fontFamily: 'monospace' }}>
+              {diagnostics}
+            </Text>
+          )}
         </View>
-      </View>
-    </Modal>
+      }
+      onDismiss={onCancel}
+      actions={[
+        ...(hasUnsavedChanges
+          ? [{ label: t('panels.exitSaveAndExit'), onPress: onSaveAndExit, variant: 'primary' as const }]
+          : []),
+        {
+          label: hasUnsavedChanges ? t('panels.exitWithoutSaving') : t('panels.exitPlain'),
+          onPress: hasUnsavedChanges ? onExitWithoutSaving : onSaveAndExit,
+          variant: 'secondary' as const,
+          // "Salir sin guardar" descarta la partida — irreversible.
+          hold: hasUnsavedChanges,
+        },
+        { label: t('panels.exitAbandon'), onPress: onAbandon, variant: 'danger' as const },
+        { label: t('panels.cancel'), onPress: onCancel, variant: 'ghost' as const },
+      ]}
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 16,
-  },
-  dialog: {
-    backgroundColor: '#1a1a2e',
-    borderRadius: 12,
-    padding: 20,
-    width: '100%',
-    maxWidth: 380,
-  },
-  title: {
-    color: '#f1c40f',
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  description: {
-    color: '#ecf0f1',
-    fontSize: 13,
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  actions: {
-    gap: 8,
-  },
-  button: {
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  saveButton: {
-    backgroundColor: '#27ae60',
-  },
-  exitButton: {
-    backgroundColor: '#2980b9',
-  },
-  abandonButton: {
-    backgroundColor: '#c0392b',
-  },
-  cancelButton: {
-    backgroundColor: '#555',
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-});

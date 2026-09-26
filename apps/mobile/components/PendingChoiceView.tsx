@@ -16,9 +16,11 @@
 
 import { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { useGameStore } from '../store/gameStore';
 
 export function PendingChoiceView() {
+  const { t } = useTranslation();
   const gameState = useGameStore((s) => s.gameState);
   const catalog = useGameStore((s) => s.catalog);
   const viewerId = useGameStore((s) => s.viewerId);
@@ -31,7 +33,45 @@ export function PendingChoiceView() {
   const actorId = viewerId ?? gameState.activePlayerId;
   // Solo mostrar la elección del viewer actual (privacidad UI-174)
   const choice = gameState.pendingChoices.find(c => c.playerId === actorId);
-  if (!choice) return null;
+  if (!choice) {
+    // UI-133: si hay una elección pendiente de OTRO jugador (hot-seat local;
+    // en online la proyección ya filtra las ajenas), mostrar espera no
+    // interactiva en lugar de ocultar el estado de la partida.
+    const foreign = gameState.pendingChoices[0];
+    if (!foreign) return null;
+    const deciderHero = gameState.players[foreign.playerId]?.heroId;
+    const decider = (deciderHero && catalog.byId.get(deciderHero)?.name) ?? foreign.playerId;
+    return (
+      <View style={styles.container} accessibilityRole="alert">
+        <Text style={styles.waitingText}>{t('panels.choiceWaiting', { decider })}</Text>
+      </View>
+    );
+  }
+
+  // UI-135: sin opción legal la elección no debe bloquear la mesa.
+  // RESOLVE_CHOICE admite [] solo cuando minSelections === 0 (motor);
+  // si exige selecciones pero no hay opciones, solo queda esperar.
+  const noLegalOption = choice.type !== 'REACTION_WINDOW' && choice.options.length === 0;
+  if (noLegalOption) {
+    return (
+      <View style={styles.container} accessibilityRole="alert">
+        <Text style={styles.title}>{choice.prompt}</Text>
+        <Text style={styles.subtitle}>{t('panels.choiceNoOptions')}</Text>
+        {choice.minSelections === 0 ? (
+          <Pressable
+            style={styles.secondaryButton}
+            onPress={() => resolvePendingChoice(choice.choiceId, [])}
+            accessibilityRole="button"
+            accessibilityLabel={t('panels.choiceContinue')}
+          >
+            <Text style={styles.buttonText}>{t('panels.choiceContinue')}</Text>
+          </Pressable>
+        ) : (
+          <Text style={styles.subtitle}>{t('common.phases.WAITING_FOR_CHOICE')}</Text>
+        )}
+      </View>
+    );
+  }
 
   const isLeaderBid = choice.type === 'SELECT_CARDS_FOR_LEADER';
   const isReaction = choice.type === 'REACTION_WINDOW';
@@ -49,37 +89,75 @@ export function PendingChoiceView() {
   const optionLabel = (optionId: string): string => {
     // Intentar resolver como carta del catálogo
     const cardDef = catalog.byId.get(optionId);
-    if (cardDef) return `${cardDef.name} (Atq ${cardDef.printedAttack ?? 0})`;
-    // Buscar instanceId en mano/mazo/mercado/enemigos
+    if (cardDef) return t('panels.pendingCardAttack', { name: cardDef.name, value: cardDef.printedAttack ?? 0 });
+    // Buscar instanceId en mano/mazo/desgaste/mercado/horda/enemigos
     const player = gameState.players[actorId];
     const inHand = player?.hand.find(c => c.instanceId === optionId);
     if (inHand) {
       const def = catalog.byId.get(inHand.definitionId);
-      return def ? `${def.name} (Atq ${def.printedAttack ?? 0})` : optionId;
+      return def ? t('panels.pendingCardAttack', { name: def.name, value: def.printedAttack ?? 0 }) : optionId;
     }
     const inDeck = player?.abilityDeck.find(c => c.instanceId === optionId);
     if (inDeck) {
       const def = catalog.byId.get(inDeck.definitionId);
       return def ? def.name : optionId;
     }
+    const inWear = player?.wearPile.find(c => c.instanceId === optionId);
+    if (inWear) {
+      const def = catalog.byId.get(inWear.definitionId);
+      return def ? def.name : optionId;
+    }
     const inMarket = gameState.market.find(c => c.instanceId === optionId);
     if (inMarket) {
       const def = catalog.byId.get(inMarket.definitionId);
-      return def ? `${def.name} (${def.printedCost ?? 0} monedas)` : optionId;
+      return def ? t('panels.pendingCardCost', { name: def.name, value: def.printedCost ?? 0 }) : optionId;
+    }
+    const inMarketDeck = gameState.marketDeck?.find(c => c.instanceId === optionId);
+    if (inMarketDeck) {
+      const def = catalog.byId.get(inMarketDeck.definitionId);
+      return def ? def.name : optionId;
+    }
+    const inHorde = gameState.hordeDeck?.find(c => c.instanceId === optionId);
+    if (inHorde) {
+      const def = catalog.byId.get(inHorde.definitionId);
+      return def ? def.name : optionId;
     }
     const enemy = gameState.battlefield.find(e => e.instanceId === optionId);
     if (enemy) {
       const def = catalog.byId.get(enemy.definitionId);
-      return def ? `${def.name} (Fort ${def.printedFortitude ?? '?'})` : optionId;
+      return def ? t('panels.pendingCardFort', { name: def.name, value: def.printedFortitude ?? '?' }) : optionId;
+    }
+    // Trofeos (Portal de Ulthar): el enemigo derrotado ya no está en el campo;
+    // su definitionId se recupera del eventLog
+    const defeated = gameState.eventLog?.find(
+      (e) => e.type === 'ENEMY_DEFEATED' && e.enemyInstanceId === optionId,
+    );
+    if (defeated && defeated.type === 'ENEMY_DEFEATED') {
+      const def = catalog.byId.get(defeated.enemyDefinitionId);
+      return def ? def.name : optionId;
+    }
+    // Monedas a robar ('p2#coin3'): una opción por moneda del héroe origen
+    if (optionId.includes('#coin')) {
+      const pid = optionId.split('#coin')[0];
+      const victim = gameState.players[pid];
+      const name = victim
+        ? (catalog.byId.get(victim.heroId)?.name ?? victim.heroId)
+        : pid;
+      return t('panels.pendingHero', { hero: name });
     }
     const otherPlayer = gameState.players[optionId];
-    if (otherPlayer) return `Héroe: ${otherPlayer.heroId}`;
-    // Opciones textuales (USE_ABILITY, PASS, glory, coins…)
+    if (otherPlayer) {
+      const name = catalog.byId.get(otherPlayer.heroId)?.name ?? otherPlayer.heroId;
+      return t('panels.pendingHero', { hero: name });
+    }
+    // Opciones textuales (USE_ABILITY, PASS, glory, coins, yes/no…)
     const labels: Record<string, string> = {
-      USE_ABILITY: 'Usar pericia',
-      PASS: 'Pasar',
-      glory: 'Pagar 1 Gloria',
-      coins: 'Pagar 2 Monedas',
+      USE_ABILITY: t('panels.pendingUseAbility'),
+      PASS: t('panels.pass'),
+      glory: t('panels.pendingPayGlory'),
+      coins: t('panels.pendingPayCoins'),
+      yes: t('panels.yes'),
+      no: t('panels.no'),
     };
     return labels[optionId] ?? optionId;
   };
@@ -108,16 +186,18 @@ export function PendingChoiceView() {
           <Pressable
             style={styles.primaryButton}
             onPress={() => resolvePendingChoice(choice.choiceId, ['USE_ABILITY'])}
-            accessibilityLabel="Usar pericia"
+            accessibilityRole="button"
+            accessibilityLabel={t('panels.pendingUseAbility')}
           >
-            <Text style={styles.buttonText}>Usar pericia</Text>
+            <Text style={styles.buttonText}>{t('panels.pendingUseAbility')}</Text>
           </Pressable>
           <Pressable
             style={styles.secondaryButton}
             onPress={handlePass}
-            accessibilityLabel="Pasar"
+            accessibilityRole="button"
+            accessibilityLabel={t('panels.pass')}
           >
-            <Text style={styles.buttonText}>Pasar</Text>
+            <Text style={styles.buttonText}>{t('panels.pass')}</Text>
           </Pressable>
         </View>
       </View>
@@ -135,6 +215,7 @@ export function PendingChoiceView() {
               key={opt}
               style={styles.primaryButton}
               onPress={() => resolvePendingChoice(choice.choiceId, [opt])}
+              accessibilityRole="button"
               accessibilityLabel={optionLabel(opt)}
             >
               <Text style={styles.buttonText}>{optionLabel(opt)}</Text>
@@ -153,8 +234,8 @@ export function PendingChoiceView() {
       <Text style={styles.title}>{choice.prompt}</Text>
       <Text style={styles.subtitle}>
         {choice.minSelections === choice.maxSelections
-          ? `Elige ${choice.minSelections}`
-          : `Elige ${choice.minSelections}-${choice.maxSelections}`}
+          ? t('panels.pendingChooseExact', { n: choice.minSelections })
+          : t('panels.pendingChooseRange', { min: choice.minSelections, max: choice.maxSelections })}
       </Text>
       <ScrollView style={styles.options} horizontal={isLeaderBid}>
         {choice.options.map(opt => {
@@ -180,10 +261,14 @@ export function PendingChoiceView() {
         style={[styles.primaryButton, !canConfirm && styles.buttonDisabled]}
         onPress={handleConfirm}
         disabled={!canConfirm}
-        accessibilityLabel="Confirmar selección"
+        accessibilityRole="button"
+        accessibilityState={{ disabled: !canConfirm }}
+        accessibilityLabel={t('panels.pendingConfirmA11y')}
       >
         <Text style={styles.buttonText}>
-          {isLeaderBid ? 'Pujar' : 'Confirmar'} ({selected.length}/{choice.maxSelections})
+          {isLeaderBid
+            ? t('panels.pendingBid', { selected: selected.length, max: choice.maxSelections })
+            : t('panels.pendingConfirm', { selected: selected.length, max: choice.maxSelections })}
         </Text>
       </Pressable>
     </View>
@@ -209,6 +294,13 @@ const styles = StyleSheet.create({
     color: '#bdc3c7',
     fontSize: 12,
     marginBottom: 10,
+  },
+  waitingText: {
+    color: '#bdc3c7',
+    fontSize: 13,
+    fontStyle: 'italic',
+    textAlign: 'center',
+    paddingVertical: 6,
   },
   options: {
     maxHeight: 160,

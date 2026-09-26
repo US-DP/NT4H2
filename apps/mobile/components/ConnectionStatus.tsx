@@ -9,8 +9,11 @@
  */
 
 import { View, Text, StyleSheet } from 'react-native';
+import { useTranslation } from 'react-i18next';
+import '../lib/i18n';
+import { useColors } from '../lib/useTheme';
 
-export type ConnectionState = 'LOCAL' | 'CONNECTED' | 'RECONNECTING' | 'OFFLINE' | 'SYNCING' | 'ERROR';
+export type ConnectionState = 'LOCAL' | 'CONNECTED' | 'STALE' | 'RECONNECTING' | 'OFFLINE' | 'SYNCING' | 'ERROR';
 
 interface ConnectionStatusProps {
   state: ConnectionState;
@@ -18,31 +21,51 @@ interface ConnectionStatusProps {
   reconnectSummary?: string[];
 }
 
-const STATE_CONFIG: Record<ConnectionState, { label: string; color: string; icon: string }> = {
-  LOCAL: { label: 'Partida local', color: '#7f8c8d', icon: '💾' },
-  CONNECTED: { label: 'Conectado', color: '#27ae60', icon: '●' },
-  RECONNECTING: { label: 'Reconectando…', color: '#f39c12', icon: '⟳' },
-  OFFLINE: { label: 'Sin conexión', color: '#e74c3c', icon: '✕' },
-  SYNCING: { label: 'Sincronizando…', color: '#3498db', icon: '↻' },
-  ERROR: { label: 'Error de conexión', color: '#c0392b', icon: '⚠' },
-};
-
 export function ConnectionStatus({ state, reconnectSummary }: ConnectionStatusProps) {
+  const c = useColors();
+  const { t } = useTranslation();
+  const STATE_CONFIG: Record<ConnectionState, { color: string; icon: string }> = {
+    // "Local" no es un estado de conexión: comunica que no se necesita red
+    LOCAL: { color: c.connectionStale, icon: '💾' },
+    CONNECTED: { color: c.connectionOnline, icon: '●' },
+    // STALE: socket abierto pero sin tráfico (heartbeat/pong/mensajes) —
+    // no es OFFLINE porque puede recuperarse sin reconectar
+    STALE: { color: c.connectionReconnecting, icon: '!' },
+    RECONNECTING: { color: c.connectionReconnecting, icon: '⟳' },
+    OFFLINE: { color: c.connectionOffline, icon: '✕' },
+    SYNCING: { color: c.info, icon: '↻' },
+    ERROR: { color: c.connectionOffline, icon: '⚠' },
+  };
   const cfg = STATE_CONFIG[state];
+  const label = t(`common.conn.${state}`);
 
   return (
-    <View style={styles.container} accessibilityLabel={`Estado de conexión: ${cfg.label}`}>
+    <View style={styles.container} accessibilityLabel={t('common.conn.a11y', { label })}>
       <Text style={[styles.indicator, { color: cfg.color }]}>
-        {cfg.icon} {cfg.label}
+        {cfg.icon} {label}
       </Text>
       {state === 'OFFLINE' && (
-        <Text style={styles.hint}>Las funciones online no están disponibles.</Text>
+        <Text style={[styles.hint, { color: c.textMuted }]}>
+          {t('common.conn.offlineHint')}
+        </Text>
+      )}
+      {state === 'LOCAL' && (
+        <Text style={[styles.hint, { color: c.textMuted }]}>
+          {t('common.conn.localHint')}
+        </Text>
+      )}
+      {state === 'STALE' && (
+        <Text style={[styles.hint, { color: c.textMuted }]}>
+          {t('common.conn.staleHint')}
+        </Text>
       )}
       {reconnectSummary && reconnectSummary.length > 0 && (
-        <View style={styles.summary}>
-          <Text style={styles.summaryTitle}>Durante tu desconexión:</Text>
+        <View style={[styles.summary, { backgroundColor: c.surfaceRaised }]}>
+          <Text style={[styles.summaryTitle, { color: c.accent }]}>
+            {t('common.conn.whileAway')}
+          </Text>
           {reconnectSummary.map((line, i) => (
-            <Text key={i} style={styles.summaryLine}>- {line}</Text>
+            <Text key={i} style={[styles.summaryLine, { color: c.text }]}>- {line}</Text>
           ))}
         </View>
       )}
@@ -60,7 +83,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   hint: {
-    color: '#bdc3c7',
     fontSize: 10,
     fontStyle: 'italic',
     marginTop: 2,
@@ -68,18 +90,15 @@ const styles = StyleSheet.create({
   summary: {
     marginTop: 4,
     padding: 8,
-    backgroundColor: '#2c3e50',
     borderRadius: 4,
     alignSelf: 'stretch',
   },
   summaryTitle: {
-    color: '#f1c40f',
     fontSize: 11,
     fontWeight: 'bold',
     marginBottom: 2,
   },
   summaryLine: {
-    color: '#ecf0f1',
     fontSize: 10,
   },
 });

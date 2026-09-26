@@ -9,6 +9,8 @@
  */
 
 import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { useTranslation } from 'react-i18next';
+import '../lib/i18n';
 
 export type ErrorCategory =
   | 'validation'
@@ -35,32 +37,34 @@ interface ErrorMessageProps {
   actions?: ErrorAction[];
 }
 
-const CATEGORY_CONFIG: Record<ErrorCategory, { icon: string; color: string; label: string }> = {
-  validation: { icon: '✕', color: '#e74c3c', label: 'Error de validación' },
-  connection: { icon: '⚠', color: '#f39c12', label: 'Error de conexión' },
-  permissions: { icon: '🔒', color: '#8e44ad', label: 'Error de permisos' },
-  compatibility: { icon: '⚠', color: '#f39c12', label: 'Error de compatibilidad' },
-  server: { icon: '⚠', color: '#e74c3c', label: 'Error del servidor' },
-  storage: { icon: '💾', color: '#f39c12', label: 'Error de almacenamiento' },
-  content: { icon: '⚠', color: '#f39c12', label: 'Error de contenido' },
+const CATEGORY_CONFIG: Record<ErrorCategory, { icon: string; color: string }> = {
+  validation: { icon: '✕', color: '#e74c3c' },
+  connection: { icon: '⚠', color: '#f39c12' },
+  permissions: { icon: '🔒', color: '#8e44ad' },
+  compatibility: { icon: '⚠', color: '#f39c12' },
+  server: { icon: '⚠', color: '#e74c3c' },
+  storage: { icon: '💾', color: '#f39c12' },
+  content: { icon: '⚠', color: '#f39c12' },
 };
 
 export function ErrorMessage({ category, action, reason, fix, actions }: ErrorMessageProps) {
+  const { t } = useTranslation();
   const cfg = CATEGORY_CONFIG[category];
+  const label = t(`common.err.${category}`);
 
   return (
     <View
       style={[styles.container, { borderColor: cfg.color }]}
       accessibilityRole="alert"
-      accessibilityLabel={`${cfg.label}. ${action}. ${reason}. ${fix ?? ''}`}
+      accessibilityLabel={t('common.err.a11y', { label, action, reason, fix: fix ?? '' })}
     >
       <View style={styles.header}>
         <Text style={[styles.icon, { color: cfg.color }]}>{cfg.icon}</Text>
-        <Text style={styles.categoryLabel}>{cfg.label}</Text>
+        <Text style={styles.categoryLabel}>{label}</Text>
       </View>
-      <Text style={styles.action}>Acción: {action}</Text>
+      <Text style={styles.action}>{t('common.err.action', { action })}</Text>
       <Text style={styles.reason}>{reason}</Text>
-      {fix && <Text style={styles.fix}>Solución: {fix}</Text>}
+      {fix && <Text style={styles.fix}>{t('common.err.fix', { fix })}</Text>}
       {actions && actions.length > 0 && (
         <View style={styles.actions}>
           {actions.map((a, i) => (

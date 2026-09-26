@@ -5,6 +5,7 @@
  */
 
 import { View, Text, StyleSheet } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 export type SaveState = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -12,13 +13,6 @@ interface SaveIndicatorProps {
   state: SaveState;
   lastSavedAt?: number;
 }
-
-const STATE_LABELS: Record<SaveState, string> = {
-  idle: '',
-  saving: 'Guardando...',
-  saved: 'Guardado',
-  error: 'Error al guardar',
-};
 
 const STATE_COLORS: Record<SaveState, string> = {
   idle: 'transparent',
@@ -28,6 +22,14 @@ const STATE_COLORS: Record<SaveState, string> = {
 };
 
 export function SaveIndicator({ state, lastSavedAt }: SaveIndicatorProps) {
+  const { t } = useTranslation();
+  const STATE_LABELS: Record<SaveState, string> = {
+    idle: '',
+    saving: t('panels.saving'),
+    saved: t('panels.saved'),
+    error: t('panels.saveFailed'),
+  };
+
   if (state === 'idle') return null;
 
   const timeText = lastSavedAt
@@ -37,7 +39,7 @@ export function SaveIndicator({ state, lastSavedAt }: SaveIndicatorProps) {
   return (
     <View style={styles.container} accessibilityLiveRegion="polite">
       <Text style={[styles.text, { color: STATE_COLORS[state] }]}>
-        {STATE_LABELS[state]}{timeText ? ` a las ${timeText}` : ''}
+        {STATE_LABELS[state]}{timeText ? t('panels.savedAtTime', { time: timeText }) : ''}
       </Text>
     </View>
   );

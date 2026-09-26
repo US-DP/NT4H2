@@ -28,7 +28,7 @@ test.describe('Recorrido 1: Cargar página de inicio (UI-030)', () => {
 
   test('muestra botón de partida offline', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText(/Jugar offline/i).first()).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/Partida rápida/i).first()).toBeVisible({ timeout: 15000 });
   });
 
   test('muestra botón de modo solitario', async ({ page }) => {
@@ -36,30 +36,30 @@ test.describe('Recorrido 1: Cargar página de inicio (UI-030)', () => {
     await expect(page.getByText(/Modo Solitario/i).first()).toBeVisible({ timeout: 15000 });
   });
 
-  test('muestra botón de crear partida avanzada', async ({ page }) => {
+  test('muestra botón de Nueva partida', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText(/Crear partida avanzada/i).first()).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/Nueva partida/i).first()).toBeVisible({ timeout: 15000 });
   });
 });
 
 test.describe('Recorrido 2: Crear partida offline (UI-040..050)', () => {
-  test('al pulsar "Jugar offline" se navega a la pantalla de juego', async ({ page }) => {
+  test('al pulsar "Partida rápida" se navega a la pantalla de juego', async ({ page }) => {
     await page.goto('/');
-    await page.getByText(/Jugar offline/i).first().click();
+    await page.getByText(/Partida rápida/i).first().click();
     // Debe navegar a la pantalla de juego o privacidad
     await expect(page.getByText(/Pasa el dispositivo/i).first()).toBeVisible({ timeout: 15000 });
   });
 
   test('muestra pantalla de privacidad en hot-seat (UI-202)', async ({ page }) => {
     await page.goto('/');
-    await page.getByText(/Jugar offline/i).first().click();
+    await page.getByText(/Partida rápida/i).first().click();
     // En modo 2 jugadores hot-seat, debe mostrar pantalla de privacidad
     await expect(page.getByText(/Pasa el dispositivo/i).first()).toBeVisible({ timeout: 15000 });
   });
 
   test('al confirmar privacidad, muestra la mesa de juego', async ({ page }) => {
     await page.goto('/');
-    await page.getByText(/Jugar offline/i).first().click();
+    await page.getByText(/Partida rápida/i).first().click();
     // Confirmar pantalla de privacidad
     await expect(page.getByText(/Pasa el dispositivo/i).first()).toBeVisible({ timeout: 15000 });
     await page.getByText(/Estoy listo/i).first().click();
@@ -71,7 +71,7 @@ test.describe('Recorrido 2: Crear partida offline (UI-040..050)', () => {
 test.describe('Recorrido 3: Ver mesa de juego (UI-070..073)', () => {
   test('muestra enemigos en el campo de batalla', async ({ page }) => {
     await page.goto('/');
-    await page.getByText(/Jugar offline/i).first().click();
+    await page.getByText(/Partida rápida/i).first().click();
     await expect(page.getByText(/Pasa el dispositivo/i).first()).toBeVisible({ timeout: 15000 });
     await page.getByText(/Estoy listo/i).first().click();
     await expect(page.getByText(/Campo de Batalla/i).first()).toBeVisible({ timeout: 15000 });
@@ -79,7 +79,7 @@ test.describe('Recorrido 3: Ver mesa de juego (UI-070..073)', () => {
 
   test('muestra la mano del jugador', async ({ page }) => {
     await page.goto('/');
-    await page.getByText(/Jugar offline/i).first().click();
+    await page.getByText(/Partida rápida/i).first().click();
     await expect(page.getByText(/Pasa el dispositivo/i).first()).toBeVisible({ timeout: 15000 });
     await page.getByText(/Estoy listo/i).first().click();
     // La mano puede tardar en renderizarse; verificar que el juego está cargado
@@ -90,7 +90,7 @@ test.describe('Recorrido 3: Ver mesa de juego (UI-070..073)', () => {
 test.describe('Recorrido 4: Seleccionar carta (UI-100..108)', () => {
   test('jugador puede ver las cartas en su mano', async ({ page }) => {
     await page.goto('/');
-    await page.getByText(/Jugar offline/i).first().click();
+    await page.getByText(/Partida rápida/i).first().click();
     await expect(page.getByText(/Pasa el dispositivo/i).first()).toBeVisible({ timeout: 15000 });
     await page.getByText(/Estoy listo/i).first().click();
     await expect(page.getByText(/Campo de Batalla/i).first()).toBeVisible({ timeout: 15000 });
@@ -98,7 +98,7 @@ test.describe('Recorrido 4: Seleccionar carta (UI-100..108)', () => {
 
   test('seleccionar una carta no la juega automáticamente (UI-104)', async ({ page }) => {
     await page.goto('/');
-    await page.getByText(/Jugar offline/i).first().click();
+    await page.getByText(/Partida rápida/i).first().click();
     await expect(page.getByText(/Pasa el dispositivo/i).first()).toBeVisible({ timeout: 15000 });
     await page.getByText(/Estoy listo/i).first().click();
     await expect(page.getByText(/Campo de Batalla/i).first()).toBeVisible({ timeout: 15000 });

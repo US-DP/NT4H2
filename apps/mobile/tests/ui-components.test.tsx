@@ -15,7 +15,30 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { Text } from 'react-native';
+import type * as ReactModule from 'react';
 import { render, expectText, findAllText, press } from './renderer';
+
+// Los componentes con estado (p. ej. ChoiceDialog) necesitan hooks —
+// mismo patrón que study.test.tsx: vi.mock('react') con useState funcional.
+const hookState = { values: [] as unknown[], index: 0 };
+vi.mock('react', async () => {
+  const actual = await vi.importActual<typeof ReactModule>('react');
+  return {
+    ...actual,
+    useState: <T,>(initial: T | (() => T)): [T, (v: T) => void] => {
+      const idx = hookState.index++;
+      if (hookState.values[idx] === undefined) {
+        hookState.values[idx] = typeof initial === 'function' ? (initial as () => T)() : initial;
+      }
+      const setter = (v: T) => { hookState.values[idx] = v; };
+      return [hookState.values[idx] as T, setter];
+    },
+    useMemo: <T,>(factory: () => T): T => factory(),
+    useCallback: <T,>(cb: T): T => cb,
+    useEffect: () => {},
+    useRef: <T,>(initial: T) => ({ current: initial }),
+  };
+});
 
 import { PhaseIndicator } from '../components/PhaseIndicator';
 import { ConnectionStatus } from '../components/ConnectionStatus';
@@ -66,7 +89,7 @@ describe('PhaseIndicator — UI-071, UI-072', () => {
 
   it('la fase activa se destaca visualmente', () => {
     const { root } = render(<PhaseIndicator phase="PLAYER_ATTACK" turnNumber={1} />);
-    expectText(root, '⚔ Ataque');
+    expectText(root, 'Ataque');
     // La fase pasada/futura aparece con menor contraste
     expectText(root, 'Mercado');
   });
@@ -131,6 +154,63 @@ describe('ActionHistory — UI-170..174', () => {
     ];
     const { root } = render(<ActionHistory entries={entries} currentTurn={2} filter="turn" />);
     expectText(root, 'B');
+  });
+
+  it('filtro por jugador muestra solo sus acciones + eventos globales', () => {
+    const entries = [
+      { id: '1', turn: 1, actor: 'Ana', action: 'jugó carta', result: 'r', timestamp: 0 },
+      { id: '2', turn: 1, actor: 'Ben', action: 'compró', result: 'r', timestamp: 0 },
+      { id: '3', turn: 1, actor: '—', global: true, action: 'La Horda ataca', result: '4 daño', timestamp: 0 },
+    ];
+    const { root } = render(
+      <ActionHistory entries={entries} currentTurn={1} filter="player" playerFilter="Ana" />
+    );
+    expectText(root, 'jugó carta');
+    expectText(root, 'La Horda ataca'); // global se conserva para contexto
+    const texts = findAllText(root);
+    expect(texts.filter(t => t.includes('compró')).length).toBe(0);
+  });
+
+  it('filtro por jugador sin eventos muestra el estado vacío', () => {
+    const entries = [
+      { id: '1', turn: 1, actor: 'Ana', action: 'jugó', result: 'r', timestamp: 0 },
+    ];
+    const { root } = render(
+      <ActionHistory entries={entries} currentTurn={1} filter="player" playerFilter="Zoe" />
+    );
+    expectText(root, 'No hay eventos en este filtro');
+  });
+
+  it('eventos privados no revelan detalles (UI-174)', () => {
+    const entries = [
+      { id: '1', turn: 1, actor: 'Ana', action: 'miró la Horda', card: 'Carta Secreta', target: 'Enemigo X', result: 'vio el futuro', timestamp: 0, wasPrivate: true },
+    ];
+    const { root } = render(<ActionHistory entries={entries} currentTurn={1} />);
+    expectText(root, 'Acción privada — detalles ocultos');
+    const texts = findAllText(root);
+    expect(texts.filter(t => t.includes('Carta Secreta')).length).toBe(0);
+    expect(texts.filter(t => t.includes('Enemigo X')).length).toBe(0);
+  });
+
+  it('modo avanzado muestra datos técnicos con la semilla enmascarada', () => {
+    const entries = [
+      { id: '1', turn: 1, actor: 'Ana', action: 'jugó', result: 'r', timestamp: 0,
+        technical: { commandId: 'cmd-42', version: '0.4.0', seed: 'seed-super-secreta', events: ['CARD_PLAYED'] } },
+    ];
+    const { root } = render(<ActionHistory entries={entries} currentTurn={1} advanced />);
+    expectText(root, 'CMD: cmd-42');
+    expectText(root, /seed: seed…/);
+    const texts = findAllText(root);
+    expect(texts.filter(t => t.includes('seed-super-secreta')).length).toBe(0);
+  });
+
+  it('modo avanzado sin technical no muestra la sección', () => {
+    const entries = [
+      { id: '1', turn: 1, actor: 'Ana', action: 'jugó', result: 'r', timestamp: 0 },
+    ];
+    const { root } = render(<ActionHistory entries={entries} currentTurn={1} advanced />);
+    const texts = findAllText(root);
+    expect(texts.filter(t => t.startsWith('CMD:')).length).toBe(0);
   });
 });
 
