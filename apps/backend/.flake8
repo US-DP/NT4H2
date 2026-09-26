@@ -1,0 +1,57 @@
+[flake8]
+# Coherente con ruff.toml (line-length 120) y black --line-length 120.
+# flake8 queda como capa de DETECCIÓN (bugs, seguridad, complejidad);
+# el estilo/formato lo gobiernan black + ruff.
+max-line-length = 120
+exclude = migrations, .venv, __pycache__, node_modules
+extend-ignore =
+    # Conflictos conocidos con black (trailing commas / slices)
+    E203,W503,
+    # wemake-python-styleguide: demasiado estricto para un proyecto Django
+    # (constantes mutables de settings, nombres cortos, imports relativos de app)
+    WPS,
+    # flake8-black: black ya corre con --line-length 120
+    BLK100,
+    # imports relativos intra-app son el patrón estándar de Django
+    ABS101,
+    # asserts en tests y defaults de desarrollo ya revisados por bandit/ruff
+    S101,S105,
+    # flake8-quotes: black impone comillas dobles — conflicto directo
+    Q,
+    # flake8-spellcheck: el proyecto está en español; sin diccionario ES
+    SC100,SC200,
+    # flake8-commas: black ya gestiona las trailing commas
+    C8,
+    # tryceratops: conteo de try blocks / TRY300/TRY003 — estilo, no bugs
+    TRY,
+    # flake8-functions: límites de returns/args en vistas REST con guard clauses
+    CFQ,
+    # flake8-functions-names / nombres de parámetros de framework
+    FNN,FNE,
+    # flake8-docstrings (pep257): la puerta de docstrings es pydocstyle google
+    D,
+    # flake8-dunder-all: __all__ no aplica a vistas Django
+    DAL,
+    # flake8-no-pep420: los módulos raíz (manage.py) no son paquetes
+    INP,
+    # flake8-requirements: los paquetes del monorepo no salen en requirements.txt
+    I900,
+    # flake8-pie PIE798: EngineRunnerClient es namespacing deliberado (noqa inline)
+    # flake8-annotations + darglint: el código base no está anotado con tipos;
+    # añadir ~300 anotaciones/docstrings de firma es churn sin beneficio
+    # (mypy tampoco corre en este entorno)
+    ANN,DAR,
+    # C408 dict() calls — estilo aceptable
+    C408,
+    # flake8-pytest-style: los tests son unittest.TestCase de Django, no pytest
+    PT,
+    # flake8-class-attributes-order: quiere Meta ANTES de los campos del
+    # modelo — la convención universal de Django es Meta DESPUÉS
+    CCE,
+
+# flake8-cognitive-complexity: endpoints REST con validaciones encadenadas
+# (guard clauses) puntúan alto sin ser ilegibles; umbral razonable
+max-cognitive-complexity = 16
+# flake8-expression-complexity: queries ORM encadenadas puntúan ~8;
+# por encima de 9 ya es señal de refactor real
+max-expression-complexity = 9

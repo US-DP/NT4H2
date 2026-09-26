@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "python manage.py runserver",
-    "test": "echo 'Backend tests pending Django setup' && exit 0",
+    "test": "python manage.py test",
     "lint": "ruff check .",
     "typecheck": "echo 'Python backend - no typecheck'"
   }

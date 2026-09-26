@@ -1,4 +1,5 @@
 """Admin registration for the content app."""
+
 from django.contrib import admin
 
 from .models import CardDefinition, CardVersion

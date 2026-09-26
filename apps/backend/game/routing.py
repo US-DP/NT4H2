@@ -1,4 +1,5 @@
 """URL routing for WebSocket consumers."""
+
 from django.urls import path
 
 from .consumers import GameConsumer

@@ -1,4 +1,5 @@
 """ASGI config for NT4H backend."""
+
 import os
 
 from channels.auth import AuthMiddlewareStack
@@ -15,8 +16,6 @@ from game.routing import websocket_urlpatterns  # noqa: E402
 application = ProtocolTypeRouter(
     {
         "http": django_asgi_app,
-        "websocket": AllowedHostsOriginValidator(
-            AuthMiddlewareStack(URLRouter(websocket_urlpatterns))
-        ),
+        "websocket": AllowedHostsOriginValidator(AuthMiddlewareStack(URLRouter(websocket_urlpatterns))),
     }
 )

@@ -1,8 +1,9 @@
 """Client for the engine-runner HTTP service."""
+
 import logging
 import os
 
-import httpx
+import httpx  # noqa: ASYNC127 - httpx sigue mantenido; la sugerencia httpx2 es errónea
 
 logger = logging.getLogger(__name__)
 
@@ -12,8 +13,7 @@ ENGINE_RUNNER_URL = os.environ.get("ENGINE_RUNNER_URL", "http://localhost:3001")
 ENGINE_RUNNER_TOKEN = os.environ.get("ENGINE_RUNNER_TOKEN", "")
 if not ENGINE_RUNNER_TOKEN:
     logger.warning(
-        "ENGINE_RUNNER_TOKEN vacío — el runner aceptará peticiones sin auth "
-        "(solo aceptable en desarrollo local)"
+        "ENGINE_RUNNER_TOKEN vacío — el runner aceptará peticiones sin auth (solo aceptable en desarrollo local)"
     )
 
 
@@ -27,7 +27,7 @@ def _headers() -> dict:
     return {}
 
 
-class EngineRunnerClient:
+class EngineRunnerClient:  # noqa: PIE798 - namespacing deliberado sobre los 5 endpoints
     """Thin client that delegates game state execution to engine-runner."""
 
     @staticmethod
@@ -42,13 +42,30 @@ class EngineRunnerClient:
             return response.json()
 
     @staticmethod
-    def execute_command(room_id: str, cid: str, player_id: str, command: dict) -> dict:
+    def execute_command(
+        room_id: str,
+        cid: str,
+        player_id: str,
+        command: dict,
+        *,
+        expected_revision: int | None = None,
+        client_sequence: int | None = None,
+    ) -> dict:
+        body = {"cid": cid, "playerId": player_id, "command": command}
+        if expected_revision is not None:
+            body["expectedRevision"] = expected_revision
+        if client_sequence is not None:
+            body["clientSequence"] = client_sequence
         with httpx.Client(timeout=5.0) as client:
             response = client.post(
                 _url(f"/rooms/{room_id}/command"),
-                json={"cid": cid, "playerId": player_id, "command": command},
+                json=body,
                 headers=_headers(),
             )
+            # 409 stale_revision: propagar al cliente para que re-sincronice
+            if response.status_code == 409:
+                data = response.json()
+                return {"accepted": False, "reason": "stale_revision", "revision": data.get("revision")}
             response.raise_for_status()
             return response.json()
 

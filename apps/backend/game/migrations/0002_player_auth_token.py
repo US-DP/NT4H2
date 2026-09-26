@@ -6,8 +6,11 @@ import game.models
 
 
 def _assign_unique_tokens(apps, schema_editor):
-    """Regenerate a unique token per existing row (the field default
-    callable is evaluated once by the schema editor for all rows)."""
+    """Regenerate a unique token per existing row.
+
+    The field default callable is evaluated once by the schema editor
+    for all rows.
+    """
     Player = apps.get_model("game", "Player")
     for player in Player.objects.all():
         player.auth_token = game.models._generate_player_token()

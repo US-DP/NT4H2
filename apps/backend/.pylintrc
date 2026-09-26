@@ -1,0 +1,35 @@
+[MASTER]
+load-plugins = pylint_django
+django-settings-module = backend.settings
+ignore = migrations
+
+[MESSAGES CONTROL]
+disable =
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    too-few-public-methods,
+    # DRF ViewSets heredan de clases profundas por diseño
+    too-many-ancestors,
+    unused-argument,
+    too-many-arguments,
+    too-many-locals,
+    duplicate-code,
+    # Channels: django.setup() debe ejecutarse antes de importar routing (asgi.py)
+    wrong-import-position,
+    # imports locales deliberados dentro de funciones sync_to_async / tests
+    import-outside-toplevel,
+    # Channels consumer: atributos de instancia se crean en connect()
+    attribute-defined-outside-init,
+    # overrides de AsyncJsonWebsocketConsumer con firmas propias de Channels
+    arguments-renamed,
+    arguments-differ,
+    # endpoints de validación con guard clauses: un return por check es
+    # más legible que encadenar elif
+    too-many-return-statements,
+    # tests.py crece con la suite; dividir clases de test no aporta
+    too-many-lines,
+    too-many-public-methods,
+
+[FORMAT]
+max-line-length = 120

@@ -17,8 +17,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name="gameevent",
-            constraint=models.UniqueConstraint(
-                fields=("session", "seq"), name="uniq_event_seq_per_session"
-            ),
+            constraint=models.UniqueConstraint(fields=("session", "seq"), name="uniq_event_seq_per_session"),
         ),
     ]
