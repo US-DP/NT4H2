@@ -1,0 +1,2877 @@
+{
+  "$schema": "rules-traceability/v2",
+  "description": "Matriz de trazabilidad: cada regla/carta → fuente oficial → módulo del motor → pruebas. Generado por scripts/gen_traceability.py; la sección rules se conserva manualmente.",
+  "generated": "2026-09-25T06:19:52+00:00",
+  "rules": [
+    {
+      "id": "RULE-INITIAL-HAND-4",
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Preparación"
+      },
+      "rule": "Mano inicial de 4 cartas por héroe.",
+      "engine": {
+        "modules": [
+          "phases/setup.ts"
+        ],
+        "evidence": "setup.ts:418 shuffledDeck.slice(0, 4)"
+      },
+      "tests": [
+        "engine.test.ts (setup)",
+        "integrity-security.test.ts"
+      ],
+      "status": "VERIFIED"
+    },
+    {
+      "id": "RULE-HORDE-SIZE",
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Preparación de la Horda"
+      },
+      "rule": "La Horda tiene 19/23/27 Huestes para 2/3/4 jugadores.",
+      "engine": {
+        "modules": [
+          "phases/setup.ts"
+        ],
+        "evidence": "setup.ts:113-124 hordeSize por playerCount"
+      },
+      "tests": [
+        "modes.test.ts",
+        "engine.test.ts"
+      ],
+      "status": "VERIFIED"
+    },
+    {
+      "id": "RULE-MARKET-VISIBLE-5",
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mercado"
+      },
+      "rule": "Cinco cartas de Mercado visibles.",
+      "engine": {
+        "modules": [
+          "phases/setup.ts",
+          "events/applyEvent.ts"
+        ],
+        "evidence": "setup.ts:600 slice(0,5); MARKET_REPLENISHED en applyEvent"
+      },
+      "tests": [
+        "engine.test.ts",
+        "phases.test.ts"
+      ],
+      "status": "VERIFIED"
+    },
+    {
+      "id": "RULE-FIRST-WAVE-3",
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Campo de batalla"
+      },
+      "rule": "Primera oleada de tres enemigos.",
+      "engine": {
+        "modules": [
+          "phases/setup.ts"
+        ]
+      },
+      "tests": [
+        "engine.test.ts"
+      ],
+      "status": "VERIFIED"
+    },
+    {
+      "id": "RULE-DAMAGE-SINGLE-TARGET",
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Combate"
+      },
+      "rule": "El daño de una carta se asigna a un único enemigo (salvo efectos ALL/SPLIT).",
+      "engine": {
+        "modules": [
+          "effects/resolver.ts",
+          "commands/execute.ts"
+        ]
+      },
+      "tests": [
+        "resolver.test.ts"
+      ],
+      "status": "VERIFIED"
+    },
+    {
+      "id": "RULE-EFFECT-ORDER-TOP-DOWN",
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Resolución de cartas"
+      },
+      "rule": "Los efectos de una carta se resuelven de arriba abajo.",
+      "engine": {
+        "modules": [
+          "effects/resolver.ts"
+        ],
+        "evidence": "executeEffectChain itera effects en orden"
+      },
+      "tests": [
+        "resolver.test.ts",
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED"
+    },
+    {
+      "id": "RULE-DECK-REBUILD-WOUND",
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Restablecimiento"
+      },
+      "rule": "Al agotarse el mazo se reconstruye desde Desgaste y el héroe recibe una Herida.",
+      "engine": {
+        "modules": [
+          "phases/engine.ts",
+          "commands/execute.ts"
+        ],
+        "events": [
+          "DECK_RESHUFFLED",
+          "HERO_WOUNDED"
+        ]
+      },
+      "tests": [
+        "phases.test.ts",
+        "integrity-security.test.ts"
+      ],
+      "status": "VERIFIED"
+    },
+    {
+      "id": "RULE-PHASE-ORDER-MARKET-BEFORE-RESTORATION",
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Orden de fases"
+      },
+      "rule": "La fase de Mercado precede al Restablecimiento.",
+      "engine": {
+        "modules": [
+          "phases/transitions.ts",
+          "phases/engine.ts"
+        ],
+        "events": [
+          "PHASE_CHANGED"
+        ]
+      },
+      "tests": [
+        "phases.test.ts"
+      ],
+      "status": "VERIFIED"
+    },
+    {
+      "id": "RULE-BATTLEFIELD-REPLENISH",
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Reposición del campo"
+      },
+      "rule": "Reposición de enemigos según queden cero, uno, dos o tres (no se repone tras revelarse el Señor).",
+      "engine": {
+        "modules": [
+          "phases/engine.ts"
+        ],
+        "evidence": "processBattlefieldReplenishment + guarda warlordRevealed (FIX B1)"
+      },
+      "tests": [
+        "phases.test.ts",
+        "modes.test.ts"
+      ],
+      "status": "VERIFIED"
+    },
+    {
+      "id": "RULE-WARLORD-GLORY-PER-CARD",
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Señor de la Guerra"
+      },
+      "rule": "1 punto de Gloria por cada CARTA que cause ≥1 daño al Señor, independiente de la cantidad de daño.",
+      "engine": {
+        "modules": [
+          "effects/resolver.ts",
+          "events/applyEvent.ts"
+        ],
+        "events": [
+          "GLORY_GAINED"
+        ]
+      },
+      "tests": [
+        "resolver.test.ts",
+        "integrity-security.test.ts"
+      ],
+      "status": "VERIFIED",
+      "notes": "Revisar casos borde: daño reducido a 0, carta copiada, daño de reacción y de Mercado."
+    },
+    {
+      "id": "RULE-SCORING-MULTIPLAYER",
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Fin de partida"
+      },
+      "rule": "Gloria de trofeos + fichas + ⌊monedas/3⌋ + 1 si sin Heridas. Desempate: más enemigos derrotados. Sin penalización por Herida.",
+      "engine": {
+        "modules": [
+          "phases/engine.ts"
+        ],
+        "evidence": "engine.ts:1263-1292",
+        "events": [
+          "GAME_ENDED"
+        ]
+      },
+      "tests": [
+        "modes.test.ts",
+        "phases.test.ts"
+      ],
+      "status": "VERIFIED"
+    },
+    {
+      "id": "RULE-EVASION-ONCE-PER-GAME",
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Evasión"
+      },
+      "rule": "La Ficha de Evasión se usa una sola vez por partida y por héroe; exige descartar al menos 2 cartas.",
+      "engine": {
+        "modules": [
+          "commands/execute.ts",
+          "events/applyEvent.ts"
+        ],
+        "evidence": "evasionTokenUsed por jugador; EVASION_MIN_CARDS/EVASION_TOKEN_USED",
+        "commands": [
+          "EVASION"
+        ],
+        "events": [
+          "EVASION_PERFORMED"
+        ]
+      },
+      "tests": [
+        "integrity-security.test.ts (EVASION_TOKEN_USED)",
+        "abilities-scenarios.test.ts (Taheral)"
+      ],
+      "status": "VERIFIED"
+    },
+    {
+      "id": "RULE-HORDE-BOTTOM-DRAW",
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Preparación de la Horda"
+      },
+      "rule": "Las Huestes se toman de la parte inferior del mazo; el botín del reverso es secreto hasta derrotarlas.",
+      "engine": {
+        "modules": [
+          "phases/setup.ts",
+          "phases/engine.ts",
+          "projection/index.ts"
+        ],
+        "events": [
+          "ENEMY_REVEALED",
+          "ENEMY_DEFEATED"
+        ]
+      },
+      "tests": [
+        "projection-replay-modifiers.test.ts"
+      ],
+      "status": "VERIFIED",
+      "notes": "ENEMY_SWAPPED ya no filtra newEnemyReward (P0 privacidad)."
+    },
+    {
+      "id": "RULE-LEADER-BID-SECRET",
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Elección del Líder"
+      },
+      "rule": "La puja de líder es simultánea y secreta hasta la resolución.",
+      "engine": {
+        "modules": [
+          "phases/setup.ts",
+          "commands/execute.ts",
+          "projection/index.ts"
+        ],
+        "commands": [
+          "CHOOSE_LEADER_CARDS"
+        ],
+        "events": [
+          "CARD_MOVED",
+          "LEADER_DETERMINED",
+          "LEADER_TIE_BREAK"
+        ]
+      },
+      "tests": [
+        "projection-replay-modifiers.test.ts (CARD_MOVED-HAND redactado)",
+        "integrity-security.test.ts"
+      ],
+      "status": "VERIFIED",
+      "notes": "CARD_MOVED que toca HAND lleva playerId y se redacta para el resto."
+    },
+    {
+      "id": "RULE-PROJECTION-NO-LEAKS",
+      "source": {
+        "document": "diseño-online",
+        "section": "Información oculta"
+      },
+      "rule": "La proyección no revela manos ajenas, orden de mazos, recompensas no develadas ni elecciones secretas.",
+      "engine": {
+        "modules": [
+          "projection/index.ts"
+        ],
+        "evidence": "sanitizeEventForViewer: PRIVATE_EVENT_TYPES + ALWAYS_PRIVATE + redacción de ids"
+      },
+      "tests": [
+        "projection-replay-modifiers.test.ts (7 casos)"
+      ],
+      "status": "VERIFIED"
+    },
+    {
+      "id": "RULE-HERO-CARDS-4PHYSICAL-8FACES",
+      "source": {
+        "document": "official-catalog",
+        "section": "Héroes"
+      },
+      "rule": "4 cartas físicas de Héroe con 8 caras jugables; el catálogo modela 8 héroes discretos.",
+      "engine": {
+        "modules": [
+          "phases/setup.ts"
+        ],
+        "evidence": "heroId directo; heroFace en schema"
+      },
+      "tests": [
+        "modes.test.ts"
+      ],
+      "status": "IMPLEMENTED_WITH_ASSUMPTION",
+      "notes": "La asignación de clases a caras está marcada [REVISAR] en la spec; faltan héroes de Mago y Pícaro en el catálogo."
+    },
+    {
+      "id": "RULE-MARKET-COUNT-14",
+      "source": {
+        "document": "official-catalog",
+        "section": "Mercado"
+      },
+      "rule": "El juego oficial tiene 14 cartas de Mercado físicas (9 definiciones), no 15.",
+      "engine": {
+        "modules": [
+          "packages/catalog"
+        ]
+      },
+      "tests": [
+        "catalog tests"
+      ],
+      "status": "VERIFIED"
+    },
+    {
+      "id": "RULE-TURN-START-EFFECTS",
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Inicio de turno"
+      },
+      "rule": "Los efectos de inicio de turno (escenarios) se aceptan antes de actuar.",
+      "engine": {
+        "modules": [
+          "phases/engine.ts"
+        ],
+        "commands": [
+          "ACCEPT_TURN_START_EFFECT"
+        ],
+        "events": [
+          "TURN_STARTED"
+        ]
+      },
+      "tests": [
+        "abilities-scenarios.test.ts"
+      ],
+      "status": "VERIFIED"
+    },
+    {
+      "id": "RULE-SUPPORT-DECK-SOLO",
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Solitario — Apoyos"
+      },
+      "rule": "Los mazos de Apoyo solitario se abren y compran según reglas propias; la carta devuelta vuelve al mazo de Apoyo.",
+      "engine": {
+        "modules": [
+          "phases/solo.ts",
+          "effects/resolver.ts"
+        ],
+        "commands": [
+          "OPEN_SUPPORT_DECK",
+          "BUY_SUPPORT_CARD"
+        ]
+      },
+      "tests": [
+        "modes.test.ts"
+      ],
+      "status": "IMPLEMENTED_WITH_ASSUMPTION",
+      "notes": "Pendiente verificar retorno exacto al mazo de Apoyo en solo.ts (ver AGENTS TODOs)."
+    },
+    {
+      "id": "RULE-CARD-CATALOG-92",
+      "source": {
+        "document": "official-catalog",
+        "section": "Totales"
+      },
+      "rule": "92 cartas verificadas: 4 héroes físicas (8 caras), 60 habilidades, 27 huestes, 3 señores, 9 definiciones de mercado (14 copias físicas), 12 escenarios.",
+      "engine": {
+        "modules": [
+          "packages/catalog"
+        ]
+      },
+      "tests": [
+        "catalog tests"
+      ],
+      "status": "VERIFIED"
+    }
+  ],
+  "cards": [
+    {
+      "id": "CARD-explorer.companion-wolf",
+      "cardId": "explorer.companion-wolf",
+      "name": "Compañero Lobo",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Explorador",
+        "catalogFile": "data/official/abilities/explorer.json"
+      },
+      "rule": "PREVENT_DAMAGE",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "PREVENT_DAMAGE"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-explorer.precise-shot",
+      "cardId": "explorer.precise-shot",
+      "name": "Disparo Certero",
+      "type": "ABILITY",
+      "copies": 2,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Explorador",
+        "catalogFile": "data/official/abilities/explorer.json"
+      },
+      "rule": "END_ATTACK, LOSE_CARDS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "END_ATTACK",
+          "LOSE_CARDS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-explorer.rapid-shot",
+      "cardId": "explorer.rapid-shot",
+      "name": "Disparo Rápido",
+      "type": "ABILITY",
+      "copies": 6,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Explorador",
+        "catalogFile": "data/official/abilities/explorer.json"
+      },
+      "rule": "DRAW_AND_CHECK",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "DRAW_AND_CHECK"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-explorer.bullseye",
+      "cardId": "explorer.bullseye",
+      "name": "En la Diana",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Explorador",
+        "catalogFile": "data/official/abilities/explorer.json"
+      },
+      "rule": "GAIN_GLORY, LOSE_CARDS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "GAIN_GLORY",
+          "LOSE_CARDS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-explorer.arrow-volley",
+      "cardId": "explorer.arrow-volley",
+      "name": "Lluvia de Flechas",
+      "type": "ABILITY",
+      "copies": 2,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Explorador",
+        "catalogFile": "data/official/abilities/explorer.json"
+      },
+      "rule": "DEAL_DAMAGE_SPLIT, DEAL_DAMAGE_TO_HERO",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "DEAL_DAMAGE_SPLIT",
+          "DEAL_DAMAGE_TO_HERO"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-explorer.collect-arrows",
+      "cardId": "explorer.collect-arrows",
+      "name": "Recoger Flechas",
+      "type": "ABILITY",
+      "copies": 2,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Explorador",
+        "catalogFile": "data/official/abilities/explorer.json"
+      },
+      "rule": "GAIN_COINS, RECOVER_CARD_BY_NAME, SHUFFLE_DECK",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "GAIN_COINS",
+          "RECOVER_CARD_BY_NAME",
+          "SHUFFLE_DECK"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-explorer.survival",
+      "cardId": "explorer.survival",
+      "name": "Supervivencia",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Explorador",
+        "catalogFile": "data/official/abilities/explorer.json"
+      },
+      "rule": "SWAP_ENEMY",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "SWAP_ENEMY"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-warrior.brutal-attack",
+      "cardId": "warrior.brutal-attack",
+      "name": "Ataque Brutal",
+      "type": "ABILITY",
+      "copies": 2,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Guerrero",
+        "catalogFile": "data/official/abilities/warrior.json"
+      },
+      "rule": "LOSE_CARDS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "LOSE_CARDS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-warrior.shield-charge",
+      "cardId": "warrior.shield-charge",
+      "name": "Carga con Escudo",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Guerrero",
+        "catalogFile": "data/official/abilities/warrior.json"
+      },
+      "rule": "PREVENT_DAMAGE",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "PREVENT_DAMAGE"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-warrior.double-slash",
+      "cardId": "warrior.double-slash",
+      "name": "Doble Espadazo",
+      "type": "ABILITY",
+      "copies": 2,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Guerrero",
+        "catalogFile": "data/official/abilities/warrior.json"
+      },
+      "rule": "LOSE_CARDS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "LOSE_CARDS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-warrior.shield",
+      "cardId": "warrior.shield",
+      "name": "Escudo",
+      "type": "ABILITY",
+      "copies": 2,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Guerrero",
+        "catalogFile": "data/official/abilities/warrior.json"
+      },
+      "rule": "END_ATTACK, PREVENT_ENEMY_DAMAGE",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "END_ATTACK",
+          "PREVENT_ENEMY_DAMAGE"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-warrior.sword-strike",
+      "cardId": "warrior.sword-strike",
+      "name": "Espadazo",
+      "type": "ABILITY",
+      "copies": 4,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Guerrero",
+        "catalogFile": "data/official/abilities/warrior.json"
+      },
+      "rule": "CONDITIONAL",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "CONDITIONAL"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-warrior.step-back",
+      "cardId": "warrior.step-back",
+      "name": "Paso Atrás",
+      "type": "ABILITY",
+      "copies": 2,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Guerrero",
+        "catalogFile": "data/official/abilities/warrior.json"
+      },
+      "rule": "DRAW_CARDS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "DRAW_CARDS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-warrior.all-or-nothing",
+      "cardId": "warrior.all-or-nothing",
+      "name": "Todo o Nada",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Guerrero",
+        "catalogFile": "data/official/abilities/warrior.json"
+      },
+      "rule": "DRAW_AND_ADD_ATTACK",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "DRAW_AND_ADD_ATTACK"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-warrior.voice-of-encouragement",
+      "cardId": "warrior.voice-of-encouragement",
+      "name": "Voz de Aliento",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Guerrero",
+        "catalogFile": "data/official/abilities/warrior.json"
+      },
+      "rule": "ALL_HEROES_RECOVER, DRAW_CARDS, GAIN_GLORY",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "ALL_HEROES_RECOVER",
+          "DRAW_CARDS",
+          "GAIN_GLORY"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-mage.protective-aura",
+      "cardId": "mage.protective-aura",
+      "name": "Aura Protectora",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Mago",
+        "catalogFile": "data/official/abilities/mage.json"
+      },
+      "rule": "CANCEL_ALL_DAMAGE, LOSE_CARDS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "CANCEL_ALL_DAMAGE",
+          "LOSE_CARDS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-mage.fireball",
+      "cardId": "mage.fireball",
+      "name": "Bola de Fuego",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Mago",
+        "catalogFile": "data/official/abilities/mage.json"
+      },
+      "rule": "DEAL_DAMAGE_ALL_ENEMIES, DEAL_DAMAGE_TO_OTHER_HEROES",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "DEAL_DAMAGE_ALL_ENEMIES",
+          "DEAL_DAMAGE_TO_OTHER_HEROES"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-mage.ice-shot",
+      "cardId": "mage.ice-shot",
+      "name": "Disparo Gélido",
+      "type": "ABILITY",
+      "copies": 2,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Mago",
+        "catalogFile": "data/official/abilities/mage.json"
+      },
+      "rule": "DISABLE_ENEMY_DAMAGE, DRAW_CARDS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "DISABLE_ENEMY_DAMAGE",
+          "DRAW_CARDS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-mage.corrosive-arrow",
+      "cardId": "mage.corrosive-arrow",
+      "name": "Flecha Corrosiva",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Mago",
+        "catalogFile": "data/official/abilities/mage.json"
+      },
+      "rule": "APPLY_VULNERABILITY, LOSE_CARDS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "APPLY_VULNERABILITY",
+          "LOSE_CARDS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-mage.staff-strike",
+      "cardId": "mage.staff-strike",
+      "name": "Golpe de Bastón",
+      "type": "ABILITY",
+      "copies": 4,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Mago",
+        "catalogFile": "data/official/abilities/mage.json"
+      },
+      "rule": "CONDITIONAL",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "CONDITIONAL"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-mage.healing-orb",
+      "cardId": "mage.healing-orb",
+      "name": "Orbe Curativo",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Mago",
+        "catalogFile": "data/official/abilities/mage.json"
+      },
+      "rule": "ALL_HEROES_RECOVER, HEAL_WOUNDS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "ALL_HEROES_RECOVER",
+          "HEAL_WOUNDS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-mage.fire-bolt",
+      "cardId": "mage.fire-bolt",
+      "name": "Proyectil Ígneo",
+      "type": "ABILITY",
+      "copies": 3,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Mago",
+        "catalogFile": "data/official/abilities/mage.json"
+      },
+      "rule": "GAIN_GLORY",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "GAIN_GLORY"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-mage.reconstitution",
+      "cardId": "mage.reconstitution",
+      "name": "Reconstitución",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Mago",
+        "catalogFile": "data/official/abilities/mage.json"
+      },
+      "rule": "DRAW_CARDS, RECOVER_CARDS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "DRAW_CARDS",
+          "RECOVER_CARDS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-mage.light-torrent",
+      "cardId": "mage.light-torrent",
+      "name": "Torrente de Luz",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Mago",
+        "catalogFile": "data/official/abilities/mage.json"
+      },
+      "rule": "GAIN_GLORY, OTHER_HEROES_RECOVER",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "GAIN_GLORY",
+          "OTHER_HEROES_RECOVER"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-rogue.to-the-heart",
+      "cardId": "rogue.to-the-heart",
+      "name": "Al Corazón",
+      "type": "ABILITY",
+      "copies": 2,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Pícaro",
+        "catalogFile": "data/official/abilities/rogue.json"
+      },
+      "rule": "LOSE_CARDS, ON_DEFEAT",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "LOSE_CARDS",
+          "ON_DEFEAT"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-rogue.sneak-attack",
+      "cardId": "rogue.sneak-attack",
+      "name": "Ataque Furtivo",
+      "type": "ABILITY",
+      "copies": 3,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Pícaro",
+        "catalogFile": "data/official/abilities/rogue.json"
+      },
+      "rule": "ON_DEFEAT",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "ON_DEFEAT"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-rogue.precise-crossbow",
+      "cardId": "rogue.precise-crossbow",
+      "name": "Ballesta Precisa",
+      "type": "ABILITY",
+      "copies": 3,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Pícaro",
+        "catalogFile": "data/official/abilities/rogue.json"
+      },
+      "rule": "CONDITIONAL",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "CONDITIONAL"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-rogue.in-the-shadows",
+      "cardId": "rogue.in-the-shadows",
+      "name": "En las Sombras",
+      "type": "ABILITY",
+      "copies": 2,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Pícaro",
+        "catalogFile": "data/official/abilities/rogue.json"
+      },
+      "rule": "PREVENT_DAMAGE",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "PREVENT_DAMAGE"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-rogue.deceive",
+      "cardId": "rogue.deceive",
+      "name": "Engañar",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Pícaro",
+        "catalogFile": "data/official/abilities/rogue.json"
+      },
+      "rule": "COST, DISABLE_ENEMY_DAMAGE",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "COST",
+          "DISABLE_ENEMY_DAMAGE"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-rogue.pickpocket",
+      "cardId": "rogue.pickpocket",
+      "name": "Robar Bolsillos",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Pícaro",
+        "catalogFile": "data/official/abilities/rogue.json"
+      },
+      "rule": "STEAL_COINS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "STEAL_COINS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-rogue.plunder-a",
+      "cardId": "rogue.plunder-a",
+      "name": "Saqueo",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Pícaro",
+        "catalogFile": "data/official/abilities/rogue.json"
+      },
+      "rule": "GAIN_COINS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "GAIN_COINS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-rogue.plunder-b",
+      "cardId": "rogue.plunder-b",
+      "name": "Saqueo",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Pícaro",
+        "catalogFile": "data/official/abilities/rogue.json"
+      },
+      "rule": "GAIN_COINS, GAIN_GLORY",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "GAIN_COINS",
+          "GAIN_GLORY"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-rogue.trap",
+      "cardId": "rogue.trap",
+      "name": "Trampa",
+      "type": "ABILITY",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mazo Pícaro",
+        "catalogFile": "data/official/abilities/rogue.json"
+      },
+      "rule": "PLACE_PERSISTENT",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "PLACE_PERSISTENT"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.001",
+      "cardId": "horde.001",
+      "name": "Hueste 1",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.002",
+      "cardId": "horde.002",
+      "name": "Hueste 2",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.003",
+      "cardId": "horde.003",
+      "name": "Hueste 3",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.004",
+      "cardId": "horde.004",
+      "name": "Hueste 4",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.005",
+      "cardId": "horde.005",
+      "name": "Hueste 5",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.006",
+      "cardId": "horde.006",
+      "name": "Hueste 6",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.007",
+      "cardId": "horde.007",
+      "name": "Hueste 7",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.008",
+      "cardId": "horde.008",
+      "name": "Hueste 8",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.009",
+      "cardId": "horde.009",
+      "name": "Hueste 9",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.010",
+      "cardId": "horde.010",
+      "name": "Hueste 10",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.011",
+      "cardId": "horde.011",
+      "name": "Hueste 11",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.012",
+      "cardId": "horde.012",
+      "name": "Hueste 12",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.013",
+      "cardId": "horde.013",
+      "name": "Hueste 13",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.014",
+      "cardId": "horde.014",
+      "name": "Hueste 14",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.015",
+      "cardId": "horde.015",
+      "name": "Hueste 15",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.016",
+      "cardId": "horde.016",
+      "name": "Hueste 16",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.017",
+      "cardId": "horde.017",
+      "name": "Hueste 17",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.018",
+      "cardId": "horde.018",
+      "name": "Hueste 18",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.019",
+      "cardId": "horde.019",
+      "name": "Hueste 19",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.020",
+      "cardId": "horde.020",
+      "name": "Hueste 20",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.021",
+      "cardId": "horde.021",
+      "name": "Hueste 21",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.022",
+      "cardId": "horde.022",
+      "name": "Hueste 22",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.023",
+      "cardId": "horde.023",
+      "name": "Hueste 23",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.024",
+      "cardId": "horde.024",
+      "name": "Hueste 24",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.025",
+      "cardId": "horde.025",
+      "name": "Hueste 25",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.026",
+      "cardId": "horde.026",
+      "name": "Hueste 26",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-horde.027",
+      "cardId": "horde.027",
+      "name": "Hueste 27",
+      "type": "HORDE",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Horda",
+        "catalogFile": "data/official/horde.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-warlord.gurdrug",
+      "cardId": "warlord.gurdrug",
+      "name": "Gurdrug",
+      "type": "WARLORD",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Señores de la Guerra",
+        "catalogFile": "data/official/warlords.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts",
+        "warlords.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-warlord.roghkiller",
+      "cardId": "warlord.roghkiller",
+      "name": "Roghkiller",
+      "type": "WARLORD",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Señores de la Guerra",
+        "catalogFile": "data/official/warlords.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts",
+        "projection-replay-modifiers.test.ts",
+        "warlords.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-warlord.shriekknifer",
+      "cardId": "warlord.shriekknifer",
+      "name": "Shriekknifer",
+      "type": "WARLORD",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Señores de la Guerra",
+        "catalogFile": "data/official/warlords.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts",
+        "warlords.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-market.elven-dagger",
+      "cardId": "market.elven-dagger",
+      "name": "Daga Élfica",
+      "type": "MARKET",
+      "copies": 2,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mercado",
+        "catalogFile": "data/official/market.json"
+      },
+      "rule": "CONDITIONAL",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "CONDITIONAL"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-market.healing-potion",
+      "cardId": "market.healing-potion",
+      "name": "Poción Curativa",
+      "type": "MARKET",
+      "copies": 3,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mercado",
+        "catalogFile": "data/official/market.json"
+      },
+      "rule": "HEAL_WOUNDS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "HEAL_WOUNDS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-market.whetstone",
+      "cardId": "market.whetstone",
+      "name": "Piedra de Amolar",
+      "type": "MARKET",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mercado",
+        "catalogFile": "data/official/market.json"
+      },
+      "rule": "MODIFY_DAMAGE",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "MODIFY_DAMAGE"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-market.conjuration-vial",
+      "cardId": "market.conjuration-vial",
+      "name": "Vial de Conjuración",
+      "type": "MARKET",
+      "copies": 2,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mercado",
+        "catalogFile": "data/official/market.json"
+      },
+      "rule": "SEARCH_WEAR_PILE_PUT_IN_HAND",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "SEARCH_WEAR_PILE_PUT_IN_HAND"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-market.concentration-elixir",
+      "cardId": "market.concentration-elixir",
+      "name": "Elixir de Concentración",
+      "type": "MARKET",
+      "copies": 2,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mercado",
+        "catalogFile": "data/official/market.json"
+      },
+      "rule": "DRAW_CARDS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "DRAW_CARDS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-market.elven-cloak",
+      "cardId": "market.elven-cloak",
+      "name": "Capa Élfica",
+      "type": "MARKET",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mercado",
+        "catalogFile": "data/official/market.json"
+      },
+      "rule": "DISABLE_ENEMY_DAMAGE",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "DISABLE_ENEMY_DAMAGE"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-market.plate-armor",
+      "cardId": "market.plate-armor",
+      "name": "Armadura de Placas",
+      "type": "MARKET",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mercado",
+        "catalogFile": "data/official/market.json"
+      },
+      "rule": "RECOVER_CARDS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "RECOVER_CARDS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-market.orc-halberd",
+      "cardId": "market.orc-halberd",
+      "name": "Alabarda Orca",
+      "type": "MARKET",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mercado",
+        "catalogFile": "data/official/market.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-market.composite-bow",
+      "cardId": "market.composite-bow",
+      "name": "Arco Compuesto",
+      "type": "MARKET",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Mercado",
+        "catalogFile": "data/official/market.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-hero.aranel",
+      "cardId": "hero.aranel",
+      "name": "Aranel",
+      "type": "HERO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Héroes",
+        "catalogFile": "data/official/heroes.json"
+      },
+      "rule": "SEARCH_DECK, SHUFFLE_DECK",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "SEARCH_DECK",
+          "SHUFFLE_DECK"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts",
+        "hero-abilities.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-hero.beleth-il",
+      "cardId": "hero.beleth-il",
+      "name": "Beleth-Il",
+      "type": "HERO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Héroes",
+        "catalogFile": "data/official/heroes.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-hero.neddia",
+      "cardId": "hero.neddia",
+      "name": "Neddia",
+      "type": "HERO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Héroes",
+        "catalogFile": "data/official/heroes.json"
+      },
+      "rule": "SEARCH_DECK, SHUFFLE_DECK",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "SEARCH_DECK",
+          "SHUFFLE_DECK"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-hero.valerys",
+      "cardId": "hero.valerys",
+      "name": "Valèrys",
+      "type": "HERO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Héroes",
+        "catalogFile": "data/official/heroes.json"
+      },
+      "rule": "GAIN_GLORY, INTERCEPT_DAMAGE",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "GAIN_GLORY",
+          "INTERCEPT_DAMAGE"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts",
+        "hero-abilities.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-hero.taheral",
+      "cardId": "hero.taheral",
+      "name": "Taheral",
+      "type": "HERO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Héroes",
+        "catalogFile": "data/official/heroes.json"
+      },
+      "rule": "GAIN_COINS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "GAIN_COINS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-hero.idril",
+      "cardId": "hero.idril",
+      "name": "Idril",
+      "type": "HERO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Héroes",
+        "catalogFile": "data/official/heroes.json"
+      },
+      "rule": "LOOK_AT_CARDS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "LOOK_AT_CARDS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-hero.feldon",
+      "cardId": "hero.feldon",
+      "name": "Feldon",
+      "type": "HERO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Héroes",
+        "catalogFile": "data/official/heroes.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts",
+        "hero-abilities.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-hero.lisavette",
+      "cardId": "hero.lisavette",
+      "name": "Lisavette",
+      "type": "HERO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Héroes",
+        "catalogFile": "data/official/heroes.json"
+      },
+      "rule": "carta con valores impresos",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": []
+      },
+      "tests": [
+        "all-cards-usable.test.ts",
+        "hero-abilities.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-scenario.battlefield",
+      "cardId": "scenario.battlefield",
+      "name": "Campo de Batalla",
+      "type": "SCENARIO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Escenarios",
+        "catalogFile": "data/official/scenarios.json"
+      },
+      "rule": "ON_ENEMY_DEFEATED",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "ON_ENEMY_DEFEATED"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-scenario.tears-of-aradiel",
+      "cardId": "scenario.tears-of-aradiel",
+      "name": "Lágrimas de Aradiel",
+      "type": "SCENARIO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Escenarios",
+        "catalogFile": "data/official/scenarios.json"
+      },
+      "rule": "CUSTOM_SCENARIO",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "CUSTOM_SCENARIO"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-scenario.kalern-mud",
+      "cardId": "scenario.kalern-mud",
+      "name": "Lodazal de Kalern",
+      "type": "SCENARIO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Escenarios",
+        "catalogFile": "data/official/scenarios.json"
+      },
+      "rule": "CUSTOM_SCENARIO",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "CUSTOM_SCENARIO"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-scenario.lotharion-market",
+      "cardId": "scenario.lotharion-market",
+      "name": "Mercado de Lötharion",
+      "type": "SCENARIO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Escenarios",
+        "catalogFile": "data/official/scenarios.json"
+      },
+      "rule": "MODIFY_MARKET_COST",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "MODIFY_MARKET_COST"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-scenario.ur-mountains",
+      "cardId": "scenario.ur-mountains",
+      "name": "Montañas de Ur",
+      "type": "SCENARIO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Escenarios",
+        "catalogFile": "data/official/scenarios.json"
+      },
+      "rule": "CUSTOM_SCENARIO",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "CUSTOM_SCENARIO"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-scenario.umbrous-swamp",
+      "cardId": "scenario.umbrous-swamp",
+      "name": "Pantano Umbrío",
+      "type": "SCENARIO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Escenarios",
+        "catalogFile": "data/official/scenarios.json"
+      },
+      "rule": "ON_ENEMY_DEFEATED",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "ON_ENEMY_DEFEATED"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-scenario.skaarg-plains",
+      "cardId": "scenario.skaarg-plains",
+      "name": "Planicie de Skaàrg",
+      "type": "SCENARIO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Escenarios",
+        "catalogFile": "data/official/scenarios.json"
+      },
+      "rule": "IGNORE_COIN_REWARDS",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "IGNORE_COIN_REWARDS"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-scenario.ulthar-portal",
+      "cardId": "scenario.ulthar-portal",
+      "name": "Portal de Ulthar",
+      "type": "SCENARIO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Escenarios",
+        "catalogFile": "data/official/scenarios.json"
+      },
+      "rule": "CUSTOM_SCENARIO",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "CUSTOM_SCENARIO"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-scenario.eque-port",
+      "cardId": "scenario.eque-port",
+      "name": "Puerto de Eque",
+      "type": "SCENARIO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Escenarios",
+        "catalogFile": "data/official/scenarios.json"
+      },
+      "rule": "CUSTOM_SCENARIO",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "CUSTOM_SCENARIO"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts",
+        "scenarios.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-scenario.brunmar-ruins",
+      "cardId": "scenario.brunmar-ruins",
+      "name": "Ruinas de Brunmar",
+      "type": "SCENARIO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Escenarios",
+        "catalogFile": "data/official/scenarios.json"
+      },
+      "rule": "IGNORE_GLORY_REWARDS, MODIFY_FORTITUDE",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "IGNORE_GLORY_REWARDS",
+          "MODIFY_FORTITUDE"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts",
+        "scenarios.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-scenario.jade-deposits",
+      "cardId": "scenario.jade-deposits",
+      "name": "Yacimientos de Jade",
+      "type": "SCENARIO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Escenarios",
+        "catalogFile": "data/official/scenarios.json"
+      },
+      "rule": "CUSTOM_SCENARIO",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "CUSTOM_SCENARIO"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    },
+    {
+      "id": "CARD-scenario.cemenmar-wastes",
+      "cardId": "scenario.cemenmar-wastes",
+      "name": "Yermo de Cemenmar",
+      "type": "SCENARIO",
+      "copies": 1,
+      "source": {
+        "document": "official-rulebook-es",
+        "section": "Escenarios",
+        "catalogFile": "data/official/scenarios.json"
+      },
+      "rule": "CUSTOM_SCENARIO",
+      "engine": {
+        "modules": [
+          "resolver.ts",
+          "effects/registry.ts"
+        ],
+        "effectTypes": [
+          "CUSTOM_SCENARIO"
+        ]
+      },
+      "tests": [
+        "all-cards-usable.test.ts"
+      ],
+      "status": "VERIFIED",
+      "note": "catálogo validado + efectos soportados + usable en motor"
+    }
+  ],
+  "summary": {
+    "cards": 92,
+    "verified": 92,
+    "pendingSource": 0,
+    "review": 0
+  }
+}

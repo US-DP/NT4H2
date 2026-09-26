@@ -1,0 +1,536 @@
+{
+  "description": "Verificación de cartas contra OCR de nt4h-cartas-personajes.pdf",
+  "corpusSize": 225,
+  "totals": {
+    "checked": 41,
+    "nameFound": 41,
+    "verified": 35,
+    "partialNameOnly": 6,
+    "notFoundInOcr": 0
+  },
+  "entries": [
+    {
+      "cardId": "explorer.precise-shot",
+      "name": "Disparo Certero",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "DISPARO CERTERO | 3 | XXX | Pierdes 1 carta. | Finalizas el ataque.",
+        "DISPARO CERTERO | 3 | XXX | Pierdes 1 carta. | Finalizas el ataque."
+      ],
+      "nameFound": true,
+      "attackFound": true,
+      "verified": true
+    },
+    {
+      "cardId": "explorer.rapid-shot",
+      "name": "Disparo Rápido",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "DISPARO RAPIDO | Roba una carta, si es “Disparo rapido\" | usala. Si no, ponla en el fondo de tu | mazo de Habilidad.",
+        "DISPARO RAPIDO | 1 | Roba una carta, si es “Disparo rapido\" | usala. Si no, ponla en el fondo de tu | mazo de Habilidad.",
+        "DISPARO RAPIDO | 1 | Roba una carta, si es “Disparo rapido\" | usala. Si no, ponla en el fondo de tu | mazo de Habilidad."
+      ],
+      "nameFound": true,
+      "attackFound": true,
+      "verified": true
+    },
+    {
+      "cardId": "explorer.bullseye",
+      "name": "En la Diana",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "EN LA DIANA | 4 | Ganas 1 ficha de Gloria. | Pierdes 1 carta."
+      ],
+      "nameFound": true,
+      "attackFound": true,
+      "verified": true
+    },
+    {
+      "cardId": "explorer.arrow-volley",
+      "name": "Lluvia de Flechas",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "LLUVIA DE FLECHAS | Dafas a 2 | 2 enemigos y al héroe | con menos | Heridas | (en caso de empate, tu eliges)",
+        "LLUVIA DE FLECHAS | Dafas a 2 |  enemigos y al héroe | con menos Heridas | (en caso de empate, tu eliges)"
+      ],
+      "nameFound": true,
+      "attackFound": true,
+      "verified": true
+    },
+    {
+      "cardId": "explorer.collect-arrows",
+      "name": "Recoger Flechas",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "RECOGER FLECHAS | Recupera una carta de “Disparo rapido\" | de tu pila de Desgaste. Baraja el Mazo | de Habilidades. | Ganas 1 Moneda.",
+        "RECOGER FLECHAS | Recupera una carta de \"Disparo rapido\" | de tu pila de Desgaste. Baraja el Mazo | de Habilidades. | Ganas 1 Moneda."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "explorer.survival",
+      "name": "Supervivencia",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "SUPERVIVENCIA | Cambia uno de los enemigos en el | campo de batalla por la carta inferior | del mazo de la Horda."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "warrior.brutal-attack",
+      "name": "Ataque Brutal",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "ATAQUE BRUTAL | 3 | Pierdes 1 carta.",
+        "ATAQUE BRUTAL | 3 | Pierdes 1 carta."
+      ],
+      "nameFound": true,
+      "attackFound": true,
+      "verified": true
+    },
+    {
+      "cardId": "warrior.shield-charge",
+      "name": "Carga con Escudo",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "CARGA CON ESCUDO | Previenes 2 de Dafio."
+      ],
+      "nameFound": true,
+      "attackFound": true,
+      "verified": true
+    },
+    {
+      "cardId": "warrior.double-slash",
+      "name": "Doble Espadazo",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "DOBLE ESPADAZO | Pierdes 1 carta.",
+        "DOBLE ESPADAZO | Pierdes 1 carta."
+      ],
+      "nameFound": true,
+      "attackFound": false,
+      "verified": false
+    },
+    {
+      "cardId": "warrior.shield",
+      "name": "Escudo",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "CARGA CON ESCUDO | Previenes 2 de Dafio.",
+        "ESCUDO | Previenes el dano de un unico enemigo. | Finalizas el Ataque.",
+        "ESCUDO | Previenes el dano de un unico enemigo. | Finalizas el Ataque."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "warrior.sword-strike",
+      "name": "Espadazo",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "DOBLE ESPADAZO | Pierdes 1 carta.",
+        "DOBLE ESPADAZO | Pierdes 1 carta.",
+        "ESPADAZO | 1 | Roba 1 carta si es el primer | \"Espadazo\" | que juegas este turno."
+      ],
+      "nameFound": true,
+      "attackFound": true,
+      "verified": true
+    },
+    {
+      "cardId": "warrior.step-back",
+      "name": "Paso Atrás",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "PASO ATRAS | Roba 2 | cartas.",
+        "PASO ATRAS | Roba 2 cartas."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "warrior.all-or-nothing",
+      "name": "Todo o Nada",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "TODO O NADA | 1 | Roba 1 carta y agrega su dafio al | de esta carta. Recupera la carta | robada."
+      ],
+      "nameFound": true,
+      "attackFound": true,
+      "verified": true
+    },
+    {
+      "cardId": "warrior.voice-of-encouragement",
+      "name": "Voz de Aliento",
+      "type": "ABILITY",
+      "verificationStatus": "INFERRED",
+      "ocrMatches": [
+        "VOZ DE ALIENTO | Todos recuperan | cartas. | Roba 1 carta y ganas | 1 ficha de Gloria."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "mage.protective-aura",
+      "name": "Aura Protectora",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "AURA PROTECTORA | Cancela todo el Dafo sufrido durante | el proximo Ataque de la Horda. | Pierdes 1 carta por cada enemigo."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "mage.fireball",
+      "name": "Bola de Fuego",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "BOLA DE FUEGO | 口 | Dafa a todos los enemigos. | El resto de héroes sufre 1 de Dano."
+      ],
+      "nameFound": true,
+      "attackFound": false,
+      "verified": false
+    },
+    {
+      "cardId": "mage.ice-shot",
+      "name": "Disparo Gélido",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "DISPARO GELIDO | 1 | El enemigo afectado no causa | Dafo | este turno. | Roba 1 carta.",
+        "DISPARO GELIDO | 口 | .1 | El enemigo afectado no causa | Danio | este turno. | Roba 1 carta."
+      ],
+      "nameFound": true,
+      "attackFound": true,
+      "verified": true
+    },
+    {
+      "cardId": "mage.corrosive-arrow",
+      "name": "Flecha Corrosiva",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "FLECHA CORROSIVA | Aumentas en 1 el dano de las si- | guientes cartas que causen Dafo a | este enemigo. | Pierdes 1 carta."
+      ],
+      "nameFound": true,
+      "attackFound": true,
+      "verified": true
+    },
+    {
+      "cardId": "mage.staff-strike",
+      "name": "Golpe de Bastón",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "GOLPE DE BASTON | 口 | 1 | Si ya utilizaste “Golpe de baston\" | contra el mismo enemigo, el dafo | de esta carta es 2.",
+        "GOLPE DE BASTON | ? | 1 | Si ya utilizaste “Golpe de baston' |  contra el mismo enemigo, el dafo | de esta carta es 2.",
+        "GOLPE DE BASTON | 7 | 1 | Si ya utilizaste “Golpe de baston\" | contra el mismo enemigo, el dafo | de esta carta es 2."
+      ],
+      "nameFound": true,
+      "attackFound": true,
+      "verified": true
+    },
+    {
+      "cardId": "mage.healing-orb",
+      "name": "Orbe Curativo",
+      "type": "ABILITY",
+      "verificationStatus": "INFERRED",
+      "ocrMatches": [
+        "ORBE CURATIVO | Todos los Héroes recuperan | cartas. | Eliminas 1 Herida de tu Héroe."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "mage.fire-bolt",
+      "name": "Proyectil Ígneo",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "PROYECTIL IGNEO | Ganas 1 ficha de Gloria.",
+        "PROYECTIL IGNEO | Ganas 1 ficha de Gloria.",
+        "PROYECTIL IGNEO | 口 | Ganas 1 ficha de Gloria."
+      ],
+      "nameFound": true,
+      "attackFound": false,
+      "verified": false
+    },
+    {
+      "cardId": "mage.reconstitution",
+      "name": "Reconstitución",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "RECONSTITUCION | 口 | Roba 1 carta. | Recuperas 2 | cartas."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "mage.light-torrent",
+      "name": "Torrente de Luz",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "TORRENTE DE LUZ | 7 | El resto de héroes recuperan | cartas. | Ganas 1 ficha de Gloria."
+      ],
+      "nameFound": true,
+      "attackFound": false,
+      "verified": false
+    },
+    {
+      "cardId": "rogue.to-the-heart",
+      "name": "Al Corazón",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "AL CORAZON | 4 | Si derrotas un enemigo con este | ataque, ganas 1 Moneda si no has | jugado otro “Al corazon\" este turno. | Pierdes 1 carta.",
+        "AL CORAZON | 4 | Si derrotas un enemigo con este | ataque, ganas 1 Moneda si no has | jugado otro “Al corazon\" este turno. | Pierdes 1 carta."
+      ],
+      "nameFound": true,
+      "attackFound": true,
+      "verified": true
+    },
+    {
+      "cardId": "rogue.sneak-attack",
+      "name": "Ataque Furtivo",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "ATAQUE FURTIVO | Si derrotas un enemigo con este | ataque, ganas 1 Moneda si no has | jugado otro \"Ataque furtivo\" este turno.",
+        "ATAQUE FURTIVO | Si derrotas un enemigo con este | ataque, ganas 1 Moneda si no has | jugado otro “Ataque furtivo\" este turno.",
+        "ATAQUE FURTIVO | Si derrotas un enemigo con este | ataque, ganas 1 Moneda si no has | jugado otro “Ataque furtivo\" este turno."
+      ],
+      "nameFound": true,
+      "attackFound": false,
+      "verified": false
+    },
+    {
+      "cardId": "rogue.precise-crossbow",
+      "name": "Ballesta Precisa",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "BALLESTA PRECISA | Si ya utilizaste una “Ballesta precisa\" | contra el mismo enemigo, el dafo de | esta carta es 3.",
+        "BALLESTA PRECISA | Si ya utilizaste una “Ballesta precisa' | contra el mismo enemigo, el dafo de | esta carta es 3.",
+        "BALLESTA PRECISA | Si ya utilizaste una “Ballesta precisa\" | contra el mismo enemigo, el dafo de | esta carta es 3."
+      ],
+      "nameFound": true,
+      "attackFound": false,
+      "verified": false
+    },
+    {
+      "cardId": "rogue.in-the-shadows",
+      "name": "En las Sombras",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "EN LAS SOMBRAS | 1 | Previenes 2 puntos de Dafo.",
+        "EN LAS SOMBRAS | 1 | Previenes 2 puntos de Dafo."
+      ],
+      "nameFound": true,
+      "attackFound": true,
+      "verified": true
+    },
+    {
+      "cardId": "rogue.deceive",
+      "name": "Engañar",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "ENGANAR | El enemigo elegido no causa Dafo este | turno. Debes gastar 2 Monedas para | usar esta carta."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "rogue.pickpocket",
+      "name": "Robar Bolsillos",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "ROBAR BOLSILLOS | Roba 1 Moneda a cada héroe."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "rogue.plunder-a",
+      "name": "Saqueo",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "SAQUEO | Ganas 2 Monedas por cada enemigo | vivo.",
+        "SAQUEO | Gana 1 Moneda de oro por cada ene- | migo vivo. | Gana 1 Punto de Gloria."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "rogue.plunder-b",
+      "name": "Saqueo",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "SAQUEO | Ganas 2 Monedas por cada enemigo | vivo.",
+        "SAQUEO | Gana 1 Moneda de oro por cada ene- | migo vivo. | Gana 1 Punto de Gloria."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "rogue.trap",
+      "name": "Trampa",
+      "type": "ABILITY",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "TRAMPA | Situa esta carta frente a ti. Al resol- | ver el ataque de la Horda, derrotas al | enemigo | o con mas Fortaleza. El botin | de ese enemigo se pierde."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "market.healing-potion",
+      "name": "Poción Curativa",
+      "type": "MARKET",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "POCION CURATIVA | 8 | Retira una ficha de Herida | de tu Héroe.",
+        "POCION CURATIVA | Retira una ficha de Herida | de tu Héroe.",
+        "POCION CURATIVA | Retira una ficha de Herida | de tu Héroe."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "hero.aranel",
+      "name": "Aranel",
+      "type": "HERO",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "ARANEL | 9 | En cualquier momento, busca una carta | en tu mazo de Habilidad y sustituyela | por una de tu mano. Acto seguido | baraja el mazo. 1 vez por partida.",
+        "ODIA | ARANEL | 2 | 9 | nento, busca en el | En cualquier momento, busca una carta | hasta | 2 | cartas y |  en tu mazo de Habilidad y sustituyela | artas que ya estu- | por una de tu mano. Acto seguido | Acto seguido baraja | baraja el mazo. 1 vez por partida. | rez1 |  por partida. | DON | TAHERAL"
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "hero.beleth-il",
+      "name": "Beleth-Il",
+      "type": "HERO",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "BELETH-IL | 3 | Cuando utilices la carta “Disparo | rapido\", la primera carta fallida | que robes podras recuperarla y | robar otra. Dos veces por partida. | m"
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "hero.neddia",
+      "name": "Neddia",
+      "type": "HERO",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "NEDDIA | En cualquier momento, busca en el | mazo de Mercado hasta 2 | cartasy | sustituyelas por cartas que ya estu- | vieran | disponibles. Acto seguido baraja | el mazo. Una vez por partida."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "hero.valerys",
+      "name": "Valèrys",
+      "type": "HERO",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "VALERYS | 3 | Al resolver el ataque de la Horda | sobre otro Heroe,tu recibes el dano | Y ganas 1 ficha de Gloria. | Dos veces por partida.",
+        "VALERYS | NED | 3 | En cualquier mon | Al resolver el ataque de la Horda | mazo de Mercado | sobre otro Héroe, tu recibes el dano | sustituyelas por ca | ganas 1 ficha de Gloria. | vieran | disponibles. | Dos veces por partida. | el mazo. | . Una | LISAVETTE | FEL"
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "hero.taheral",
+      "name": "Taheral",
+      "type": "HERO",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "TAHERAL | 9 | Al realizar la maniobra de Evasion, | coge dos Monedas por cada carta que | descartes en tu Pila de Desgaste. | Una vez por partida.",
+        "ODIA | ARANEL | 2 | 9 | nento, busca en el | En cualquier momento, busca una carta | hasta | 2 | cartas y |  en tu mazo de Habilidad y sustituyela | artas que ya estu- | por una de tu mano. Acto seguido | Acto seguido baraja | baraja el mazo. 1 vez por partida. | rez1 |  por partida. | DON | TAHERAL"
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "hero.idril",
+      "name": "Idril",
+      "type": "HERO",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "IDRIL | 3 | En cualquier momento, puedes | mirar las 3 | cartas inferiores del mazo | de la Horda y devolverlas en el orden | que prefieras. Dos veces por partida."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "hero.feldon",
+      "name": "Feldon",
+      "type": "HERO",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "FELDON | Al resolver el Ataque de la Horda, | tan solo pierde la mitad de cartas | (redondeando hacia abajo) de las indi | cadas por el Dano. Una vez por partida."
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    },
+    {
+      "cardId": "hero.lisavette",
+      "name": "Lisavette",
+      "type": "HERO",
+      "verificationStatus": "OCR",
+      "ocrMatches": [
+        "LISAVETTE | 3 | Mientras otro Heroe se enfrenta a la | Horda, utiliza una carta de “Escudo\" | Roba hasta 2 Monedas de ese Heroe. | Dos veces por partida.",
+        "VALERYS | NED | 3 | En cualquier mon | Al resolver el ataque de la Horda | mazo de Mercado | sobre otro Héroe, tu recibes el dano | sustituyelas por ca | ganas 1 ficha de Gloria. | vieran | disponibles. | Dos veces por partida. | el mazo. | . Una | LISAVETTE | FEL"
+      ],
+      "nameFound": true,
+      "attackFound": null,
+      "verified": true
+    }
+  ]
+}

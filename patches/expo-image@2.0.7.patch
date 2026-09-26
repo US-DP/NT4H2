@@ -1,0 +1,13 @@
+diff --git a/src/web/ImageWrapper.tsx b/src/web/ImageWrapper.tsx
+index 31f35d5092359718002e087068dd8daa5a7f45f7..d129bbbaf2bbaebbd1fa24b44f139e801817d8a4 100644
+--- a/src/web/ImageWrapper.tsx
++++ b/src/web/ImageWrapper.tsx
+@@ -72,7 +72,7 @@ const ImageWrapper = React.forwardRef(
+           }}
+           // @ts-ignore
+           // eslint-disable-next-line react/no-unknown-property
+-          fetchpriority={getFetchPriorityFromImagePriority(priority || 'normal')}
++          fetchPriority={getFetchPriorityFromImagePriority(priority || 'normal')}
+           {...getImageWrapperEventHandler(events, sourceWithHeaders)}
+           {...getImgPropsFromSource(source)}
+           {...props}

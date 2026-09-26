@@ -25,6 +25,8 @@ playwright-report/
 test-results/
 coverage/
 ui-lint.json
+engine-lint.json
+*-lint.json
 *.log
 
 # Entornos y secretos
