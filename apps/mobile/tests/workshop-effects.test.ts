@@ -17,7 +17,7 @@ import {
   ACTION_DEFS, buildNode, buildEffects,
   type EffectNode, type NodeKind,
 } from '../components/study/CreateCardTab';
-import { describeResolution, describeEffect } from '../components/CardZoom';
+import { describeResolution, describeEffect } from '../lib/effectDescriptions';
 
 // ---------- helpers ----------
 

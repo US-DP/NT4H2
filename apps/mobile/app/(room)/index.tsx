@@ -9,7 +9,7 @@
  * Cumple UI-066: chat contraíble.
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, TextInput, Switch, ActivityIndicator } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -23,12 +23,14 @@ import { useSettings } from '../../store/settingsStore';
 import { useTranslation } from 'react-i18next';
 import { ChatPanel, type ChatMessage } from '../../components/ChatPanel';
 import { API_BASE, WS_BASE, fetchWithTimeout } from '../../lib/config';
+import { authHeaders } from '../../lib/auth';
 import { loadRoomSession, saveRoomSession, clearRoomSession } from '../../lib/roomSession';
 import { NtDialog } from '../../components/ui/NtDialog';
 import { useColors, useFs } from '../../lib/useTheme';
 import { fontSize } from '../../lib/theme';
 import { checkCompatibility } from '../../lib/compat';
-import { useCustomContent } from '../../lib/customContent';
+import { useCustomContent, customDecks } from '../../lib/customContent';
+import { deckToConfigEntry } from '@nt4h/catalog';
 
 interface JoinForm {
   roomCode: string;
@@ -43,6 +45,8 @@ interface PlayerInfo {
   heroId: string;
   /** Mazo de habilidades elegido (deckId) y cara del héroe */
   deckId?: string;
+  /** Mazo del Taller (customDeckId): si existe, sustituye a deckId. */
+  customDeckId?: string;
   heroFace?: string;
   /** Preparado para iniciar (invitados). Ausente en backends antiguos */
   ready?: boolean;
@@ -102,6 +106,18 @@ export default function RoomScreen() {
   const [joinHeroId, setJoinHeroId] = useState('');
   const [joinDeckClass, setJoinDeckClass] = useState('EXPLORER');
   const [joinHeroFace, setJoinHeroFace] = useState<'FEMALE' | 'MALE'>('FEMALE');
+  // Mazo del Taller (opcional): sustituye al mazo de clase. Solo se ofrecen
+  // mazos cuyas cartas resuelven en el catálogo de la sala (oficial + sets
+  // del host) — si no, el runner rechazaría la baraja al iniciar.
+  const [joinCustomDeckId, setJoinCustomDeckId] = useState('');
+  const eligibleCustomDecks = useMemo(() => {
+    const knownIds = new Set<string>([...(catalog?.byId.keys() ?? [])]);
+    for (const s of (room?.config?.customSets ?? []) as { cards?: { id: string }[] }[]) {
+      for (const c of s.cards ?? []) knownIds.add(c.id);
+    }
+    return customDecks().filter((d) =>
+      d.cardEntries.every((e) => knownIds.has(e.cardDefinitionId)));
+  }, [catalog, room?.config?.customSets]);
   // D431: token emitido por el backend al unirse — necesario para
   // autenticar el WebSocket y las acciones (start, estado proyectado)
   const [playerToken, setPlayerToken] = useState(
@@ -460,7 +476,8 @@ export default function RoomScreen() {
     try {
       const res = await fetchWithTimeout(`${API_BASE}/rooms/${code}/join/`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // Con sesión activa el backend vincula el Player a la cuenta.
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify({
           playerId,
           name: values.playerName,
@@ -468,6 +485,14 @@ export default function RoomScreen() {
           heroId: joinHeroId,
           heroFace: joinHeroFace,
           deckId: `${joinDeckClass.toLowerCase()}.default`,
+          // Mazo del Taller: el snapshot viaja en el join y el backend lo
+          // registra en session.config.customDecks para el runner.
+          ...(joinCustomDeckId ? (() => {
+            const deck = eligibleCustomDecks.find((d) => d.id === joinCustomDeckId);
+            return deck
+              ? { customDeckId: deck.id, customDeck: deckToConfigEntry(deck) }
+              : {};
+          })() : {}),
         }),
       });
       const data = await res.json();
@@ -690,6 +715,9 @@ export default function RoomScreen() {
       if (errs.length === 0) ok++; else failed++;
     }
     setMissingSets([]);
+    // El catálogo en memoria se cargó antes del import: recargarlo para
+    // que los ids de las cartas del host dejen de verse crudos.
+    useGameStore.getState().initCatalog();
     toast.show(failed === 0
       ? t('room.setsInstalled', { count: ok })
       : t('room.setsInstallPartial', { ok, failed }));
@@ -832,6 +860,36 @@ export default function RoomScreen() {
             </Pressable>
           ))}
         </View>
+        {eligibleCustomDecks.length > 0 && (
+          <>
+            <Text style={[styles.sectionTitle, { color: colors.info, fontSize: fs(fontSize.body) }]}>
+              {t('lobby.pickCustomDeck')}
+            </Text>
+            <View style={styles.chipRow}>
+              <Pressable
+                style={[styles.chip, joinCustomDeckId === '' && styles.chipSelected]}
+                onPress={() => setJoinCustomDeckId('')}
+                accessibilityRole="button"
+                accessibilityState={{ selected: joinCustomDeckId === '' }}
+                accessibilityLabel={t('lobby.classDeck')}
+              >
+                <Text style={styles.chipText}>{t('lobby.classDeck')}</Text>
+              </Pressable>
+              {eligibleCustomDecks.map((d) => (
+                <Pressable
+                  key={d.id}
+                  style={[styles.chip, joinCustomDeckId === d.id && styles.chipSelected]}
+                  onPress={() => setJoinCustomDeckId(d.id)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: joinCustomDeckId === d.id }}
+                  accessibilityLabel={d.name}
+                >
+                  <Text style={styles.chipText}>{d.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </>
+        )}
         <View style={styles.chipRow}>
           {(['FEMALE', 'MALE'] as const).map((face) => (
             <Pressable

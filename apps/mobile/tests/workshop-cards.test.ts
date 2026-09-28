@@ -17,7 +17,7 @@ import {
   validateCardEffects, type CardDefinition, type CardEffect,
 } from '@nt4h/schema';
 import { buildEffects, balanceWarnings, type EffectNode, type NodeKind } from '../components/study/CreateCardTab';
-import { describeEffect } from '../components/CardZoom';
+import { describeEffect } from '../lib/effectDescriptions';
 
 // ---------- helpers ----------
 

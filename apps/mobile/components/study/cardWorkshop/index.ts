@@ -6,6 +6,7 @@
 export * from './model';
 export * from './registry';
 export * from './compiler';
+export * from './decompile';
 export * from './validation';
 export * from './text';
 export * from './simulate';

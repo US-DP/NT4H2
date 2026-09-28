@@ -1,0 +1,19 @@
+# yamllint — CI y archivos YAML del repo.
+# - `on:` es la clave estándar de GitHub Actions (truthy check-keys off).
+# - Longitud coherente con ruff/black (120).
+extends: default
+# Ficheros generados/vendored: no los lintamos (pnpm-lock supera cualquier
+# límite de línea; node_modules no es nuestro).
+ignore: |
+  node_modules/
+  **/node_modules/
+  pnpm-lock.yaml
+  .turbo/
+  dist/
+  build/
+rules:
+  document-start: disable
+  truthy:
+    check-keys: false
+  line-length:
+    max: 120

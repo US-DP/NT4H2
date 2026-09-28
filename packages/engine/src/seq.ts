@@ -12,17 +12,27 @@
  */
 let globalSeq = 0;
 
+/** Callbacks a ejecutar cuando el contador se reinicia o restaura (replay).
+ *  Lo usan módulos con estado derivado de los seqs (p.ej. dedup de oyentes). */
+const resetHooks: (() => void)[] = [];
+
+export function onSeqReset(fn: () => void): void {
+  resetHooks.push(fn);
+}
+
 export function nextSeq(): number {
   return ++globalSeq;
 }
 
 export function resetSeq(): void {
   globalSeq = 0;
+  for (const fn of resetHooks) fn();
 }
 
 /** Restaurar el contador a un valor concreto (replay desde snapshot mid-game). */
 export function setSeq(n: number): void {
   globalSeq = n;
+  for (const fn of resetHooks) fn();
 }
 
 /** Valor actual del contador (para snapshots). */

@@ -27,13 +27,14 @@ import {
   type CardDefinition, type CardType, type HeroClass,
 } from '@nt4h/schema';
 import { colors, fontSize } from '../../lib/theme';
-import { describeEffect } from '../CardZoom';
+import { describeEffect } from '../../lib/effectDescriptions';
 import {
   CARD_TYPES, CLASSES, CLASS_NAME_KEYS, CAPABILITIES, CAP_NAME_KEYS, DESTINATIONS,
   EMPTY_DRAFT, num, migrateDraft, patchNode, findNode, diffDrafts,
   type CardDraft, type EffectNode,
 } from './cardWorkshop/model';
 import { compileTree, buildEffects } from './cardWorkshop/compiler';
+import { decompileCard } from './cardWorkshop/decompile';
 import {
   balanceWarnings, semanticDiagnostics, complexityOf, quickFixFor,
 } from './cardWorkshop/validation';
@@ -81,6 +82,18 @@ export function CreateCardTab() {
    *  sobrescribir datos que otra versión del editor sí entiende. */
   const draftLocked = useRef(storedDraft != null && migrateDraft(storedDraft) === null);
   const touched = useRef(false);
+
+  // init() del store es async: si el tab se monta antes de que resuelva,
+  // storedDraft llega tarde. Restaurarlo entonces — salvo que el usuario
+  // ya haya empezado a editar (no pisar trabajo).
+  const hydratedDraft = useRef(storedDraft != null);
+  useEffect(() => {
+    if (hydratedDraft.current || storedDraft == null) return;
+    hydratedDraft.current = true;
+    const migrated = migrateDraft(storedDraft);
+    if (migrated && !touched.current) setDraft(migrated);
+    else if (!migrated) draftLocked.current = true;
+  }, [storedDraft]);
   const [errors, setErrors] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [dupQuery, setDupQuery] = useState('');
@@ -113,6 +126,9 @@ export function CreateCardTab() {
     const h = history.current;
     const prev = h.past.pop();
     if (!prev) return;
+    // Reiniciar la ráfaga: la primera edición tras undo debe crear paso
+    // (si no, el estado post-undo se pierde del historial).
+    lastEditRef.current = { field: '', at: 0 };
     h.future.push(draft);
     setDraft(prev);
     setHistTick(x => x + 1);
@@ -121,6 +137,7 @@ export function CreateCardTab() {
     const h = history.current;
     const next = h.future.pop();
     if (!next) return;
+    lastEditRef.current = { field: '', at: 0 };
     h.past.push(draft);
     setDraft(next);
     setHistTick(x => x + 1);
@@ -136,12 +153,23 @@ export function CreateCardTab() {
 
   const set = (patch: Partial<CardDraft>) => {
     touched.current = true;
+    // Tocar una zona de efectos descarta su respaldo "preserved" (efectos
+    // originales de una carta editada sin borrador): el usuario está
+    // reconstruyendo esa zona a propósito.
+    let next = patch;
+    if (draft.preserved && ('nodes' in patch || 'abilityNodes' in patch || 'peritiaNodes' in patch)) {
+      const p = { ...draft.preserved };
+      if ('nodes' in patch) delete p.effects;
+      if ('abilityNodes' in patch) delete p.heroAbility;
+      if ('peritiaNodes' in patch) delete p.peritia;
+      next = { ...patch, preserved: p };
+    }
     const field = Object.keys(patch).join(',');
     const now = Date.now();
     const le = lastEditRef.current;
     if (field !== le.field || now - le.at > 1200) pushHistory(draft);
     lastEditRef.current = { field, at: now };
-    setDraft(d => ({ ...d, ...patch }));
+    setDraft(d => ({ ...d, ...next }));
   };
   const customCards = sets.flatMap(s => s.cards);
   const officialCatalog = useMemo(() => loadCatalog(), []);
@@ -153,7 +181,7 @@ export function CreateCardTab() {
   /** CartDefinition de solo-lectura para el simulador (efectos del borrador). */
   const simCardDef = useMemo<CardDefinition>(() => ({
     id: 'sim.draft',
-    name: draft.name.trim() || 'Carta de prueba',
+    name: draft.name.trim() || t('workshop.simCardName'),
     type: draft.cardType,
     copies: 1,
     effects: buildEffects(draft.nodes),
@@ -163,7 +191,7 @@ export function CreateCardTab() {
     author: 'local',
     version: '1.0.0',
     verificationStatus: 'INFERRED',
-  }), [draft.name, draft.cardType, draft.destination, draft.nodes]);
+  }), [draft.name, draft.cardType, draft.destination, draft.nodes, t]);
 
   // Referencias conocidas para sugerencias + validación de nombres de carta.
   const cardNames = useMemo(() => {
@@ -172,7 +200,11 @@ export function CreateCardTab() {
     for (const c of customCards) names.add(c.name);
     return names;
   }, [officialCatalog, customCards]);
-  editorUi.knownCardNames = [...cardNames];
+  // editorUi es estado global compartido: asignarlo en render es un
+  // side-effect que StrictMode ejecuta 2× — moverlo a efecto.
+  useEffect(() => {
+    editorUi.knownCardNames = [...cardNames];
+  }, [cardNames]);
   const knownHandlers = useMemo(() => new Set<string>(SCENARIO_HANDLERS), []);
 
   const liveErrors = useMemo(() => {
@@ -209,6 +241,10 @@ export function CreateCardTab() {
   const treeComplexity = useMemo(() => complexityOf(draft.nodes), [draft.nodes]);
 
   // Reflejar diagnósticos en el árbol (borde rojo = error, ámbar = aviso).
+  // Se hace en render a propósito: los Sets son estado global compartido y
+  // EffectList los lee en SU render — un useEffect llegaría un frame tarde
+  // y nadie re-renderizaría el árbol. La mutación es idempotente (clear +
+  // add sobre el mismo input), así que StrictMode es inocuo.
   diagErrorKeys.clear(); diagWarnKeys.clear();
   for (const d of liveDiagnostics) {
     if (d.nodeKey == null) continue;
@@ -233,12 +269,20 @@ export function CreateCardTab() {
     return m;
   }, [draft.nodes, draft.abilityNodes, draft.peritiaNodes]);
 
-  /** Clic en un problema: expande los ancestros y enfoca el nodo afectado. */
+  /** Clic en un problema: expande los ancestros y enfoca el nodo afectado.
+   *  El resaltado es transitorio (se limpia solo): si no, el borde de foco
+   *  quedaba fijo sobre nodos cuyo problema ya se resolvió. */
   const jumpToNode = (key?: number) => {
     if (key == null) return;
     editorUi.focusedKey = key;
     for (const p of parentChains.get(key) ?? []) collapsedNodes.delete(p);
     setHistTick(x => x + 1);
+    setTimeout(() => {
+      if (editorUi.focusedKey === key) {
+        editorUi.focusedKey = null;
+        setHistTick(x => x + 1);
+      }
+    }, 2400);
   };
 
   /** Corrección automática segura: aplica el patch en la zona donde vive
@@ -271,15 +315,28 @@ export function CreateCardTab() {
     return draft.textOverride.trim() !== generatedText.trim();
   }, [draft.textOverride, generatedText]);
 
+  /** Estado visual compartido ligado al borrador: al cambiar de carta no
+   *  deben sobrevivir colapsos ni el foco de diagnóstico de otra carta. */
+  const resetEditorView = () => {
+    collapsedNodes.clear();
+    diagErrorKeys.clear(); diagWarnKeys.clear();
+    editorUi.focusedKey = null;
+    editorUi.dnd = null; editorUi.dndPendingRemoval = null;
+    history.current = { past: [], future: [] };
+    lastEditRef.current = { field: '', at: 0 };
+  };
+
   const startEdit = (card: CardDefinition) => {
     // migrateDraft sanea el árbol (whitelist + claves únicas) y detecta
     // versiones futuras → null = borrador no recuperable, modo campos base.
     const saved = migrateDraft(cardDrafts[card.id]);
-    pushHistory(draft);
+    resetEditorView();
     if (saved) {
       setDraft(saved);
     } else {
-      // Importado o creado antes de los borradores: cargar campos base
+      // Decompilador CardEffect→EffectNode: la carta llega con su árbol
+      // real (oficial o importada), no con las zonas vacías.
+      const dec = decompileCard(card, t);
       setDraft({
         ...EMPTY_DRAFT,
         cardType: card.type, editingId: card.id, name: card.name,
@@ -291,17 +348,32 @@ export function CreateCardTab() {
         capabilities: (card.capabilities ?? []) as string[],
         requiredCapabilities: (card.requiredCapabilities ?? []) as string[],
         destination: card.destinationAfterUse,
+        abilityUses: dec.abilityUses,
         textOverride: card.textOverride ?? '', altText: card.altText ?? '',
-        peritiaTrigger: card.peritia?.trigger ?? '',
-        peritiaCondition: card.peritia?.condition ?? '',
-        nodes: [], abilityNodes: [], peritiaNodes: [],
+        peritiaTrigger: dec.peritiaTrigger,
+        peritiaCondition: dec.peritiaCondition,
+        nodes: dec.nodes, abilityNodes: dec.abilityNodes, peritiaNodes: dec.peritiaNodes,
+        // Red de seguridad: si una zona decompila a vacío pese a tener
+        // efectos (tipos futuros que el decompilador no conoce), save()
+        // conserva los originales en vez de publicar la zona vacía.
+        preserved: {
+          ...(dec.nodes.length === 0 && card.effects.length ? { effects: card.effects } : {}),
+          ...(dec.abilityNodes.length === 0 && card.heroAbility ? { heroAbility: card.heroAbility } : {}),
+          ...(dec.peritiaNodes.length === 0 && card.peritia ? { peritia: card.peritia } : {}),
+        },
       });
-      toast.show(t('workshop.loadedWithoutStructure'), { durationMs: 5000 });
+      const nonInfo = dec.diagnostics.filter(d => d.severity !== 'info');
+      if (nonInfo.length > 0) {
+        toast.show(t('workshop.decompiledWithWarnings', { count: nonInfo.length }), { durationMs: 5000 });
+      }
     }
   };
 
   const duplicateOfficial = (card: CardDefinition) => {
-    pushHistory(draft);
+    resetEditorView();
+    // Duplicar conserva el árbol de efectos completo (decompile), no solo
+    // los metadatos — la copia editable parte del comportamiento real.
+    const dec = decompileCard(card, t);
     setDraft({
       ...EMPTY_DRAFT,
       cardType: card.type, name: t('workshop.copyNameSuffix', { name: card.name }),
@@ -309,14 +381,26 @@ export function CreateCardTab() {
       copies: String(card.copies), printedAttack: String(card.printedAttack ?? 0),
       printedCost: String(card.printedCost ?? 0), printedFortitude: String(card.printedFortitude ?? 2),
       rewardCoins: String(card.reward?.coins ?? 0), rewardGlory: String(card.reward?.glory ?? 0),
+      maxWounds: String(card.maxWounds ?? 10),
       capabilities: (card.capabilities ?? []) as string[],
       requiredCapabilities: (card.requiredCapabilities ?? []) as string[],
       destination: card.destinationAfterUse,
       basedOn: card.id,
-      nodes: [], abilityNodes: [], peritiaNodes: [],
-      peritiaTrigger: card.peritia?.trigger ?? '', peritiaCondition: card.peritia?.condition ?? '',
+      abilityUses: dec.abilityUses,
+      nodes: dec.nodes, abilityNodes: dec.abilityNodes, peritiaNodes: dec.peritiaNodes,
+      peritiaTrigger: dec.peritiaTrigger, peritiaCondition: dec.peritiaCondition,
+      preserved: {
+        ...(dec.nodes.length === 0 && card.effects.length ? { effects: card.effects } : {}),
+        ...(dec.abilityNodes.length === 0 && card.heroAbility ? { heroAbility: card.heroAbility } : {}),
+        ...(dec.peritiaNodes.length === 0 && card.peritia ? { peritia: card.peritia } : {}),
+      },
     });
-    toast.show(t('workshop.copyToast', { name: card.name }));
+    const nonInfo = dec.diagnostics.filter(d => d.severity !== 'info');
+    if (nonInfo.length > 0) {
+      toast.show(t('workshop.decompiledWithWarnings', { count: nonInfo.length }), { durationMs: 5000 });
+    } else {
+      toast.show(t('workshop.copyToast', { name: card.name }));
+    }
   };
 
   /** Importa una imagen para la carta: magic bytes, sin SVG, EXIF limpiado. */
@@ -373,17 +457,32 @@ export function CreateCardTab() {
 
   const save = (asCopy = false) => {
     const errs: string[] = [];
-    const effects = buildEffects(draft.nodes);
-    if (!draft.name.trim()) errs.push('La carta necesita un nombre');
+    if (!draft.name.trim()) errs.push(t('workshop.errNeedName'));
     errs.push(...liveErrors);
-    // P0: un nodo que el compilador descartaría bloquea la publicación —
-    // nunca guardar una carta que pierde efectos en silencio.
-    if (diagCounts.errors > 0) errs.push(t('workshop.publishBlocked'));
+    // P0: compilar AHORA, síncrono — los diagnósticos del panel llegan con
+    // debounce (350 ms) y un guardado rápido podría colar nodos que el
+    // compilador descartaría. Nunca publicar una carta que pierde efectos
+    // en silencio ni contiene ramas que el motor ignora.
+    const diagOpts = { knownCardNames: cardNames, knownHandlers };
+    const saveDiags = [draft.nodes, draft.abilityNodes, draft.peritiaNodes].flatMap(zone => [
+      ...compileTree(zone, t).diagnostics,
+      ...semanticDiagnostics(zone, t, diagOpts),
+    ]);
+    if (saveDiags.some(d => d.severity === 'error')) errs.push(t('workshop.publishBlocked'));
 
-    const abilityEffects = buildEffects(draft.abilityNodes);
-    const peritiaEffects = buildEffects(draft.peritiaNodes);
+    // Zonas intactas de una carta sin borrador conservan sus efectos
+    // originales (respaldo 'preserved'), en vez de publicar vacías.
+    const effects = draft.nodes.length === 0 && draft.preserved?.effects
+      ? draft.preserved.effects
+      : buildEffects(draft.nodes);
+    const abilityEffects = draft.abilityNodes.length === 0 && draft.preserved?.heroAbility
+      ? draft.preserved.heroAbility.effects
+      : buildEffects(draft.abilityNodes);
+    const peritiaEffects = draft.peritiaNodes.length === 0 && draft.preserved?.peritia
+      ? draft.preserved.peritia.effects
+      : buildEffects(draft.peritiaNodes);
     if (draft.cardType === 'WARLORD' && draft.peritiaTrigger !== '' && peritiaEffects.length === 0) {
-      errs.push('Una pericia de Señor necesita al menos un efecto');
+      errs.push(t('workshop.errPeritiaNeedsEffect'));
     }
     const card: CardDefinition = {
       id: !asCopy && draft.editingId
@@ -435,7 +534,8 @@ export function CreateCardTab() {
     // §21: texto manual vs efectos (advertencia, no bloqueo)
     const warns: string[] = [];
     if (draft.textOverride.trim()) {
-      const fxNums = effectNumbers(draft.nodes);
+      const fxNums = effectNumbers(
+        [...draft.nodes, ...draft.abilityNodes, ...draft.peritiaNodes]);
       const missing = textNumbers(draft.textOverride).filter(n => !fxNums.includes(n));
       if (missing.length > 0) {
         warns.push(t('workshop.warnTextNumbers', { values: missing.join(', ') }));
@@ -448,16 +548,24 @@ export function CreateCardTab() {
 
     const saveErrors = upsertCard(card);
     if (saveErrors.length > 0) { setErrors(saveErrors); return; }
-    saveCardDraft(card.id, draft);
-    toast.show(`Carta «${card.name}» guardada en Mis creaciones`);
+    // Guardar el borrador con el editingId REAL de la carta publicada:
+    // en "guardar como copia" el borrador conservaba el id original y
+    // la próxima edición de la copia sobrescribía la carta original.
+    saveCardDraft(card.id, { ...draft, editingId: card.id });
+    toast.show(t('workshop.savedToast', { name: card.name }));
+    // Historial ligado al borrador: tras guardar, undo no debe resucitar
+    // la carta recién publicada ni reescribirla por autoguardado.
+    history.current = { past: [], future: [] };
+    lastEditRef.current = { field: '', at: 0 };
+    touched.current = false;
     setDraft({ ...EMPTY_DRAFT });
     clearDraft();
     setErrors([]); setWarnings([]);
   };
 
   const dupResults = dupQuery.trim().length > 1
-    ? officialCatalog.byType.get('ABILITY')?.filter(c =>
-        c.name.toLowerCase().includes(dupQuery.toLowerCase())).slice(0, 8) ?? []
+    ? [...officialCatalog.byId.values()].filter(c =>
+        c.name.toLowerCase().includes(dupQuery.toLowerCase())).slice(0, 8)
     : [];
 
   return (
@@ -476,6 +584,10 @@ export function CreateCardTab() {
       )}
       {draft.basedOn && (
         <NtBadge label={t('workshop.basedOnBadge', { id: draft.basedOn })} tone="neutral" />
+      )}
+      {draft.preserved && draft.nodes.length === 0
+        && draft.abilityNodes.length === 0 && draft.peritiaNodes.length === 0 && (
+        <NtBadge label={t('workshop.preservedNotice')} tone="neutral" />
       )}
 
       {/* 2. Información general */}
@@ -519,9 +631,9 @@ export function CreateCardTab() {
         )}
         {(draft.cardType === 'HORDE' || draft.cardType === 'WARLORD') && (
           <>
-            <NtInput label="Recompensa: Monedas" value={draft.rewardCoins}
+            <NtInput label={t('workshop.rewardCoinsLabel')} value={draft.rewardCoins}
               onChangeText={v => set({ rewardCoins: v })} keyboardType="number-pad" />
-            <NtInput label="Recompensa: Gloria" value={draft.rewardGlory}
+            <NtInput label={t('workshop.rewardGloryLabel')} value={draft.rewardGlory}
               onChangeText={v => set({ rewardGlory: v })} keyboardType="number-pad" />
           </>
         )}
@@ -532,7 +644,7 @@ export function CreateCardTab() {
           <Text style={styles.miniLabel}>{t('workshop.heroCapabilitiesLabel')}</Text>
           <View style={styles.chipRow}>
             {CAPABILITIES.map(cap => (
-              <Chip key={cap} label={t(`workshop.${CAP_NAME_KEYS[cap]}`)} selected={draft.capabilities.includes(cap)}
+              <Chip key={cap} label={t(`workshop.${CAP_NAME_KEYS.get(cap)}`)} selected={draft.capabilities.includes(cap)}
                 onPress={() => set({
                   capabilities: draft.capabilities.includes(cap)
                     ? draft.capabilities.filter(x => x !== cap)
@@ -584,7 +696,7 @@ export function CreateCardTab() {
           <Text style={styles.miniLabel}>{t('workshop.requiredCapsLabel')}</Text>
           <View style={styles.chipRow}>
             {CAPABILITIES.map(cap => (
-              <Chip key={cap} label={t(`workshop.${CAP_NAME_KEYS[cap]}`)} selected={draft.requiredCapabilities.includes(cap)}
+              <Chip key={cap} label={t(`workshop.${CAP_NAME_KEYS.get(cap)}`)} selected={draft.requiredCapabilities.includes(cap)}
                 onPress={() => set({
                   requiredCapabilities: draft.requiredCapabilities.includes(cap)
                     ? draft.requiredCapabilities.filter(x => x !== cap)
@@ -671,25 +783,25 @@ export function CreateCardTab() {
           EXIF limpiado en web). Los assets no se mezclan con los oficiales. */}
       <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 8 }}>
         <NtButton
-          label={draft.imageRef ? 'Cambiar imagen' : 'Adjuntar imagen'}
+          label={draft.imageRef ? t('workshop.changeImage') : t('workshop.attachImage')}
           variant="secondary" size="sm"
           onPress={() => void attachImage()}
         />
         {draft.imageRef ? (
           <>
-            <NtBadge label="imagen adjunta" tone="info" />
+            <NtBadge label={t('workshop.imageAttachedBadge')} tone="info" />
             <Pressable onPress={() => set({ imageRef: undefined })}
-              accessibilityRole="button" accessibilityLabel="Quitar imagen">
-              <Text style={{ color: colors.danger, fontSize: fontSize.detail }}>Quitar</Text>
+              accessibilityRole="button" accessibilityLabel={t('workshop.removeImageA11y')}>
+              <Text style={{ color: colors.danger, fontSize: fontSize.detail }}>{t('workshop.removeImage')}</Text>
             </Pressable>
           </>
         ) : null}
       </View>
 
       {/* 6. Validación */}
-      <Text style={styles.sectionTitle}>Validación</Text>
+      <Text style={styles.sectionTitle}>{t('workshop.sectionValidation')}</Text>
       {liveErrors.length === 0 ? (
-        <Text style={styles.okText}>Estructura válida</Text>
+        <Text style={styles.okText}>{t('workshop.structureValid')}</Text>
       ) : (
         <View style={styles.errorBox} accessibilityLiveRegion="polite">
           {liveErrors.map((e, i) => <Text key={i} style={styles.errorText}>• {e}</Text>)}
@@ -844,7 +956,7 @@ export function CreateCardTab() {
                 <Text style={styles.ctrlTxt}>✎</Text>
               </Pressable>
               <Pressable onPress={() => removeCard(c.id)} accessibilityRole="button"
-                accessibilityLabel={`Eliminar ${c.name}`} style={styles.ctrl}>
+                accessibilityLabel={t('workshop.deleteCardA11y', { name: c.name })} style={styles.ctrl}>
                 <Text style={styles.ctrlTxt}>✕</Text>
               </Pressable>
             </View>
@@ -880,7 +992,7 @@ export function CreateCardTab() {
 
 function slugify(name: string): string {
   return name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'carta';
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'card';
 }
 
 // ============================================================================

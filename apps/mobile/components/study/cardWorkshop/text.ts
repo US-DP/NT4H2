@@ -85,9 +85,21 @@ export function textNumbers(text: string): number[] {
 }
 export function effectNumbers(nodes: EffectNode[]): number[] {
   const out: number[] = [];
+  const pushFixed = (mode: string | undefined, v: string | undefined) => {
+    if (!mode || mode === 'fixed') out.push(num(v ?? '0'));
+  };
   const walk = (list: EffectNode[]) => {
     for (const n of list) {
-      if (n.kind === 'ACTION' && (!n.amountMode || n.amountMode === 'fixed')) out.push(num(n.amount ?? '0'));
+      if (n.kind === 'ACTION') {
+        pushFixed(n.amountMode, n.amount);
+        pushFixed(undefined, n.targetCount);
+        pushFixed(n.timesMode, n.times);
+        // Números sueltos de acciones (sin modo): count/targetCount…
+        if (n.actionType && ACTION_DEFS.find(d => d.type === n.actionType)?.count) {
+          pushFixed(undefined, n.targetCount);
+        }
+      }
+      if (n.kind === 'REPEAT') pushFixed(n.timesMode, n.times);
       walk(n.thenN ?? []); walk(n.elseN ?? []); walk(n.children ?? []);
       (n.options ?? []).forEach(o => walk(o.children));
     }

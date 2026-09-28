@@ -19,6 +19,7 @@ import type { EffectRegistry } from './registry.js';
 import { MAX_RESOLUTION_OPS, ResolutionBudgetError } from './registry.js';
 import { EventBus } from '../triggers/index.js';
 import { applyEvent } from '../events/applyEvent.js';
+import { onSeqReset } from '../seq.js';
 
 export interface ListenerDeps {
   registry: EffectRegistry;
@@ -28,6 +29,14 @@ export interface ListenerDeps {
 
 /** Máximo de oyentes activables por evento (guarda anti-explosión). */
 const MAX_LISTENERS_PER_EVENT = 16;
+
+/** seqs de eventos que ya pasaron por dispatchListeners (o que emitieron
+ *  oyentes). Los seqs son monotónicos globales por partida (seq.ts), así
+ *  que el despacho es idempotente: el resolver/fases ya disparan oyentes
+ *  por evento de efecto, y execute() completa la cobertura para eventos
+ *  emitidos por comandos sin dispararlos dos veces. */
+const dispatchedSeqs = new Set<number>();
+onSeqReset(() => dispatchedSeqs.clear());
 
 /** Deriva el contexto de resolución de un oyente desde el evento. */
 function listenerCtx(listener: CardListener, event: GameEvent): ResolutionContext {
@@ -67,6 +76,9 @@ export function dispatchListeners(
   event: GameEvent,
   deps: ListenerDeps,
 ): { events: GameEvent[]; state: GameState } {
+  // Idempotente por evento: un mismo seq nunca despacha oyentes dos veces.
+  if (dispatchedSeqs.has(event.seq)) return { events: [], state };
+  dispatchedSeqs.add(event.seq);
   const listeners = (state.listeners ?? [])
     .filter(l => l.trigger === event.type)
     .slice(0, MAX_LISTENERS_PER_EVENT);
@@ -93,17 +105,23 @@ export function dispatchListeners(
         const inner = deps.registry.execute(eff, ctx, current, deps.rng, bus);
         for (const iev of inner) {
           events.push(iev);
+          // Sin cascada: los eventos emitidos por oyentes no re-disparan
+          // oyentes aunque vuelvan a pasar por dispatchListeners (p.ej. en
+          // el pase de cobertura de execute()).
+          dispatchedSeqs.add(iev.seq);
           current = applyEvent(current, iev);
         }
       }
     } catch (err) {
       if (err instanceof ResolutionBudgetError || err instanceof Error) {
-        events.push({
+        const halt: GameEvent = {
           type: 'RESOLUTION_HALTED',
           cardInstanceId: undefined,
           reason: `Oyente ${listener.id}: ${err.message}`,
           seq: deps.nextSeq(),
-        });
+        };
+        events.push(halt);
+        dispatchedSeqs.add(halt.seq);
       } else {
         throw err;
       }
@@ -115,6 +133,7 @@ export function dispatchListeners(
         type: 'LISTENER_REMOVED', listenerId: listener.id, seq: deps.nextSeq(),
       };
       events.push(rm);
+      dispatchedSeqs.add(rm.seq);
       current = applyEvent(current, rm);
     }
   }

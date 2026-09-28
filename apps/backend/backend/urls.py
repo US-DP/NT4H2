@@ -21,6 +21,7 @@ from game.views import (
     list_rooms,
     room_engine_state,
     room_state,
+    room_sync,
     set_ready,
     skip_turn,
     start_room,
@@ -38,11 +39,14 @@ router.register(r"card-versions", CardVersionViewSet, basename="card-version")
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    # Cuentas/identidad JWT (Fase 1): auth + me + players públicos
+    path("api/v1/", include("accounts.urls")),
     path("api/health/", health_check, name="health"),
     path("api/rooms/", create_room, name="create-room"),
     path("api/rooms/list/", list_rooms, name="list-rooms"),
     path("api/rooms/<str:room_id>/", room_state, name="room-state"),
     path("api/rooms/<str:room_id>/engine/", room_engine_state, name="room-engine-state"),
+    path("api/rooms/<str:room_id>/sync/", room_sync, name="room-sync"),
     path("api/rooms/<str:room_id>/join/", join_room, name="join-room"),
     path("api/rooms/<str:room_id>/leave/", leave_room, name="leave-room"),
     path("api/rooms/<str:room_id>/ready/", set_ready, name="set-ready"),

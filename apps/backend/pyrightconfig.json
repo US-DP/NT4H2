@@ -1,0 +1,6 @@
+{
+  "//": "pyright (Node, `npx pyright`) como type-checker del backend: mypy queda bloqueado por WDAC en Windows. Residuo conocido (~30 errores): .data/.id en tests y relaciones inversas .players — falsos positivos por falta de django-stubs plugin para pyright.",
+  "typeCheckingMode": "basic",
+  "pythonVersion": "3.11",
+  "exclude": ["**/migrations/**", "db.sqlite3", ".pytest_cache", ".ruff_cache", ".turbo"]
+}

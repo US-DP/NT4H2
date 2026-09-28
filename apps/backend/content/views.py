@@ -91,56 +91,66 @@ def _audit(request, role, action, entity_type, entity_id, *, detail=None, outcom
         logger.exception("content audit failed")
 
 
+def _requests_official(request) -> bool:
+    """True si el payload pide author='official' (create/update/import).
+
+    Equivalente a tocar contenido oficial: exige publisher+ aunque obj
+    sea None (create) o una carta custom (promoción a oficial).
+    """
+    try:
+        return request.data.get("author") == "official"
+    except AttributeError:  # petición sin data parseable
+        return False
+
+
+def _needs_publisher(request, view, obj_is_official: bool) -> bool:
+    """Operaciones reservadas al rol publisher+."""
+    return (
+        # Operaciones sobre contenido oficial o payload author='official'
+        obj_is_official
+        or _requests_official(request)
+        # DELETE siempre requiere publisher+
+        or request.method == "DELETE"
+        # CardVersion (publicación inmutable) requiere publisher+
+        or view.__class__.__name__ == "CardVersionViewSet"
+    )
+
+
+def _is_foreign_custom_card(request, obj, role: str, obj_is_official: bool) -> bool:
+    """True si un author edita carta custom ajena (distinto hash de token)."""
+    if obj is None or obj_is_official or role != "author":
+        return False
+    return getattr(obj, "owner_hash", None) != _token_hash(request)
+
+
 def _content_scope_check(request, view, obj=None):
     """True si el rol permite la operación; escribe auditoría en denegación."""
-    if request.method in permissions.SAFE_METHODS:
+    # Lectura siempre abierta; sin tokens configurados (dev/tests) → abierto
+    if request.method in permissions.SAFE_METHODS or not _token_roles():
         return True
     role = _role_for(request)
-    # Sin tokens configurados (dev/tests) → abierto
-    if not _token_roles():
-        return True
     if role is None:
         return False
     rank = _ROLE_RANK.get(role, 0)
-    # Operaciones sobre contenido oficial requieren publisher+
     is_official = getattr(obj, "author", None) == "official"
-    if is_official and rank < _ROLE_RANK["publisher"]:
-        return False
-    # Escribir author='official' en el payload (create/update/import) es
-    # equivalente a tocar contenido oficial: exige publisher+ aunque obj
-    # sea None (create) o una carta custom (promoción a oficial).
-    try:
-        target_author = request.data.get("author")
-    except AttributeError:  # petición sin data parseable
-        target_author = None
-    if target_author == "official" and rank < _ROLE_RANK["publisher"]:
+    # Operaciones reservadas (oficial/DELETE/CardVersion) exigen publisher+
+    if rank < _ROLE_RANK["publisher"] and _needs_publisher(request, view, is_official):
         return False
     # Ownership entre authors: una carta custom solo la edita su creador
     # (mismo hash de token); sin dueño registrado exige publisher+.
-    if (
-        obj is not None
-        and not is_official
-        and role == "author"
-        and getattr(obj, "owner_hash", None) != _token_hash(request)
-    ):
-        return False
-    # DELETE siempre requiere publisher+
-    if request.method == "DELETE" and rank < _ROLE_RANK["publisher"]:
-        return False
-    # CardVersion (publicación inmutable) requiere publisher+
-    return not (view.__class__.__name__ == "CardVersionViewSet" and rank < _ROLE_RANK["publisher"])
+    return not _is_foreign_custom_card(request, obj, role, is_official)
 
 
 class ContentWritePermission(permissions.BasePermission):
     """Lectura pública; escritura con token con rol suficiente."""
 
-    def has_permission(self, request, view):
+    def has_permission(self, request, view) -> bool:
         if request.method in permissions.SAFE_METHODS:
             return True
-        return _content_scope_check(request, view)
+        return bool(_content_scope_check(request, view))
 
-    def has_object_permission(self, request, view, obj):
-        return _content_scope_check(request, view, obj)
+    def has_object_permission(self, request, view, obj) -> bool:
+        return bool(_content_scope_check(request, view, obj))
 
 
 def _check_write_token(request, obj=None, action="write"):

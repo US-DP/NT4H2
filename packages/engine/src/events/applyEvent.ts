@@ -11,18 +11,38 @@ import type {
   GameState,
   GameEvent,
   PlayerState,
-  CardInstance,
-  Modifier,
-  ModifierLayer,
   Zone,
 } from '@nt4h/schema';
+import { getEffectiveFortitude } from '../modifiers/index.js';
 import {
-  applyEntryAuras,
-  getEffectiveFortitude,
-  cleanupHordeAttackEnd,
-  cleanupRestoration,
-  cleanupTurnEnd,
-} from '../modifiers/index.js';
+  applyDamageDealt, applyWoundPlaced, applyWoundHealed, applyEnemyDefeated,
+  applyHordeAttacked, applyEnemySwapped, applyEnemyReturnedToHorde,
+  applyDamageIntercepted, applyPreventionApplied, applyShieldPlaced,
+  applyShieldTransferred, applyCancellationActivated, applyEnemyDamageDisabled,
+  applyVulnerabilityApplied, applyArmorGranted, applyBlockGranted,
+  applyBlockConsumed, applyHeroWounded, applyEnemySpawned, applyEnemyRevealed,
+  applyWarlordRevealed, applyTrophyRemoved,
+} from './reducers/combat.js';
+import {
+  applyCardPlayed, applyCardsDrawn, applyCardsLost, applyCardsRecovered,
+  applyCardMoved, applyCardRemovedFromGame, applyDeckExhausted,
+  applyDeckReshuffled, applyDeckShuffled, applyHordeDeckReordered,
+  applyHordeCardDiscarded, applyCardsRevealedToPlayer,
+  applyPersistentCardPlaced, applyPersistentCardRemoved,
+} from './reducers/cards.js';
+import {
+  applyGloryGained, applyGloryLost, applyCoinsGained, applyCoinsStolen,
+  applyMarketPurchased, applyMarketReplenished,
+} from './reducers/economy.js';
+import {
+  applyPhaseChanged, applyTurnStarted, applyTurnEnded, applySupportDeckOpened,
+  applyScenarioRevealed, applyScenarioDiscarded, applyHeroAbilityUsed,
+  applyModifierAdded, applyModifierExpired, applyEvasionPerformed,
+  applyGameEnded, applyLeaderDetermined, applyLeaderTieBreak,
+  applyResolutionHalted, applyStatusApplied, applyStatusRemoved,
+  applyVariableSet, applyListenerRegistered, applyListenerRemoved,
+  applyEffectsExpired, applyPendingChoicesRemoved,
+} from './reducers/flow.js';
 
 export function applyEvent(state: GameState, event: GameEvent): GameState {
   const newState = applyEventInternal(state, event);
@@ -36,918 +56,69 @@ export function applyEvent(state: GameState, event: GameEvent): GameState {
 
 function applyEventInternal(state: GameState, event: GameEvent): GameState {
   switch (event.type) {
-    // === Fases y turnos ===
-    case 'PHASE_CHANGED':
-      // D434: al entrar en HORDE_ATTACK se limpia la decision de Feldon de
-      // todos los jugadores para que cada nuevo ataque vuelva a preguntar
-      if (event.phase === 'HORDE_ATTACK') {
-        const cleared = Object.fromEntries(
-          Object.entries(state.players).map(([id, p]) => [id, { ...p, feldonDecision: undefined }]),
-        );
-        return { ...state, phase: event.phase, players: cleared };
-      }
-      return { ...state, phase: event.phase };
-
-    case 'TURN_STARTED':
-      return {
-        ...state,
-        activePlayerId: event.playerId,
-        turnNumber: event.turnNumber,
-        // Reset contadores por turno del jugador activo
-        players: mapPlayer(state.players, event.playerId, p => ({
-          ...p,
-          cardsPlayedThisTurn: {},
-          cardsPlayedAgainstEnemy: {},
-          prevention: 0,
-          damageCancellation: false,
-          shields: 0,
-          armor: 0,
-          blockNext: 0,
-          interceptedBy: null,
-          // Reset contadores de Apoyo (modo solitario)
-          supportCardsDrawnThisTurn: 0,
-          supportDeckIndexUsedThisTurn: null,
-          supportCardUsedThisTurn: false,
-          // D434: limpiar flags de prestadas — las cartas ya fueron devueltas
-          // o eliminadas al final del turno anterior
-          borrowedSupportCardIds: [],
-        })),
-        // Taller: los oyentes de un turno expiran al empezar el siguiente
-        listeners: (state.listeners ?? []).filter(l => l.duration !== 'THIS_TURN'),
-        // La cuenta de descartes por evasión solo vale dentro de la
-        // resolución de la ficha — fuera de ella leería basura.
-        evasionDiscardedCount: 0,
-      };
-
-    case 'TURN_ENDED':
-      return state;
-
-    // === Apoyos (modo solitario) ===
-    case 'SUPPORT_DECK_OPENED':
-      // D434: event-sourcing del contador de mazos de Apoyo abiertos (spec §4.1)
-      return mapPlayerState(state, event.playerId, p => ({
-        ...p,
-        supportDecksOpened: Math.max(p.supportDecksOpened ?? 0, event.supportDeckIndex + 1),
-      }));
-
-    // === Cartas jugadas ===
-    case 'CARD_PLAYED': {
-      const player = state.players[event.playerId];
-      const card = player.hand.find(c => c.instanceId === event.cardInstanceId);
-      if (!card) return state; // defensive: carta no encontrada
-
-      // NOTA: NO quitamos la carta de la mano aquí. CARD_MOVED la mueve a WEAR_PILE.
-      // Si la quitamos aquí, CARD_MOVED no la encontrará.
-      // D434: si es una carta de Apoyo prestada, marcarla como usada
-      // (spec §4.2: "Entre las robadas, elegir 1 para usar este turno")
-      const isBorrowed = player.borrowedSupportCardIds?.includes(event.cardInstanceId) ?? false;
-      return {
-        ...state,
-        players: {
-          ...state.players,
-          [event.playerId]: {
-            ...player,
-            supportCardUsedThisTurn: isBorrowed ? true : player.supportCardUsedThisTurn,
-            cardsPlayedThisTurn: {
-              ...player.cardsPlayedThisTurn,
-              // Indexar por definitionId Y por nombre (las condiciones buscan por nombre)
-              [card.definitionId]: (player.cardsPlayedThisTurn[card.definitionId] ?? 0) + 1,
-              ...(event.cardName ? {
-                [event.cardName]: (player.cardsPlayedThisTurn[event.cardName] ?? 0) + 1,
-              } : {}),
-            },
-            cardsPlayedAgainstEnemy: {
-              ...player.cardsPlayedAgainstEnemy,
-              ...(state.activePlayerId === event.playerId && state.battlefield.some(e => e.instanceId === event.targetEnemyInstanceId) ? {
-                [event.targetEnemyInstanceId!]: {
-                  ...player.cardsPlayedAgainstEnemy[event.targetEnemyInstanceId!],
-                  [card.definitionId]: (player.cardsPlayedAgainstEnemy[event.targetEnemyInstanceId!]?.[card.definitionId] ?? 0) + 1,
-                  ...(event.cardName ? {
-                    [event.cardName]: (player.cardsPlayedAgainstEnemy[event.targetEnemyInstanceId!]?.[event.cardName] ?? 0) + 1,
-                  } : {}),
-                },
-              } : {}),
-            },
-          },
-        },
-      };
-    }
-
-    // === Dano y heridas ===
-    case 'DAMAGE_DEALT':
-      return {
-        ...state,
-        battlefield: state.battlefield.map(e =>
-          e.instanceId === event.targetId
-            ? { ...e, wounds: e.wounds + event.amount }
-            : e
-        ),
-      };
-
-    case 'WOUND_PLACED':
-      return {
-        ...state,
-        battlefield: state.battlefield.map(e =>
-          e.instanceId === event.enemyInstanceId
-            ? { ...e, wounds: e.wounds + event.amount }
-            : e
-        ),
-      };
-
-    case 'ENEMY_DEFEATED': {
-      const enemy = state.battlefield.find(e => e.instanceId === event.enemyInstanceId);
-      if (!enemy) return state;
-
-      const player = state.players[event.defeatingPlayerId];
-      if (!player) return state;
-      // Si se derrotó a Roghkiller, eliminar sus modificadores de +1 fortaleza de los orcos
-      let newBattlefield = state.battlefield.filter(e => e.instanceId !== event.enemyInstanceId);
-      if (enemy.isWarlord && enemy.definitionId.includes('roghkiller')) {
-        newBattlefield = newBattlefield.map(e => ({
-          ...e,
-          modifiers: e.modifiers.filter(m => m.sourceId !== 'roghkiller'),
-        }));
-      }
-      return {
-        ...state,
-        battlefield: newBattlefield,
-        warlordDefeated: state.warlordDefeated || enemy.isWarlord,
-        warlordsDefeatedCount: state.warlordsDefeatedCount + (enemy.isWarlord ? 1 : 0),
-        players: {
-          ...state.players,
-          [event.defeatingPlayerId]: {
-            ...player,
-            // D397: Guardar instanceId (no definitionId) según el schema
-            trophies: [...player.trophies, event.enemyInstanceId],
-            coins: player.coins + event.reward.coins,
-            glory: player.glory + event.reward.glory,
-          },
-        },
-      };
-    }
-
-    // === Robo de cartas ===
-    case 'CARDS_DRAWN': {
-      const player = state.players[event.playerId];
-      const drawnCards: typeof player.hand = [];
-      const remainingDeck = [...player.abilityDeck];
-      // D434: la carta puede venir de un mazo de Apoyo (modo solitario).
-      // Buscarla alli para que el replay produzca el mismo estado y marque
-      // la carta como prestada + el mazo usado este turno.
-      let newSupportDecks = player.supportDecks;
-      const borrowedIds = [...(player.borrowedSupportCardIds ?? [])];
-      let usedSupportIdx = player.supportDeckIndexUsedThisTurn;
-      let supportDraws = player.supportCardsDrawnThisTurn ?? 0;
-
-      for (const cardInstanceId of event.cardInstanceIds) {
-        const idx = remainingDeck.findIndex(c => c.instanceId === cardInstanceId);
-        if (idx >= 0) {
-          drawnCards.push({ ...remainingDeck[idx], zone: 'HAND' as Zone });
-          remainingDeck.splice(idx, 1);
-          continue;
-        }
-        // Buscar en mazos de Apoyo
-        const deckIdx = (newSupportDecks ?? []).findIndex(d =>
-          d.some(c => c.instanceId === cardInstanceId)
-        );
-        if (deckIdx >= 0) {
-          const deck = newSupportDecks![deckIdx];
-          const card = deck.find(c => c.instanceId === cardInstanceId)!;
-          drawnCards.push({ ...card, zone: 'HAND' as Zone });
-          newSupportDecks = newSupportDecks!.map((d, i) =>
-            i === deckIdx ? d.filter(c => c.instanceId !== cardInstanceId) : d
-          );
-          if (!borrowedIds.includes(cardInstanceId)) borrowedIds.push(cardInstanceId);
-          if (usedSupportIdx === null || usedSupportIdx === undefined) usedSupportIdx = deckIdx;
-          supportDraws += 1;
-        }
-      }
-
-      return {
-        ...state,
-        players: {
-          ...state.players,
-          [event.playerId]: {
-            ...player,
-            abilityDeck: remainingDeck,
-            supportDecks: newSupportDecks,
-            borrowedSupportCardIds: borrowedIds,
-            supportDeckIndexUsedThisTurn: usedSupportIdx,
-            supportCardsDrawnThisTurn: supportDraws,
-            hand: [...player.hand, ...drawnCards],
-          },
-        },
-      };
-    }
-
-    // === Perdida de cartas (del mazo al desgaste) ===
-    case 'CARDS_LOST': {
-      const player = state.players[event.playerId];
-      const lostCards: typeof player.wearPile = [];
-      const remainingDeck = [...player.abilityDeck];
-
-      for (const cardInstanceId of event.cardInstanceIds) {
-        const idx = remainingDeck.findIndex(c => c.instanceId === cardInstanceId);
-        if (idx >= 0) {
-          lostCards.push({ ...remainingDeck[idx], zone: 'WEAR_PILE' as Zone });
-          remainingDeck.splice(idx, 1);
-        }
-      }
-
-      return {
-        ...state,
-        players: {
-          ...state.players,
-          [event.playerId]: {
-            ...player,
-            abilityDeck: remainingDeck,
-            wearPile: [...player.wearPile, ...lostCards],
-          },
-        },
-      };
-    }
-
-    // === Recuperacion de cartas ===
-    case 'CARDS_RECOVERED': {
-      const player = state.players[event.playerId];
-      const recoveredCards: typeof player.abilityDeck = [];
-      const remainingWear = [...player.wearPile];
-      const remainingHand = [...player.hand];
-
-      for (const cardInstanceId of event.cardInstanceIds) {
-        // Buscar en wearPile primero
-        const wearIdx = remainingWear.findIndex(c => c.instanceId === cardInstanceId);
-        if (wearIdx >= 0) {
-          const card = remainingWear[wearIdx];
-          if (event.toZone === 'HAND') {
-            recoveredCards.push({ ...card, zone: 'HAND' as Zone });
-          } else {
-            recoveredCards.push({ ...card, zone: 'ABILITY_DECK' as Zone });
-          }
-          remainingWear.splice(wearIdx, 1);
-          continue;
-        }
-        // Buscar en hand (Daga Élfica: la carta no llegó a wearPile)
-        const handIdx = remainingHand.findIndex(c => c.instanceId === cardInstanceId);
-        if (handIdx >= 0) {
-          const card = remainingHand[handIdx];
-          if (event.toZone === 'HAND') {
-            // Ya está en mano, mantenerla
-            recoveredCards.push({ ...card, zone: 'HAND' as Zone });
-          } else {
-            recoveredCards.push({ ...card, zone: 'ABILITY_DECK' as Zone });
-            remainingHand.splice(handIdx, 1);
-          }
-        }
-      }
-
-      if (event.toZone === 'HAND') {
-        // Si recoveredCards incluye cartas ya en hand, mantener hand sin duplicar
-        const handFromWear = recoveredCards.filter(c =>
-          !remainingHand.some(h => h.instanceId === c.instanceId)
-        );
-        return {
-          ...state,
-          players: {
-            ...state.players,
-            [event.playerId]: {
-              ...player,
-              wearPile: remainingWear,
-              hand: [...remainingHand, ...handFromWear],
-            },
-          },
-        };
-      }
-
-      // BOTTOM_OF_DECK: anadir al final del mazo
-      return {
-        ...state,
-        players: {
-          ...state.players,
-          [event.playerId]: {
-            ...player,
-            wearPile: remainingWear,
-            hand: remainingHand,
-            abilityDeck: [...player.abilityDeck, ...recoveredCards],
-          },
-        },
-      };
-    }
-
-    // === Recursos ===
-    case 'GLORY_GAINED':
-      return mapPlayerState(state, event.playerId, p => ({
-        ...p,
-        glory: p.glory + event.amount,
-      }));
-
-    case 'GLORY_LOST':
-      return mapPlayerState(state, event.playerId, p => ({
-        ...p,
-        glory: Math.max(0, p.glory - event.amount),
-      }));
-
-    case 'COINS_GAINED':
-      return mapPlayerState(state, event.playerId, p => ({
-        ...p,
-        coins: p.coins + event.amount,
-      }));
-
-    case 'COINS_STOLEN': {
-      const fromPlayer = state.players[event.fromPlayerId];
-      const toPlayer = state.players[event.toPlayerId];
-      if (!fromPlayer || !toPlayer) return state;
-      // D417: las monedas robadas no pueden superar las que tiene el origen
-      const stolen = Math.min(event.amount, Math.max(0, fromPlayer.coins));
-      return {
-        ...state,
-        players: {
-          ...state.players,
-          [event.fromPlayerId]: { ...fromPlayer, coins: fromPlayer.coins - stolen },
-          [event.toPlayerId]: { ...toPlayer, coins: toPlayer.coins + stolen },
-        },
-      };
-    }
-
-    case 'WOUND_HEALED':
-      return mapPlayerState(state, event.playerId, p => ({
-        ...p,
-        wounds: Math.max(0, p.wounds - event.amount),
-      }));
-
-    // === Movimiento de cartas ===
-    case 'CARD_MOVED':
-      return moveCard(state, event.cardInstanceId, event.to, event.toPlayerId);
-
-    case 'CARD_REMOVED_FROM_GAME':
-      return removeCardFromAllZones(state, event.cardInstanceId);
-
-    case 'HORDE_DECK_REORDERED': {
-      // Reordenar el mazo de la Horda según newOrder (ej. pericia de Idril)
-      const byInstance = new Map(state.hordeDeck.map(c => [c.instanceId, c]));
-      const reordered = event.newOrder
-        .map(id => byInstance.get(id))
-        .filter((c): c is NonNullable<typeof c> => c !== undefined);
-      // Cartas no mencionadas (defensivo): conservarlas al final
-      const remaining = state.hordeDeck.filter(c => !event.newOrder.includes(c.instanceId));
-      return { ...state, hordeDeck: [...reordered, ...remaining] };
-    }
-
-    // === Ataque de la Horda ===
-    case 'HORDE_ATTACKED': {
-      // El dano ya fue procesado como CARDS_LOST por el motor.
-      // La intercepción de Valèrys queda consumida al resolver el ataque
-      // (processHordeAttack la limpia en el camino directo — idempotente).
-      const target = state.players[state.activePlayerId];
-      if (!target || target.interceptedBy == null) return state;
-      return mapPlayerState(state, state.activePlayerId, p => ({
-        ...p,
-        interceptedBy: null,
-      }));
-    }
-
-    // === Revelacion de enemigos ===
-    case 'ENEMY_REVEALED': {
-      // El enemigo entra al campo y sale del mazo de la Horda. El evento
-      // transporta el EnemyState completo (recompensa, auras de entrada…) para
-      // que el fold del eventLog sea bit-idéntico (sin catalogo ni seq).
-      // Idempotente: el camino directo ya lo insertó antes de emitir.
-      const hordeDeck = state.hordeDeck.filter(c => c.instanceId !== event.enemyInstanceId);
-      const alreadyInField = state.battlefield.some(e => e.instanceId === event.enemyInstanceId);
-      if (alreadyInField || !event.enemy) {
-        return hordeDeck.length === state.hordeDeck.length ? state : { ...state, hordeDeck };
-      }
-      return {
-        ...state,
-        battlefield: [...state.battlefield, { ...event.enemy }],
-        hordeDeck,
-      };
-    }
-
-    case 'WARLORD_REVEALED':
-      return { ...state, warlordRevealed: true };
-
-    // === Mercado ===
-    case 'MARKET_PURCHASED': {
-      const player = state.players[event.playerId];
-      const card = state.market.find(c => c.instanceId === event.cardInstanceId);
-      if (!card) return state;
-
-      return {
-        ...state,
-        market: state.market.filter(c => c.instanceId !== event.cardInstanceId),
-        players: {
-          ...state.players,
-          [event.playerId]: {
-            ...player,
-            coins: player.coins - event.cost,
-            hand: [...player.hand, { ...card, zone: 'HAND' as Zone }],
-          },
-        },
-      };
-    }
-
-    case 'MARKET_REPLENISHED': {
-      // Mover la carta del marketDeck al mercado (especificacion 3.5)
-      const newCard = state.marketDeck.find(c => c.instanceId === event.cardInstanceId);
-      if (!newCard) return state;
-      return {
-        ...state,
-        market: [...state.market, { ...newCard, zone: 'MARKET' as Zone }],
-        marketDeck: state.marketDeck.filter(c => c.instanceId !== event.cardInstanceId),
-      };
-    }
-
-    // === Escenarios ===
-    case 'SCENARIO_REVEALED':
-      // Setear el escenario revelado (puede haber sido borrado por SCENARIO_DISCARDED previo)
-      // y sacar la carta del mazo de escenarios (idempotente: el camino
-      // directo ya la extrajo antes de emitir el evento).
-      return {
-        ...state,
-        scenario: {
-          instanceId: event.scenarioInstanceId,
-          definitionId: event.definitionId,
-          ownerId: 'scenario',
-          zone: 'SCENARIO_ACTIVE' as Zone,
-        },
-        scenarioDeck: state.scenarioDeck.filter(c => c.instanceId !== event.scenarioInstanceId),
-        // Solitario: 1 moneda sobre el escenario revelado (spec §4.1)
-        scenarioCoins: state.mode === 'SOLO' ? 1 : 0,
-      };
-
-    case 'SCENARIO_DISCARDED':
-      // D434 (spec §4.2): la moneda del último escenario se recoge "al
-      // finalizar la partida". Si el descarte se produce al revelarse el
-      // Señor (warlordRevealed ya true por el WARLORD_REVEALED previo),
-      // conservar scenarioCoins para el recuento final.
-      return {
-        ...state,
-        scenario: null,
-        scenarioCoins: state.warlordRevealed ? state.scenarioCoins : 0,
-      };
-
-    // === Pericias ===
-    case 'HERO_ABILITY_USED':
-      return mapPlayerState(state, event.playerId, p => ({
-        ...p,
-        heroUsesRemaining: event.usesRemaining,
-      }));
-
-    // === Prevencion ===
-    case 'PREVENTION_APPLIED':
-      return mapPlayerState(state, event.playerId, p => ({
-        ...p,
-        prevention: p.prevention + event.amount,
-      }));
-
-    case 'SHIELD_PLACED':
-      return mapPlayerState(state, event.playerId, p => ({
-        ...p,
-        shields: p.shields + event.amount,
-      }));
-
-    case 'SHIELD_TRANSFERRED': {
-      const fromPlayer = state.players[event.fromPlayerId];
-      const toPlayer = state.players[event.toPlayerId];
-      if (!fromPlayer || !toPlayer) return state;
-      return {
-        ...state,
-        players: {
-          ...state.players,
-          [event.fromPlayerId]: { ...fromPlayer, shields: Math.max(0, fromPlayer.shields - event.amount) },
-          [event.toPlayerId]: { ...toPlayer, shields: toPlayer.shields + event.amount },
-        },
-      };
-    }
-
-    case 'CANCELLATION_ACTIVATED':
-      return mapPlayerState(state, event.playerId, p => ({
-        ...p,
-        damageCancellation: true,
-      }));
-
-    // === Enemigos ===
-    case 'ENEMY_DAMAGE_DISABLED':
-      return {
-        ...state,
-        battlefield: state.battlefield.map(e =>
-          e.instanceId === event.enemyInstanceId
-            ? { ...e, damageDisabled: true }
-            : e
-        ),
-      };
-
-    case 'VULNERABILITY_APPLIED':
-      return {
-        ...state,
-        battlefield: state.battlefield.map(e =>
-          e.instanceId === event.enemyInstanceId
-            ? {
-                ...e,
-                modifiers: [
-                  ...e.modifiers,
-                  {
-                    id: `vuln-${event.seq}`,
-                    sourceId: event.enemyInstanceId,
-                    layer: 'DAMAGE_BONUS',
-                    timestamp: event.seq,
-                    duration: 'UNTIL_END_OF_TURN',
-                    amount: event.bonus,
-                    targetId: event.enemyInstanceId,
-                  },
-                ],
-              }
-            : e
-        ),
-      };
-
-    // === Modificadores ===
-    case 'MODIFIER_ADDED': {
-      // Aplicar modificador al objetivo (jugador, enemigo o mercado)
-      const modifier: Modifier = {
-        id: event.modifierId,
-        sourceId: event.sourceId ?? '',
-        layer: event.layer as ModifierLayer,
-        timestamp: state.monotonicCounter,
-        duration: (event.duration as Modifier['duration']) ?? 'UNTIL_END_OF_TURN',
-        amount: event.amount ?? 0,
-        filter: event.filter,
-        scope: event.scope,
-        targetId: event.targetId,
-      };
-      // Si el target es un enemigo del campo
-      const enemy = state.battlefield.find(e => e.instanceId === event.targetId);
-      if (enemy) {
-        return {
-          ...state,
-          battlefield: state.battlefield.map(e =>
-            e.instanceId === event.targetId
-              ? { ...e, modifiers: [...e.modifiers, modifier] }
-              : e
-          ),
-        };
-      }
-      // Si el target es un jugador
-      if (state.players[event.targetId]) {
-        return mapPlayerState(state, event.targetId, p => ({
-          ...p,
-          modifiers: [...p.modifiers, modifier],
-        }));
-      }
-      // Si el target es 'market', aplicar modificador de coste
-      if (event.targetId === 'market' && event.layer === 'MARKET_COST') {
-        // D418: sin amount explicito, no aplicar nada (default -1 era peligroso)
-        if (event.amount === undefined) return state;
-        return { ...state, marketCostModifier: state.marketCostModifier + event.amount };
-      }
-      return state;
-    }
-
-    case 'MODIFIER_EXPIRED': {
-      const newPlayers = { ...state.players };
-      for (const [id, p] of Object.entries(newPlayers)) {
-        newPlayers[id] = {
-          ...p,
-          modifiers: p.modifiers.filter(m => m.id !== event.modifierId),
-        };
-      }
-      return {
-        ...state,
-        players: newPlayers,
-        battlefield: state.battlefield.map(e => ({
-          ...e,
-          modifiers: e.modifiers.filter(m => m.id !== event.modifierId),
-        })),
-      };
-    }
-
-    // === Heridas de heroe ===
-    case 'HERO_WOUNDED':
-      return mapPlayerState(state, event.playerId, p => ({
-        ...p,
-        wounds: event.woundCount,
-      }));
-
-    // === Mazo agotado y reciclado ===
-    case 'DECK_EXHAUSTED':
-      return state;
-
-    case 'DECK_RESHUFFLED':
-      return mapPlayerState(state, event.playerId, p => {
-        // Si el evento incluye newOrder NO vacio, usarlo; si no, mantener orden lineal
-        const newDeck = (Array.isArray(event.newOrder) && event.newOrder.length > 0)
-          ? event.newOrder.map(id => {
-              const card = p.wearPile.find(c => c.instanceId === id);
-              return card ? { ...card, zone: 'ABILITY_DECK' as Zone } : null;
-            }).filter((c): c is NonNullable<typeof c> => c !== null)
-          : [...p.wearPile].map(c => ({ ...c, zone: 'ABILITY_DECK' as Zone }));
-        return {
-          ...p,
-          abilityDeck: newDeck,
-          wearPile: [],
-        };
-      });
-
-    // === Evasion ===
-    case 'EVASION_PERFORMED': {
-      const player = state.players[event.playerId];
-      const discarded = player.hand.filter(c => event.discardedCardInstanceIds.includes(c.instanceId));
-      const remainingHand = player.hand.filter(c => !event.discardedCardInstanceIds.includes(c.instanceId));
-
-      return {
-        ...state,
-        evasionDiscardedCount: event.discardedCardInstanceIds.length,
-        players: {
-          ...state.players,
-          [event.playerId]: {
-            ...player,
-            hand: remainingHand,
-            wearPile: [...player.wearPile, ...discarded.map(c => ({ ...c, zone: 'WEAR_PILE' as Zone }))],
-            evasionTokenUsed: true,
-          },
-        },
-      };
-    }
-
-    // === Fin de partida ===
-    case 'GAME_ENDED':
-      return { ...state, phase: 'FINISHED' };
-
-    // === Cartas persistentes ===
-    case 'PERSISTENT_CARD_PLACED':
-      return mapPlayerState(state, event.playerId, p => ({
-        ...p,
-        // Retirar la carta de la mano (se mueve a IN_FRONT_OF_PLAYER)
-        hand: p.hand.filter(c => c.instanceId !== event.cardInstanceId),
-        persistentCards: [
-          ...p.persistentCards,
-          {
-            instanceId: event.cardInstanceId,
-            definitionId: event.cardDefinitionId,
-            ownerId: event.playerId,
-            zone: 'IN_FRONT_OF_PLAYER',
-            persistentTrigger: event.trigger,
-          },
-        ],
-      }));
-
-    case 'PERSISTENT_CARD_REMOVED':
-      return {
-        ...state,
-        players: Object.fromEntries(
-          Object.entries(state.players).map(([id, p]) => [
-            id,
-            {
-              ...p,
-              persistentCards: p.persistentCards.filter(c => c.instanceId !== event.cardInstanceId),
-            },
-          ])
-        ),
-      };
-
-    // === Leader ===
-    case 'LEADER_DETERMINED':
-      return { ...state, activePlayerId: event.playerId };
-
-    case 'LEADER_TIE_BREAK':
-      // Informativo: el ganador ya se aplicó en LEADER_DETERMINED.
-      return state;
-
-    // === Deck Shuffle ===
-    case 'DECK_SHUFFLED': {
-      if (event.deck === 'MARKET') {
-        // Barajar mazo de Mercado
-        const deckMap = new Map(state.marketDeck.map(c => [c.instanceId, c]));
-        const newDeck = event.newOrder.map(id => deckMap.get(id)!).filter(Boolean);
-        return { ...state, marketDeck: newDeck };
-      }
-      if (event.deck === 'HORDE') {
-        // Barajar mazo de la Horda
-        const deckMap = new Map(state.hordeDeck.map(c => [c.instanceId, c]));
-        const newDeck = event.newOrder.map(id => deckMap.get(id)!).filter(Boolean);
-        return { ...state, hordeDeck: newDeck };
-      }
-      // ABILITY: reordenar mazo del jugador
-      const player = state.players[event.playerId];
-      const deckMap = new Map(player.abilityDeck.map(c => [c.instanceId, c]));
-      const newDeck = event.newOrder.map(id => deckMap.get(id)!).filter(Boolean);
-      return {
-        ...state,
-        players: {
-          ...state.players,
-          [event.playerId]: { ...player, abilityDeck: newDeck },
-        },
-      };
-    }
-
-    // === Enemy Swapped ===
-    case 'ENEMY_SWAPPED': {
-      // El enemigo viejo vuelve al FONDO del mazo de la Horda, el nuevo entra al campo
-      const oldEnemy = state.battlefield.find(e => e.instanceId === event.oldEnemyInstanceId);
-      if (!oldEnemy) return state;
-      const oldEnemyCard: CardInstance = {
-        instanceId: oldEnemy.instanceId,
-        definitionId: oldEnemy.definitionId,
-        ownerId: 'horde',
-        zone: 'HORDE_DECK',
-      };
-      const newEnemy = applyEntryAuras({
-        instanceId: event.newEnemyInstanceId,
-        definitionId: event.newEnemyDefinitionId,
-        baseFortitude: event.newEnemyFortitude,
-        wounds: 0,
-        reward: event.newEnemyReward,
-        modifiers: [],
-        isWarlord: event.newEnemyIsWarlord,
-        isOrc: event.newEnemyIsOrc,
-        specialIcons: event.newEnemySpecialIcons,
-        damageDisabled: false,
-      }, state);
-      return {
-        ...state,
-        battlefield: state.battlefield.map(e =>
-          e.instanceId === event.oldEnemyInstanceId ? newEnemy : e
-        ),
-        hordeDeck: [
-          ...state.hordeDeck.filter(c => c.instanceId !== event.newEnemyInstanceId),
-          oldEnemyCard,
-        ],
-      };
-    }
-
-    // === Enemy Returned to Horde ===
-    case 'ENEMY_RETURNED_TO_HORDE': {
-      const enemy = state.battlefield.find(e => e.instanceId === event.enemyInstanceId);
-      if (!enemy) return state;
-      const enemyCard: CardInstance = {
-        instanceId: enemy.instanceId,
-        definitionId: enemy.definitionId,
-        ownerId: 'horde',
-        zone: 'HORDE_DECK',
-      };
-      return {
-        ...state,
-        battlefield: state.battlefield.filter(e => e.instanceId !== event.enemyInstanceId),
-        hordeDeck: event.position === 'BOTTOM'
-          ? [...state.hordeDeck, enemyCard]
-          : [enemyCard, ...state.hordeDeck],
-      };
-    }
-
-    // === Damage Intercepted ===
-    case 'DAMAGE_INTERCEPTED': {
-      // Valerys: interceptar dano de otro heroe
-      // El interceptor recibe el dano como perdida de cartas y gana 1 Gloria
-      const interceptor = state.players[event.interceptorPlayerId];
-      if (!interceptor) return state;
-      if (event.amount <= 0) {
-        // Registrar intercepcion: el dano real se aplicara en processHordeAttack
-        return mapPlayerState(state, event.originalTargetPlayerId, p => ({
-          ...p,
-          interceptedBy: event.interceptorPlayerId,
-          glory: p.glory,
-        }));
-      }
-      // Aplicar dano como perdida de cartas (la Gloria ya se otorgo en valerysAbility)
-      const lost = interceptor.abilityDeck.slice(0, event.amount).map(c => c.instanceId);
-      return mapPlayerState(state, event.interceptorPlayerId, p => ({
-        ...p,
-        abilityDeck: p.abilityDeck.slice(lost.length),
-        wearPile: [...p.wearPile, ...p.abilityDeck.slice(0, lost.length).map(c => ({ ...c, zone: 'WEAR_PILE' as Zone }))],
-      }));
-    }
-
-    // === Cards Revealed to Player ===
-    case 'CARDS_REVEALED_TO_PLAYER':
-      // No cambia el estado del juego; es informativo para el cliente
-      return state;
-
-    // === Resolucion detenida por presupuesto (Taller §18) ===
-    case 'RESOLUTION_HALTED':
-      // Informativo: el estado queda como lo dejo la resolucion parcial
-      return state;
-
-    // === Armadura (GRANT_ARMOR, Taller) ===
-    case 'ARMOR_GRANTED':
-      return mapPlayerState(state, event.playerId, p => ({
-        ...p,
-        armor: (p.armor ?? 0) + event.amount,
-      }));
-
-    // === Estados sobre enemigos (Marca, Veneno, Aturdimiento…) ===
-    case 'STATUS_APPLIED': {
-      const enemy = state.battlefield.find(e => e.instanceId === event.enemyInstanceId);
-      if (!enemy) return state;
-      const hasStatus = (enemy.statuses ?? []).some(s => s.id === event.status);
-      const statuses = hasStatus
-        ? (enemy.statuses ?? []).map(s =>
-            s.id === event.status ? { ...s, stacks: s.stacks + event.stacks } : s)
-        : [...(enemy.statuses ?? []), { id: event.status, stacks: event.stacks, duration: event.duration }];
-      return {
-        ...state,
-        battlefield: state.battlefield.map(e =>
-          e.instanceId === event.enemyInstanceId ? { ...e, statuses } : e),
-      };
-    }
-
-    case 'STATUS_REMOVED':
-      return {
-        ...state,
-        battlefield: state.battlefield.map(e =>
-          e.instanceId === event.enemyInstanceId
-            ? { ...e, statuses: (e.statuses ?? []).filter(s => s.id !== event.status) }
-            : e),
-      };
-
-    // === Descarte directo de la Horda (DISCARD_HORDE_CARD, Taller) ===
-    case 'HORDE_CARD_DISCARDED':
-      return {
-        ...state,
-        hordeDeck: state.hordeDeck.filter(c => c.instanceId !== event.cardInstanceId),
-      };
-
-    // === Enemigo invocado directamente al campo (SPAWN_ENEMY, Taller) ===
-    case 'ENEMY_SPAWNED': {
-      // La carta sale del mazo de la Horda y entra al campo (con auras de
-      // entrada, igual que ENEMY_SWAPPED — p.ej. Ruinas de Brunmar)
-      const spawned = applyEntryAuras({
-        instanceId: event.enemyInstanceId,
-        definitionId: event.enemyDefinitionId,
-        baseFortitude: event.enemyFortitude,
-        wounds: 0,
-        reward: event.enemyReward,
-        modifiers: [],
-        isWarlord: event.enemyIsWarlord,
-        isOrc: event.enemyIsOrc,
-        specialIcons: event.enemySpecialIcons,
-        damageDisabled: false,
-        statuses: [],
-      }, state);
-      return {
-        ...state,
-        battlefield: [...state.battlefield, spawned],
-        hordeDeck: state.hordeDeck.filter(c => c.instanceId !== event.enemyInstanceId),
-      };
-    }
-
-    // === Variables de partida del Taller (SET_VARIABLE scope GAME) ===
-    case 'VARIABLE_SET':
-      return {
-        ...state,
-        customVars: { ...(state.customVars ?? {}), [event.name]: event.value },
-      };
-
-    // === Bloqueo del próximo daño (BLOCK_NEXT_DAMAGE) ===
-    case 'BLOCK_GRANTED':
-      return mapPlayerState(state, event.playerId, p => ({
-        ...p,
-        blockNext: (p.blockNext ?? 0) + event.amount,
-      }));
-
-    case 'BLOCK_CONSUMED':
-      return mapPlayerState(state, event.playerId, p => ({
-        ...p,
-        blockNext: 0,
-      }));
-
-    // === Oyentes de eventos (REGISTER_LISTENER / REMOVE_LISTENER) ===
-    case 'LISTENER_REGISTERED':
-      return {
-        ...state,
-        listeners: [...(state.listeners ?? []), event.listener],
-      };
-
-    case 'LISTENER_REMOVED':
-      return {
-        ...state,
-        listeners: (state.listeners ?? []).filter(l => l.id !== event.listenerId),
-      };
-
-    // === Limpiezas de ciclo de vida ===
-    // Los helpers viven en modifiers/ y son los mismos que usa el camino
-    // directo: la transformación es determinista, así que aplicarla sobre un
-    // estado ya limpio es un no-op (idempotente).
-    case 'EFFECTS_EXPIRED':
-      switch (event.scope) {
-        case 'HORDE_ATTACK_END': return cleanupHordeAttackEnd(state);
-        case 'RESTORATION': return cleanupRestoration(state);
-        case 'TURN_END': return cleanupTurnEnd(state);
-        default: return state;
-      }
-
-    case 'PENDING_CHOICES_REMOVED':
-      return {
-        ...state,
-        pendingChoices: state.pendingChoices.filter(c => !event.choiceIds.includes(c.choiceId)),
-      };
-
-    case 'TROPHY_REMOVED':
-      return mapPlayerState(state, event.playerId, p => ({
-        ...p,
-        trophies: p.trophies.filter(t => t !== event.trophyInstanceId),
-      }));
-
+    case 'PHASE_CHANGED': return applyPhaseChanged(state, event);
+    case 'TURN_STARTED': return applyTurnStarted(state, event);
+    case 'TURN_ENDED': return applyTurnEnded(state, event);
+    case 'SUPPORT_DECK_OPENED': return applySupportDeckOpened(state, event);
+    case 'CARD_PLAYED': return applyCardPlayed(state, event);
+    case 'DAMAGE_DEALT': return applyDamageDealt(state, event);
+    case 'WOUND_PLACED': return applyWoundPlaced(state, event);
+    case 'ENEMY_DEFEATED': return applyEnemyDefeated(state, event);
+    case 'CARDS_DRAWN': return applyCardsDrawn(state, event);
+    case 'CARDS_LOST': return applyCardsLost(state, event);
+    case 'CARDS_RECOVERED': return applyCardsRecovered(state, event);
+    case 'GLORY_GAINED': return applyGloryGained(state, event);
+    case 'GLORY_LOST': return applyGloryLost(state, event);
+    case 'COINS_GAINED': return applyCoinsGained(state, event);
+    case 'COINS_STOLEN': return applyCoinsStolen(state, event);
+    case 'WOUND_HEALED': return applyWoundHealed(state, event);
+    case 'CARD_MOVED': return applyCardMoved(state, event);
+    case 'CARD_REMOVED_FROM_GAME': return applyCardRemovedFromGame(state, event);
+    case 'HORDE_DECK_REORDERED': return applyHordeDeckReordered(state, event);
+    case 'HORDE_ATTACKED': return applyHordeAttacked(state, event);
+    case 'ENEMY_REVEALED': return applyEnemyRevealed(state, event);
+    case 'WARLORD_REVEALED': return applyWarlordRevealed(state, event);
+    case 'MARKET_PURCHASED': return applyMarketPurchased(state, event);
+    case 'MARKET_REPLENISHED': return applyMarketReplenished(state, event);
+    case 'SCENARIO_REVEALED': return applyScenarioRevealed(state, event);
+    case 'SCENARIO_DISCARDED': return applyScenarioDiscarded(state, event);
+    case 'HERO_ABILITY_USED': return applyHeroAbilityUsed(state, event);
+    case 'PREVENTION_APPLIED': return applyPreventionApplied(state, event);
+    case 'SHIELD_PLACED': return applyShieldPlaced(state, event);
+    case 'SHIELD_TRANSFERRED': return applyShieldTransferred(state, event);
+    case 'CANCELLATION_ACTIVATED': return applyCancellationActivated(state, event);
+    case 'ENEMY_DAMAGE_DISABLED': return applyEnemyDamageDisabled(state, event);
+    case 'VULNERABILITY_APPLIED': return applyVulnerabilityApplied(state, event);
+    case 'MODIFIER_ADDED': return applyModifierAdded(state, event);
+    case 'MODIFIER_EXPIRED': return applyModifierExpired(state, event);
+    case 'HERO_WOUNDED': return applyHeroWounded(state, event);
+    case 'DECK_EXHAUSTED': return applyDeckExhausted(state, event);
+    case 'DECK_RESHUFFLED': return applyDeckReshuffled(state, event);
+    case 'EVASION_PERFORMED': return applyEvasionPerformed(state, event);
+    case 'GAME_ENDED': return applyGameEnded(state, event);
+    case 'PERSISTENT_CARD_PLACED': return applyPersistentCardPlaced(state, event);
+    case 'PERSISTENT_CARD_REMOVED': return applyPersistentCardRemoved(state, event);
+    case 'LEADER_DETERMINED': return applyLeaderDetermined(state, event);
+    case 'LEADER_TIE_BREAK': return applyLeaderTieBreak(state, event);
+    case 'DECK_SHUFFLED': return applyDeckShuffled(state, event);
+    case 'ENEMY_SWAPPED': return applyEnemySwapped(state, event);
+    case 'ENEMY_RETURNED_TO_HORDE': return applyEnemyReturnedToHorde(state, event);
+    case 'DAMAGE_INTERCEPTED': return applyDamageIntercepted(state, event);
+    case 'CARDS_REVEALED_TO_PLAYER': return applyCardsRevealedToPlayer(state, event);
+    case 'RESOLUTION_HALTED': return applyResolutionHalted(state, event);
+    case 'ARMOR_GRANTED': return applyArmorGranted(state, event);
+    case 'STATUS_APPLIED': return applyStatusApplied(state, event);
+    case 'STATUS_REMOVED': return applyStatusRemoved(state, event);
+    case 'HORDE_CARD_DISCARDED': return applyHordeCardDiscarded(state, event);
+    case 'ENEMY_SPAWNED': return applyEnemySpawned(state, event);
+    case 'VARIABLE_SET': return applyVariableSet(state, event);
+    case 'BLOCK_GRANTED': return applyBlockGranted(state, event);
+    case 'BLOCK_CONSUMED': return applyBlockConsumed(state, event);
+    case 'LISTENER_REGISTERED': return applyListenerRegistered(state, event);
+    case 'LISTENER_REMOVED': return applyListenerRemoved(state, event);
+    case 'EFFECTS_EXPIRED': return applyEffectsExpired(state, event);
+    case 'PENDING_CHOICES_REMOVED': return applyPendingChoicesRemoved(state, event);
+    case 'TROPHY_REMOVED': return applyTrophyRemoved(state, event);
     default: {
       // Exhaustive check
       const _exhaustive: never = event;
@@ -961,7 +132,7 @@ function applyEventInternal(state: GameState, event: GameEvent): GameState {
 // Helpers
 // ============================================================================
 
-function mapPlayer(
+export function mapPlayer(
   players: Record<string, PlayerState>,
   playerId: string,
   fn: (p: PlayerState) => PlayerState
@@ -1020,7 +191,7 @@ export function checkFortitudeDefeats(
   return events;
 }
 
-function moveCard(state: GameState, cardInstanceId: string, to: Zone, toPlayerId?: string): GameState {
+export function moveCard(state: GameState, cardInstanceId: string, to: Zone, toPlayerId?: string, eventPlayerId?: string): GameState {
   const newPlayers = { ...state.players };
 
   // Transferencia entre jugadores (toPlayerId ≠ propietario actual):
@@ -1204,10 +375,24 @@ function moveCard(state: GameState, cardInstanceId: string, to: Zone, toPlayerId
     }
   }
 
+  // Mazo de la Horda como origen (SEARCH_DECK deck:'HORDE' del Taller).
+  if (!found) {
+    const hordeIdx = state.hordeDeck.findIndex(c => c.instanceId === cardInstanceId);
+    if (hordeIdx >= 0) {
+      movedCard = { ...state.hordeDeck[hordeIdx], zone: to };
+      const newHordeDeck = [...state.hordeDeck];
+      newHordeDeck.splice(hordeIdx, 1);
+      state = { ...state, hordeDeck: newHordeDeck };
+      found = true;
+    }
+  }
+
   // Anadir la carta del mercado a la zona destino del jugador activo (si aplica)
   // Solo si la carta NO se encontro en zonas de jugador (viene del mercado)
   if (found && !foundInPlayer && movedCard && (to === 'HAND' || to === 'WEAR_PILE' || to === 'ABILITY_DECK')) {
-    const activeId = state.activePlayerId;
+    // El destino es el jugador del evento (p.ej. SEARCH_DECK resuelto por
+    // un oyente o en el turno de otro), no siempre el activo.
+    const activeId = eventPlayerId ?? state.activePlayerId;
     if (activeId && newPlayers[activeId]) {
       const alreadyAdded = newPlayers[activeId].hand.some((c: any) => c.instanceId === cardInstanceId)
         || newPlayers[activeId].abilityDeck.some((c: any) => c.instanceId === cardInstanceId)
@@ -1226,6 +411,10 @@ function moveCard(state: GameState, cardInstanceId: string, to: Zone, toPlayerId
   if (found && movedCard && to === 'MARKET_DECK') {
     state = { ...state, marketDeck: [...state.marketDeck, movedCard] };
   }
+  // …y al mazo de la Horda (SEARCH_DECK SWAP_WITH_HAND sobre deck:'HORDE')
+  if (found && movedCard && to === 'HORDE_DECK') {
+    state = { ...state, hordeDeck: [...state.hordeDeck, movedCard] };
+  }
   // Tambien manejar movimiento de una carta al mercado visible
   if (found && movedCard && to === 'MARKET') {
     state = { ...state, market: [...state.market, movedCard] };
@@ -1234,7 +423,7 @@ function moveCard(state: GameState, cardInstanceId: string, to: Zone, toPlayerId
   return { ...state, players: newPlayers };
 }
 
-function removeCardFromAllZones(state: GameState, cardInstanceId: string): GameState {
+export function removeCardFromAllZones(state: GameState, cardInstanceId: string): GameState {
   const newPlayers = { ...state.players };
 
   for (const [playerId, player] of Object.entries(newPlayers)) {

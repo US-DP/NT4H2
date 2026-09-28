@@ -97,6 +97,18 @@ export function setupGame(
     ? warlordCardsAll.filter(c => config.warlordIds!.includes(c.id))
     : warlordCardsAll;
 
+  // Reportar IDs de pools que no resuelven (p.ej. un set custom borrado):
+  // antes se filtraban en silencio y la partida se degradaba sin aviso.
+  const reportMissing = (label: string, wanted: string[] | undefined, resolved: { id: string }[]) => {
+    if (!wanted?.length) return;
+    const found = new Set(resolved.map(c => c.id));
+    for (const id of wanted) {
+      if (!found.has(id)) errors.push(`${label} pool: unknown card id '${id}'`);
+    }
+  };
+  reportMissing('Horde', config.hordeCardIds, hordeCards);
+  reportMissing('Warlord', config.warlordIds, warlordCards);
+
   // D406: comparar instancias totales (suma de copies), no definiciones.
   // El mínimo de 27 solo aplica al pool oficial: un pool personalizado
   // puede ser más pequeño (la partida usa lo disponible).
@@ -243,6 +255,14 @@ export function setupGame(
   if (config.marketCardIds?.length) {
     const wanted = new Set(config.marketCardIds);
     marketCards = marketCards.filter(c => wanted.has(c.id));
+    for (const id of config.marketCardIds) {
+      if (!marketCards.some(c => c.id === id)) {
+        errors.push(`Market pool: unknown card id '${id}'`);
+      }
+    }
+    if (marketCards.length === 0) {
+      errors.push('Custom Market pool is empty or has no valid MARKET cards');
+    }
   }
   const marketInstances: CardInstance[] = [];
   if (config.mode === 'SOLO') {
@@ -280,6 +300,14 @@ export function setupGame(
     if (config.scenarioIds && config.scenarioIds.length > 0) {
       const wanted = new Set(config.scenarioIds);
       scenarioCards = scenarioCards.filter(s => wanted.has(s.id));
+      for (const id of config.scenarioIds) {
+        if (!scenarioCards.some(s => s.id === id)) {
+          errors.push(`Scenario pool: unknown card id '${id}'`);
+        }
+      }
+      if (scenarioCards.length === 0) {
+        errors.push('Custom Scenario pool is empty or has no valid SCENARIO cards');
+      }
     }
     const scenarioInstances: CardInstance[] = scenarioCards.map(card => ({
       instanceId: nextInstanceId('scenario'),

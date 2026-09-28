@@ -63,10 +63,10 @@ function routeFetch(url: string | URL | Request) {
 }
 
 // El socket se crea tras un await (fetch del ticket) — hay que esperar
-async function waitForSocket(index = 0): Promise<MockWebSocket> {
+async function waitForSocket(index = 0, timeout = 4000): Promise<MockWebSocket> {
   await vi.waitFor(() => {
     expect(MockWebSocket.instances.length).toBeGreaterThan(index);
-  });
+  }, { timeout });
   return MockWebSocket.instances[index];
 }
 
@@ -196,5 +196,35 @@ describe('Flujo online — gameStore real', () => {
     expect(received).toHaveLength(1);
     expect(received[0].text).toBe('hola');
     cleanup();
+  });
+
+  it('los comandos encolados se envían al reconectar (D439: cola drenada tras re-sync)', async () => {
+    fetchMock.mockImplementation((url: any) => {
+      if (String(url).includes('/ws-ticket/')) return Promise.resolve(jsonResponse({ ticket: 'tk-2' }));
+      return Promise.resolve(jsonResponse({ state: null }));
+    });
+    useGameStore.getState().connectOnline('ROOM9', 'p9', 'tok-9');
+    const ws1 = await waitForSocket(0);
+    ws1.open();
+    await vi.waitFor(() => expect(useGameStore.getState().online.socket).toBe(ws1));
+
+    // Conexión perdida con un comando en mano → se encola, no se envía
+    ws1.readyState = MockWebSocket.CLOSED;
+    useGameStore.getState().sendOnlineCommand({ type: 'END_TURN' });
+    expect(ws1.sent).toHaveLength(0);
+
+    // onclose dispara scheduleReconnect (NetInfo conectado → backoff ~1s real)
+    ws1.onclose?.();
+    const ws2 = await waitForSocket(1);
+    expect(ws2).not.toBe(ws1);
+    ws2.open();
+
+    // Tras re-sincronizar, la cola se vacía sobre el socket NUEVO
+    await vi.waitFor(() => {
+      expect(ws2.sent.length).toBeGreaterThan(0);
+    });
+    const gameCmd = ws2.sent.find(m => m.type === 'game.command');
+    expect(gameCmd?.command?.type).toBe('END_TURN');
+    useGameStore.getState().disconnectOnline();
   });
 });

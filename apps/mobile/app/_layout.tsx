@@ -15,6 +15,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import * as SplashScreen from 'expo-splash-screen';
 import { useGameStore } from '../store/gameStore';
+import { useAuth } from '../store/authStore';
 import { useSettings } from '../store/settingsStore';
 import { NtToastHost } from '../components/ui/NtToast';
 import { initMonitoring } from '../lib/monitoring';
@@ -49,6 +50,7 @@ export default function RootLayout() {
           (async () => {
             initCatalog();
             await hydrateSettings();
+            await useAuth.getState().hydrate();
           })(),
           new Promise<void>((resolve) => setTimeout(resolve, 8000)),
         ]);
@@ -102,6 +104,7 @@ export default function RootLayout() {
       <Stack.Screen name="(stats)/index" options={{ title: t('misc.screen.stats') }} />
         <Stack.Screen name="(library)/index" options={{ title: t('misc.screen.library') }} />
       <Stack.Screen name="(profile)/index" options={{ title: t('misc.screen.profile') }} />
+      <Stack.Screen name="(auth)/index" options={{ title: t('auth.title') }} />
       <Stack.Screen name="(room)/index" options={{ title: t('misc.screen.room') }} />
       <Stack.Screen name="(study)/index" options={{ title: t('misc.screen.study') }} />
       <Stack.Screen name="(dev)/showcase" options={{ title: t('misc.screen.showcase') }} />

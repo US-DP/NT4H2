@@ -8,7 +8,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "lint": "eslint .",
-    "test": "tsx --test server.test.ts",
+    "test": "tsx --test server.test.ts server-negative.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

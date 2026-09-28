@@ -24,6 +24,7 @@ import commonEs from './i18n/es/common';
 import bookEs from './i18n/es/book';
 import carduiEs from './i18n/es/cardui';
 import miscEs from './i18n/es/misc';
+import authEs from './i18n/es/auth';
 import workshopEn from './i18n/en/workshop';
 import studyEn from './i18n/en/study';
 import flowEn from './i18n/en/flow';
@@ -38,6 +39,7 @@ import commonEn from './i18n/en/common';
 import bookEn from './i18n/en/book';
 import carduiEn from './i18n/en/cardui';
 import miscEn from './i18n/en/misc';
+import authEn from './i18n/en/auth';
 
 const resources = {
   es: {
@@ -56,6 +58,7 @@ const resources = {
       ...bookEs,
       ...carduiEs,
       ...miscEs,
+      ...authEs,
       nav: {
         home: 'Inicio',
         play: 'Jugar',
@@ -546,6 +549,7 @@ const resources = {
       ...bookEn,
       ...carduiEn,
       ...miscEn,
+      ...authEn,
       nav: {
         home: 'Home',
         play: 'Play',

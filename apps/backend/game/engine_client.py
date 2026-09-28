@@ -82,6 +82,21 @@ class EngineRunnerClient:  # noqa: PIE798 - namespacing deliberado sobre los 5 e
             return response.json()
 
     @staticmethod
+    def get_full_state(room_id: str) -> dict:
+        """Estado COMPLETO de la sala (state + rngState + revision).
+
+        PRIVACY: uso interno — contiene manos y RNG sin proyectar.
+        Solo para snapshots/auditoría del backend; nunca servir a clientes.
+        """
+        with httpx.Client(timeout=5.0) as client:
+            response = client.get(
+                _url(f"/rooms/{room_id}/full-state"),
+                headers=_headers(),
+            )
+            response.raise_for_status()
+            return response.json()
+
+    @staticmethod
     def delete_room(room_id: str) -> dict:
         """Elimina la sala del runner (cleanup de salas abandonadas)."""
         with httpx.Client(timeout=5.0) as client:

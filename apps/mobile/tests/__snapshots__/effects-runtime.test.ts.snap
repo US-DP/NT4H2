@@ -1,0 +1,3 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Resolver real — cada efecto oficial se ejecuta en partida > cada efecto produce traza o elección pendiente (no es no-op silencioso) > silent-effects 1`] = `[]`;

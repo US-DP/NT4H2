@@ -11,8 +11,9 @@
  */
 
 import type { CardEffect, Condition, ValueExpr } from '@nt4h/schema';
+import { ConditionSchema } from '@nt4h/schema';
 import { num, esT, type EffectNode, type TFunc } from './model';
-import { ACTION_DEFS, CONDITIONS, valueExpr } from './registry';
+import { ACTION_DEFS, CONDITIONS, valueExpr, rawValueExpr } from './registry';
 
 export type DiagSeverity = 'error' | 'warning' | 'info';
 
@@ -39,23 +40,69 @@ export interface CompileResult {
 // ============================================================================
 
 const seg = {
-  root: (i: number) => `raíz[${i}]`,
-  then: (i: number) => `entonces[${i}]`,
-  else_: (i: number) => `sino[${i}]`,
-  child: (i: number) => `hijos[${i}]`,
-  option: (i: number, n: number) => `opción ${i + 1}[${n}]`,
+  root: (t: TFunc, i: number) => t('workshop.pathRoot', { i }),
+  then: (t: TFunc, i: number) => t('workshop.pathThen', { i }),
+  else_: (t: TFunc, i: number) => t('workshop.pathElse', { i }),
+  child: (t: TFunc, i: number) => t('workshop.pathChild', { i }),
+  option: (t: TFunc, i: number, n: number) => t('workshop.pathOption', { i: i + 1, n }),
 };
 
+/** Tipos que SOLO el resolver intercepta a nivel raíz: anidados dentro de
+ *  COND/REPEAT/CHOOSE/oyentes caen al fallback del registry y son un no-op
+ *  silencioso. El compilador lo diagnostica como error (bloquea guardado)
+ *  en vez de publicar una carta que no hace lo que muestra el árbol. */
+const ROOT_ONLY_NODE_KINDS = new Set<EffectNode['kind']>([
+  'CHOOSE', 'DRAW_CHECK', 'ON_DEFEAT', 'ON_HORDE',
+]);
+const ROOT_ONLY_ACTIONS = new Set<string>([
+  'PLAY_IMMEDIATELY', 'DRAW_AND_ADD_ATTACK', 'SPAWN_ENEMY', 'CUSTOM_SCENARIO',
+]);
+/** Anidados siguen ejecutándose pero con semántica degradada (sin pausa de
+ *  elección / sin datos de catálogo): aviso, no bloqueo. */
+const DEGRADED_NESTED_ACTIONS = new Set<string>([
+  'DISCARD_FROM_HAND', // no abre elección: descarta las últimas N
+  'SWAP_ENEMY',        // fallback sin catálogo (Fortaleza 1, sin recompensa)
+]);
+
 type DiagSink = (d: Omit<WorkshopDiagnostic, 'path'>, path: string) => void;
+
+/** Parsea una Condition passthrough (condKind 'RAW') con validación Zod. */
+function parseRawCond(raw: string | undefined): Condition | null {
+  if (!raw) return null;
+  try {
+    const parsed = ConditionSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
+  } catch { return null; }
+}
 
 function compileNode(
   n: EffectNode,
   path: string,
   report: DiagSink,
   t: TFunc,
+  nested: boolean,
 ): CardEffect | null {
   const discarded = (reason: string) =>
     report({ severity: 'error', code: 'DISCARDED_NODE', nodeKey: n.key, message: reason }, path);
+
+  if (nested) {
+    if (ROOT_ONLY_NODE_KINDS.has(n.kind)) {
+      report({
+        severity: 'error', code: 'ROOT_ONLY_NESTED', nodeKey: n.key,
+        message: t('workshop.diagRootOnlyNested'),
+      }, path);
+    } else if (n.kind === 'ACTION' && ROOT_ONLY_ACTIONS.has(n.actionType ?? '')) {
+      report({
+        severity: 'error', code: 'ROOT_ONLY_NESTED', nodeKey: n.key,
+        message: t('workshop.diagRootOnlyAction', { type: n.actionType }),
+      }, path);
+    } else if (n.kind === 'ACTION' && DEGRADED_NESTED_ACTIONS.has(n.actionType ?? '')) {
+      report({
+        severity: 'warning', code: 'NESTED_DEGRADED', nodeKey: n.key,
+        message: t('workshop.diagNestedDegraded', { type: n.actionType }),
+      }, path);
+    }
+  }
 
   switch (n.kind) {
     case 'ACTION': {
@@ -85,9 +132,22 @@ function compileNode(
       }
       // Condiciones compuestas (schema AND/OR/NOT — §5.2/§9):
       // join con una segunda condición si se definió, NOT envuelve todo.
-      let condition: Condition = cond.build(n.condParam ?? '', n.condValue);
+      // condKind 'RAW' (decompilador): reemite la Condition conservada.
+      let condition: Condition;
+      if (n.condKind === 'RAW') {
+        const rawCond = parseRawCond(n.condRaw);
+        if (!rawCond) {
+          report({ severity: 'error', code: 'INVALID_RAW_COND', nodeKey: n.key,
+            message: t('workshop.diagInvalidRawCond') }, path);
+        }
+        condition = rawCond ?? { kind: 'ENEMY_IS_ORC' };
+      } else {
+        condition = cond.build(n.condParam ?? '', n.condValue);
+      }
       if ((n.condJoin === 'AND' || n.condJoin === 'OR') && n.condKind2) {
-        const c2 = CONDITIONS.find(c => c.id === n.condKind2);
+        // 'RAW' solo vale como condición principal (no hay condRaw2).
+        const c2 = n.condKind2 === 'RAW' ? undefined
+          : CONDITIONS.find(c => c.id === n.condKind2);
         if (c2) {
           condition = {
             kind: n.condJoin,
@@ -106,19 +166,30 @@ function compileNode(
     case 'REPEAT': {
       const times: ValueExpr = n.timesMode === 'enemies' ? { kind: 'COUNT_LIVING_ENEMIES' }
         : n.timesMode === 'fieldEnemies' ? { kind: 'COUNT_ENEMIES_IN_FIELD' }
+        : n.timesMode === 'raw' ? (rawValueExpr(n.rawExpr) ?? { kind: 'CONSTANT', value: 1 })
         : { kind: 'CONSTANT', value: num(n.times ?? '1', 1) };
       const children = compileList(n.children ?? [], seg.child, path, report, t);
       if (children.length === 0) {
         discarded(t('workshop.diagEmptyRepeat'));
         return null;
       }
-      return { type: 'REPEAT', times, max: Math.max(1, num(n.max ?? '3', 3)), effects: children };
+      // El schema exige max ∈ [1,50]: clamp + diagnóstico en vez del error
+      // Zod crudo que salía al guardar.
+      const rawMax = num(n.max ?? '3', 3);
+      const clampedMax = Math.min(50, Math.max(1, rawMax));
+      if (clampedMax !== rawMax) {
+        report({
+          severity: 'warning', code: 'CLAMPED_VALUE', nodeKey: n.key,
+          message: t('workshop.diagClampedMax', { from: rawMax, to: clampedMax }),
+        }, path);
+      }
+      return { type: 'REPEAT', times, max: clampedMax, effects: children };
     }
     case 'CHOOSE': {
       const options = (n.options ?? [])
         .map((o, oi) => ({
           label: o.label || undefined,
-          effects: compileList(o.children, (i) => seg.option(oi, i), path, report, t),
+          effects: compileList(o.children, (tt, i) => seg.option(tt, oi, i), path, report, t),
         }))
         .filter(o => o.effects.length > 0);
       if (options.length < 2) {
@@ -177,6 +248,7 @@ function compileNode(
       return {
         type: 'DRAW_AND_CHECK',
         amount: valueExpr(n),
+        ...(n.cardRef?.trim() ? { expectedCard: n.cardRef.trim() } : {}),
         ...(n.cardName?.trim() ? { expectedName: n.cardName.trim() } : {}),
         onMatch,
         onMismatch,
@@ -212,7 +284,7 @@ function compileNode(
         type: 'REGISTER_LISTENER',
         event: n.listenEvent ?? 'DAMAGE_DEALT',
         ...(n.once ? { once: true } : {}),
-        duration: (n.duration === 'GAME' ? 'GAME' : 'THIS_TURN') as 'THIS_TURN',
+        duration: n.duration === 'GAME' ? 'GAME' as const : 'THIS_TURN' as const,
         ...(n.listenTag?.trim() ? { tag: n.listenTag.trim() } : {}),
         effects,
       };
@@ -222,13 +294,14 @@ function compileNode(
 
 function compileList(
   nodes: EffectNode[],
-  segFn: (i: number) => string,
+  segFn: (t: TFunc, i: number) => string,
   parentPath: string,
   report: DiagSink,
   t: TFunc,
 ): CardEffect[] {
+  // Todo lo que compila compileList vive dentro de otro nodo → nested=true.
   return nodes
-    .map((n, i) => compileNode(n, `${parentPath} → ${segFn(i)}`, report, t))
+    .map((n, i) => compileNode(n, `${parentPath} → ${segFn(t, i)}`, report, t, true))
     .filter(Boolean) as CardEffect[];
 }
 
@@ -237,7 +310,7 @@ export function compileTree(nodes: EffectNode[], t: TFunc = esT): CompileResult 
   const diagnostics: WorkshopDiagnostic[] = [];
   const report: DiagSink = (d, path) => diagnostics.push({ ...d, path });
   const effects = nodes
-    .map((n, i) => compileNode(n, seg.root(i), report, t))
+    .map((n, i) => compileNode(n, seg.root(t, i), report, t, false))
     .filter(Boolean) as CardEffect[];
   return { effects, diagnostics };
 }

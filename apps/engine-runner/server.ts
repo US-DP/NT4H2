@@ -582,6 +582,25 @@ app.get('/rooms/:roomId/state', requireEngineAuth, (req, res) => {
   res.json({ state: sanitizeForPlayer(room.state, playerId), revision: room.revision });
 });
 
+// Estado COMPLETO de la sala (estado + RNG + dedup). Uso interno del
+// backend para snapshots/replay — contiene manos privadas y entropía:
+// nunca exponer a clientes (requiere X-Engine-Token como todo lo demás,
+// pero además los clientes nunca llaman a esta ruta).
+app.get('/rooms/:roomId/full-state', requireEngineAuth, (req, res) => {
+  const { roomId } = req.params;
+  const room = rooms.get(roomId);
+  if (!room) {
+    res.status(404).json({ error: 'Room not found' });
+    return;
+  }
+  res.json({
+    state: room.state,
+    rngState: room.rng.serialize(),
+    revision: room.revision,
+    lastClientSeq: Object.fromEntries(room.lastClientSeq),
+  });
+});
+
 // D416: eliminar sala (cleanup)
 app.delete('/rooms/:roomId', requireEngineAuth, (req, res) => {
   const { roomId } = req.params;

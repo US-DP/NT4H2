@@ -50,10 +50,11 @@ import { pickTextFile } from '../../lib/pickFile';
 import { saveRoomSession } from '../../lib/roomSession';
 import { toast } from '../../lib/toast';
 import { API_BASE, fetchWithTimeout } from '../../lib/config';
+import { authHeaders } from '../../lib/auth';
 import { spacing, radius, fontSize } from '../../lib/theme';
 import { useColors, useFs } from '../../lib/useTheme';
-import { CATALOG_VERSION } from '@nt4h/catalog';
-import { useCustomContent } from '../../lib/customContent';
+import { CATALOG_VERSION, loadCatalog, deckToConfigEntry } from '@nt4h/catalog';
+import { useCustomContent, customDecks } from '../../lib/customContent';
 import { ENGINE_VERSION } from '@nt4h/engine';
 
 /** Sala pública del listado GET /rooms/ — matchmaking-lite. */
@@ -174,7 +175,8 @@ export default function PlayScreen() {
     try {
       const res = await fetchWithTimeout(`${API_BASE}/rooms/`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        // Con sesión activa el backend vincula el Player a la cuenta.
+        headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
         body: JSON.stringify({
           mode: 'STANDARD',
           maxPlayers: 4,
@@ -197,6 +199,26 @@ export default function PlayScreen() {
             // Los sets del host viajan como snapshot: el runner los valida
             // y los fusiona solo para esta sala (el oficial no se toca).
             customSets: customSets.length > 0 ? customSets : undefined,
+            // Pools EXPLÍCITOS solo-oficiales: sin esto los mazos por
+            // defecto incluían cualquier carta custom instalada de tipo
+            // HORDE/WARLORD/MARKET/SCENARIO y el host no podía crear una
+            // partida vainilla. Las cartas custom siguen entrando por
+            // customDecks (mazos del Taller de cada jugador).
+            ...(customSets.length > 0 ? (() => {
+              const baseCat = loadCatalog();
+              const officialIds = (tp: string) => (baseCat.byType.get(tp) ?? []).map((c) => c.id);
+              return {
+                hordeCardIds: officialIds('HORDE'),
+                warlordIds: officialIds('WARLORD'),
+                marketCardIds: officialIds('MARKET'),
+                scenarioIds: officialIds('SCENARIO'),
+              };
+            })() : {}),
+            // Mazos del Taller instalados: el invitado puede elegirlos y el
+            // runner los resuelve por customDeckId.
+            ...(customDecks().length > 0
+              ? { customDecks: customDecks().map(deckToConfigEntry) }
+              : {}),
           },
         }),
       });

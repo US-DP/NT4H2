@@ -131,6 +131,20 @@ function persistMeta(
   void storageSet(META_KEY, JSON.stringify({ history, published, fragments, trash }));
 }
 
+/** Sella todo el contenido de un conjunto como CUSTOM: nada que haya pasado
+ *  validateContentSet puede ser oficial, así que esto solo corrige los
+ *  defaults de Zod (y persistidos antiguos) sin perder COMMUNITY/DRAFT. */
+function stampSetCustom(set: ContentSet): ContentSet {
+  return {
+    ...set,
+    cards: set.cards.map(c => (
+      c.officialStatus === 'OFFICIAL' || c.officialStatus === 'OFFICIAL_PROMO'
+        ? { ...c, officialStatus: 'CUSTOM' as const }
+        : c
+    )),
+  };
+}
+
 function localSet(sets: ContentSet[]): ContentSet {
   const found = sets.find(s => s.id === DEFAULT_SET_ID);
   if (found) return found;
@@ -174,7 +188,15 @@ export const useCustomContent = create<CustomContentState>((set, get) => ({
       const raw = await storageGet(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as unknown;
-        if (Array.isArray(parsed)) set({ sets: parsed as ContentSet[], loaded: true });
+        if (Array.isArray(parsed)) {
+          // Reparación: versiones antiguas persistían el objeto YA parseado
+          // por Zod, con officialStatus='OFFICIAL' por defecto → la siguiente
+          // validación lo leía como "declarado oficial" y descartaba el set.
+          // Nada validado puede ser oficial, así que el sello es seguro.
+          const repaired = (parsed as ContentSet[]).map(stampSetCustom);
+          set({ sets: repaired, loaded: true });
+          if (JSON.stringify(repaired) !== raw) persist(repaired);
+        }
         else set({ loaded: true });
       } else set({ loaded: true });
       // Historial y versiones publicadas
@@ -238,9 +260,14 @@ export const useCustomContent = create<CustomContentState>((set, get) => ({
     const catalog = loadCatalog();
     const res = validateContentSet(json, catalog.byId);
     if (!res.ok || !res.set) return res.errors;
+    // Normalizar ANTES de persistir: el objeto parseado por Zod trae
+    // officialStatus='OFFICIAL' por defecto en cartas que no lo declaran;
+    // guardarlo tal cual haría que la revalidación lo tomara por un intento
+    // explícito de marcar contenido como oficial y descartara el set.
+    const stamped = stampSetCustom(res.set);
     const sets = get().sets;
     // Importar como conjunto independiente (sin tocar Mis creaciones)
-    const updated = [...sets.filter(s => s.id !== res.set!.id), res.set!];
+    const updated = [...sets.filter(s => s.id !== stamped.id), stamped];
     set({ sets: updated });
     persist(updated);
     return [];
@@ -263,14 +290,17 @@ export const useCustomContent = create<CustomContentState>((set, get) => ({
   upsertCard: (card) => {
     const sets = get().sets;
     const target = localSet(sets);
-    const history = pushHistory(get, target.id, target);
     const next: ContentSet = {
       ...target,
       cards: [...target.cards.filter(c => c.id !== card.id), { ...card, setId: target.id }],
     };
     const updated = [...sets.filter(s => s.id !== target.id), next];
     const catalog = loadCatalog();
+    // Validar ANTES de persistir: una carta inválida no debe quedar
+    // escrita en el set (ni en el almacenamiento local).
     const validation = validateContentSet(next, catalog.byId);
+    if (!validation.ok) return validation.errors;
+    const history = pushHistory(get, target.id, target);
     set({ sets: updated, history });
     persist(updated);
     persistMeta(history, get().published, get().fragments, get().trash);
@@ -334,7 +364,14 @@ export const useCustomContent = create<CustomContentState>((set, get) => ({
   },
 
   purgeTrash: () => {
-    set({ trash: {} });
+    // Borradores huérfanos: sin la purga, nt4h.cardDraft crecería con cada
+    // carta eliminada definitivamente. Vivos = en algún set o en papelera
+    // (los de papelera se conservan para restaurar).
+    const alive = new Set(Object.keys(get().trash));
+    for (const s of get().sets) for (const c of s.cards) alive.add(c.id);
+    const cardDrafts = Object.fromEntries(
+      Object.entries(get().cardDrafts).filter(([id]) => alive.has(id)));
+    set({ trash: {}, cardDrafts });
     persistMeta(get().history, get().published, get().fragments, {});
   },
 
@@ -411,8 +448,12 @@ export const useCustomContent = create<CustomContentState>((set, get) => ({
     const record = (get().published[setId] ?? []).find(v => v.version === version);
     if (!record) return false;
     // VerificaciÂ³n de integridad: el snapshot no debe haberse alterado
-    const { checksum: _c, ...snapshotNoChecksum } = record.snapshot;
-    void _c;
+    const { checksum: embedded, ...snapshotNoChecksum } = record.snapshot;
+    // El snapshot restaurado debe coincidir con el checksum de publicación.
+    if (typeof embedded === 'string'
+      && embedded !== checksumOf(snapshotNoChecksum as ContentSet)) {
+      return false;
+    }
     const current = get().sets.find(s => s.id === setId);
     const history = current ? pushHistory(get, setId, current) : get().history;
     const restored: ContentSet = { ...JSON.parse(JSON.stringify(snapshotNoChecksum)), status: 'DRAFT' };

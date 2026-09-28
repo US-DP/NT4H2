@@ -1,0 +1,27 @@
+/** Textos ES de «auth» — pantalla Cuenta y flujo de identidad. */
+export default {
+  auth: {
+    title: 'Cuenta',
+    subtitle: 'Entra para guardar tu historial, estadísticas y rango online.',
+    login: 'Entrar',
+    register: 'Crear cuenta',
+    email: 'Correo electrónico',
+    password: 'Contraseña',
+    displayName: 'Nombre visible',
+    logout: 'Cerrar sesión',
+    loggedOut: 'Sesión cerrada',
+    welcomeBack: 'Hola, {{name}}',
+    linkedHint: 'Tus partidas online quedan vinculadas a esta cuenta.',
+    optionalHint: 'Puedes seguir jugando sin cuenta; podrás reclamar tus partidas después.',
+    loginFailed: 'Correo o contraseña incorrectos',
+    registerFailed: 'No se pudo crear la cuenta',
+    account: 'Cuenta',
+    signedInAs: 'Conectado como {{name}}',
+    signIn: 'Entrar o registrarse',
+    signInHint: 'Vincula tus partidas online a una cuenta persistente',
+    guest: 'Invitado',
+    'err.email already registered': 'Ese correo ya está registrado',
+    'err.display name already taken': 'Ese nombre ya está en uso',
+    'err.invalid display name': 'Nombre no válido (2–32 letras, números o .-_)',
+  },
+};

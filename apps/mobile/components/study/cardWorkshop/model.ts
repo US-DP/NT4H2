@@ -7,6 +7,7 @@
  */
 
 import type {
+  CardEffect,
   CardType,
   HeroClass,
   ValueExpr,
@@ -41,9 +42,10 @@ export const CLASS_NAME_KEYS: Record<HeroClass, string> = {
   EXPLORER: 'classExplorer', WARRIOR: 'classWarrior', MAGE: 'classMage', ROGUE: 'classRogue',
 };
 export const CAPABILITIES = ['MELEE', 'RANGED', 'EXPERTISE', 'MAGIC'] as const;
-export const CAP_NAME_KEYS: Record<string, string> = {
-  MELEE: 'capMelee', RANGED: 'capRanged', EXPERTISE: 'capExpertise', MAGIC: 'capMagic',
-};
+export const CAP_NAME_KEYS = new Map<string, string>([
+  ['MELEE', 'capMelee'], ['RANGED', 'capRanged'],
+  ['EXPERTISE', 'capExpertise'], ['MAGIC', 'capMagic'],
+]);
 export const DESTINATIONS = [
   { id: 'WEAR_PILE', labelKey: 'destWearPile' },
   { id: 'REMOVED_FROM_GAME', labelKey: 'destRemovedFromGame' },
@@ -130,6 +132,13 @@ export interface EffectNode {
   prompt?: string;
   optional?: boolean;
   options?: { label: string; children: EffectNode[] }[];
+  // --- Passthrough del decompilador (cartas cargadas del catálogo) ---
+  /** amountMode 'raw': ValueExpr serializado no representable en el editor. */
+  rawExpr?: string;
+  /** condKind 'RAW': Condition serializada no representable en el editor. */
+  condRaw?: string;
+  /** DRAW_CHECK: id estable de la carta esperada (expectedCard). */
+  cardRef?: string;
 }
 
 /** Borrador completo de la carta (todo serializable). */
@@ -162,6 +171,16 @@ export interface CardDraft {
   /** Referencia 'asset:<id>' de la imagen importada (almacenamiento separado). */
   imageRef?: string;
   basedOn?: string;
+  /** Efectos compilados de la carta original al editar sin borrador
+   *  (importada o creada antes de los drafts). Si el árbol de una zona
+   *  sigue vacío al guardar, se conserva el contenido original de esa
+   *  zona en vez de publicar una carta vacía. Se descarta en cuanto el
+   *  usuario toca esa zona. */
+  preserved?: {
+    effects?: CardEffect[];
+    heroAbility?: { uses: number; effects: CardEffect[] };
+    peritia?: { trigger: string; condition?: string; effects: CardEffect[] };
+  };
 }
 
 export const EMPTY_DRAFT: CardDraft = {
@@ -207,8 +226,16 @@ export function walkNodes(nodes: EffectNode[], visit: (n: EffectNode) => void): 
 /** Clon profundo con claves nuevas en TODO el subárbol — duplicar un nodo
  *  nunca comparte `key` con el original (regresión: React keys y
  *  diagnósticos dependen de la unicidad). */
+/** Clon profundo tolerante: structuredClone falta en runtimes antiguos
+ *  (RN/Hermes viejo, jsdom); el modelo del taller es JSON-puro, así que
+ *  el fallback por JSON es exacto. */
+export function cloneDeep<T>(v: T): T {
+  if (typeof structuredClone === 'function') return structuredClone(v);
+  return JSON.parse(JSON.stringify(v)) as T;
+}
+
 export function cloneSubtree(n: EffectNode): EffectNode {
-  const c = structuredClone(n);
+  const c = cloneDeep(n);
   walkNodes([c], (x) => { x.key = nextNodeKey(); });
   return c;
 }
@@ -407,6 +434,9 @@ const NODE_SCALAR_FIELDS: ReadonlySet<string> = new Set([
   'condKind', 'condParam', 'condValue', 'condNot', 'condJoin',
   'condKind2', 'condParam2', 'condValue2', 'timesMode', 'times', 'max',
   'prompt', 'optional',
+  // Passthrough lossless del decompilador: JSON serializado que el editor
+  // no sabe editar pero el compilador reemite verbatim.
+  'rawExpr', 'condRaw', 'cardRef',
 ]);
 
 function sanitizeNode(raw: unknown, seen: Set<number>, depth: number): EffectNode | null {
@@ -416,8 +446,12 @@ function sanitizeNode(raw: unknown, seen: Set<number>, depth: number): EffectNod
   const out: EffectNode = { key: 0, kind: r.kind as NodeKind };
   // Clave única: conserva la original si es un número sin colisionar,
   // si no se regenera (los borradores importados pueden repetir keys).
+  // La regenerada también debe comprobarse contra `seen`: un draft
+  // importado puede haber preservado justo el valor que nextNodeKey
+  // emitiría a continuación.
   const rk = r.key;
   out.key = typeof rk === 'number' && !seen.has(rk) ? rk : nextNodeKey();
+  while (seen.has(out.key)) out.key = nextNodeKey();
   seen.add(out.key);
   for (const [field, value] of Object.entries(r)) {
     if (field === 'key' || field === 'kind') continue;
@@ -438,7 +472,7 @@ function sanitizeNode(raw: unknown, seen: Set<number>, depth: number): EffectNod
       .filter((o): o is { label: string; children: unknown[] } =>
         !!o && typeof o === 'object' && Array.isArray((o as { children?: unknown }).children))
       .map((o, i) => ({
-        label: typeof o.label === 'string' ? o.label : `Opción ${i + 1}`,
+        label: typeof o.label === 'string' ? o.label : esT('workshop.optionLabel', { n: i + 1 }),
         children: (sub(o.children) ?? []),
       }));
     if (options.length > 0) out.options = options;
@@ -474,6 +508,13 @@ export function migrateDraft(raw: unknown): CardDraft | null {
   const peritiaTrigger = r.peritiaTrigger === 'DAMAGE_DEALT'
     || r.peritiaTrigger === 'CARD_PLAYED' || r.peritiaTrigger === 'CONTINUOUS'
     ? r.peritiaTrigger : '';
+  const abilityNodes = sanitizeList(r.abilityNodes, seen);
+  const peritiaNodes = sanitizeList(r.peritiaNodes, seen);
+  const nodes = sanitizeList(r.nodes, seen);
+  // Las keys preservadas pueden superar el contador de sesión → sin este
+  // ajuste nextNodeKey() acabaría reemitiendo una key ya vista (colisión
+  // de React keys, sel ambiguo, diagnósticos al nodo equivocado).
+  for (const key of seen) if (key >= nodeKey) nodeKey = key + 1;
   return {
     draftVersion: DRAFT_VERSION,
     cardType,
@@ -486,13 +527,18 @@ export function migrateDraft(raw: unknown): CardDraft | null {
     maxWounds: str(r.maxWounds, '10'),
     capabilities: strArr(r.capabilities), requiredCapabilities: strArr(r.requiredCapabilities),
     destination: str(r.destination, 'WEAR_PILE'), abilityUses: str(r.abilityUses, '1'),
-    abilityNodes: sanitizeList(r.abilityNodes, seen),
+    abilityNodes,
     peritiaTrigger,
     peritiaCondition: str(r.peritiaCondition),
-    peritiaNodes: sanitizeList(r.peritiaNodes, seen),
-    nodes: sanitizeList(r.nodes, seen),
+    peritiaNodes,
+    nodes,
     textOverride: str(r.textOverride), altText: str(r.altText),
     ...(typeof r.imageRef === 'string' ? { imageRef: r.imageRef } : {}),
     ...(typeof r.basedOn === 'string' ? { basedOn: r.basedOn } : {}),
+    // Passthrough del respaldo de efectos originales (edición sin
+    // borrador): save() lo revalida con CardDefinitionSchema, así que
+    // un preserved corrupto nunca se publica — bloquea el guardado.
+    ...(r.preserved && typeof r.preserved === 'object'
+      ? { preserved: r.preserved as CardDraft['preserved'] } : {}),
   };
 }

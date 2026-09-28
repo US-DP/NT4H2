@@ -19,7 +19,7 @@ import {
   wrapManyInContainer, moveToIndex,
   type EffectNode, type NodeKind,
 } from '../components/study/cardWorkshop';
-import { describeEffect } from '../components/CardZoom';
+import { describeEffect } from '../lib/effectDescriptions';
 
 const node = (kind: NodeKind, extra: Partial<EffectNode> = {}): EffectNode =>
   ({ key: nextNodeKey(), kind, ...extra });

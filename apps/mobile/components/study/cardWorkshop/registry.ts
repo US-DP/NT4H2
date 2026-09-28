@@ -13,6 +13,7 @@ import type {
   TargetSelector,
   ValueExpr,
 } from '@nt4h/schema';
+import { ValueExprSchema } from '@nt4h/schema';
 import { C, num, nextNodeKey, type EffectNode } from './model';
 
 // ============================================================================
@@ -50,7 +51,21 @@ export interface ActionDef {
   build: (n: EffectNode) => CardEffect;
 }
 
+/** amountMode 'raw' (decompilador): reemite el ValueExpr conservado. */
+export const rawValueExpr = (raw: string | undefined): ValueExpr | null => {
+  if (!raw) return null;
+  try {
+    const parsed = ValueExprSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
+  } catch { return null; }
+};
+
 export const valueExpr = (n: EffectNode): ValueExpr => {
+  if (n.amountMode === 'raw') {
+    // Passthrough lossless: expresión cargada de una carta del catálogo que
+    // el editor no sabe editar. rawValueExpr ya validó con el schema.
+    return rawValueExpr(n.rawExpr) ?? C(num(n.amount ?? '1', 1));
+  }
   const base = (
     kind: 'COUNT_LIVING_ENEMIES' | 'COUNT_ENEMIES_IN_FIELD' | 'EVASION_DISCARDED_COUNT',
   ): ValueExpr => ({ kind });
@@ -94,7 +109,7 @@ export const valueExpr = (n: EffectNode): ValueExpr => {
 };
 export const enemySel = (n: EffectNode): TargetSelector => {
   const kind = (n.target ?? 'SELECTED_ENEMY') as TargetSelector['kind'];
-  if (n.orcOnly && (kind === 'ALL_ENEMIES' || kind === 'ONE_ENEMY')) {
+  if (n.orcOnly && (kind === 'ALL_ENEMIES' || kind === 'ONE_ENEMY')) {Math.max(1, )
     return { kind, filter: { isOrc: true } } as TargetSelector;
   }
   return { kind } as TargetSelector;
@@ -126,7 +141,7 @@ export const ACTION_DEFS: ActionDef[] = [
   { type: 'LOSE_CARDS', labelKey: 'actionLoseCards', amount: true,
     build: n => ({ type: 'LOSE_CARDS', amount: valueExpr(n) }) },
   { type: 'RECOVER_CARDS', labelKey: 'actionRecoverCards', amount: true, to: true,
-    build: n => ({ type: 'RECOVER_CARDS', amount: valueExpr(n), from: 'WEAR_PILE', to: (n.to ?? 'BOTTOM_OF_DECK') as 'BOTTOM_OF_DECK' }) },
+    build: n => ({ type: 'RECOVER_CARDS', amount: valueExpr(n), from: 'WEAR_PILE', to: n.to === 'HAND' ? 'HAND' as const : 'BOTTOM_OF_DECK' as const }) },
   { type: 'SEARCH_WEAR_PILE_PUT_IN_HAND', labelKey: 'actionSearchWearPilePutInHand', amount: true,
     build: n => ({ type: 'SEARCH_WEAR_PILE_PUT_IN_HAND', amount: valueExpr(n) }) },
   { type: 'GAIN_COINS', labelKey: 'actionGainCoins', amount: true, coinTarget: true,
@@ -162,7 +177,7 @@ export const ACTION_DEFS: ActionDef[] = [
   { type: 'OTHER_HEROES_RECOVER', labelKey: 'actionOtherHeroesRecover', amount: true,
     build: n => ({ type: 'OTHER_HEROES_RECOVER', amount: valueExpr(n) }) },
   { type: 'RECOVER_THIS_CARD', labelKey: 'actionRecoverThisCard', to: true,
-    build: n => ({ type: 'RECOVER_THIS_CARD', to: (n.to ?? 'HAND') as 'HAND' }) },
+    build: n => ({ type: 'RECOVER_THIS_CARD', to: n.to === 'BOTTOM_OF_DECK' ? 'BOTTOM_OF_DECK' as const : 'HAND' as const }) },
   { type: 'REMOVE_FROM_GAME', labelKey: 'actionRemoveFromGame',
     build: () => ({ type: 'REMOVE_FROM_GAME' }) },
   { type: 'END_ATTACK', labelKey: 'actionEndAttack',
@@ -208,15 +223,17 @@ export const ACTION_DEFS: ActionDef[] = [
   { type: 'EXECUTE_ENEMY', labelKey: 'actionExecuteEnemy', amount: true, enemyTarget: true, loot: true,
     build: n => ({ type: 'EXECUTE_ENEMY', target: enemySel(n), threshold: valueExpr(n), loot: n.loot !== 'lost' }) },
   { type: 'SPAWN_ENEMY', labelKey: 'actionSpawnEnemy', amount: true,
-    build: n => ({ type: 'SPAWN_ENEMY', count: Math.max(0, num(n.amount ?? '1', 1)) }) },
+    // Cotas del schema (min 1, max 10): sin clamp el valor 0/11+ rompía el
+    // safeParse final con un error Zod crudo.
+    build: n => ({ type: 'SPAWN_ENEMY', count: Math.min(10, Math.max(1, num(n.amount ?? '1', 1))) }) },
   { type: 'DISCARD_HORDE_CARD', labelKey: 'actionDiscardHordeCard', amount: true, hordeDir: true,
-    build: n => ({ type: 'DISCARD_HORDE_CARD', count: Math.max(0, num(n.amount ?? '1', 1)), from: (n.hordeDir === 'TOP' ? 'TOP' : 'BOTTOM') as 'BOTTOM' }) },
+    build: n => ({ type: 'DISCARD_HORDE_CARD', count: Math.min(10, Math.max(1, num(n.amount ?? '1', 1))), from: (n.hordeDir === 'TOP' ? 'TOP' : 'BOTTOM') as 'BOTTOM' }) },
   { type: 'MOVE_HORDE_CARDS', labelKey: 'actionMoveHordeCards', amount: true, hordeDir: true,
-    build: n => ({ type: 'MOVE_HORDE_CARDS', count: Math.max(0, num(n.amount ?? '1', 1)), to: (n.hordeDir === 'TOP' ? 'TOP' : 'BOTTOM') as 'TOP' }) },
+    build: n => ({ type: 'MOVE_HORDE_CARDS', count: Math.min(10, Math.max(1, num(n.amount ?? '1', 1))), to: (n.hordeDir === 'TOP' ? 'TOP' : 'BOTTOM') as 'TOP' }) },
   { type: 'DRAW_FROM_BOTTOM', labelKey: 'actionDrawFromBottom', amount: true,
     build: n => ({ type: 'DRAW_FROM_BOTTOM', amount: valueExpr(n) }) },
   { type: 'DRAW_UP_TO', labelKey: 'actionDrawUpTo', amount: true,
-    build: n => ({ type: 'DRAW_UP_TO', limit: Math.max(0, num(n.amount ?? '4', 4)) }) },
+    build: n => ({ type: 'DRAW_UP_TO', limit: Math.min(15, Math.max(1, num(n.amount ?? '4', 4))) }) },
   { type: 'TAKE_WOUNDS', labelKey: 'actionTakeWounds', amount: true, heroTarget: true,
     build: n => ({ type: 'TAKE_WOUNDS', amount: valueExpr(n), hero: heroSel(n) }) },
   { type: 'GRANT_ARMOR', labelKey: 'actionGrantArmor', amount: true,
@@ -301,6 +318,7 @@ export const AMOUNT_MODES = [
   { id: 'defeatedEnemies', labelKey: 'amountDefeatedEnemies', advanced: true },
   { id: 'heroWoundsMult', labelKey: 'amountHeroWoundsMult', advanced: true },
   { id: 'handCardsMult', labelKey: 'amountHandCardsMult', advanced: true },
+  { id: 'raw', labelKey: 'amountRaw', advanced: true },
 ] as const;
 
 export const DURATIONS = [
@@ -324,7 +342,7 @@ export const STATUS_IDS = [
   { id: 'poison', labelKey: 'statusPoison' },
 ] as const;
 
-export const CONDITIONS: { id: string; labelKey: string; param?: 'cap' | 'int' | 'name' | 'stat' | 'status' | 'var'; build: (p: string, v?: string) => Condition }[] = [
+export const CONDITIONS: { id: string; labelKey: string; param?: 'cap' | 'int' | 'name' | 'stat' | 'status' | 'var' | 'raw'; build: (p: string, v?: string) => Condition }[] = [
   { id: 'HAS_CAPABILITY', labelKey: 'condHasCapability', param: 'cap',
     build: p => ({ kind: 'HAS_CAPABILITY', icon: (p || 'EXPERTISE') as 'EXPERTISE' }) },
   { id: 'ENEMY_DEFEATED_BY_THIS_CARD', labelKey: 'condEnemyDefeatedByThisCard',
@@ -368,6 +386,9 @@ export const CONDITIONS: { id: string; labelKey: string; param?: 'cap' | 'int' |
     build: (p, v) => ({ kind: 'VARIABLE_LTE', name: p || 'mi_variable', value: num(v ?? '1', 1) }) },
   { id: 'VARIABLE_EQ', labelKey: 'condVarEq', param: 'var',
     build: (p, v) => ({ kind: 'VARIABLE_EQ', name: p || 'mi_variable', value: num(v ?? '1', 1) }) },
+  // Passthrough del decompilador: el compilador usa condRaw, nunca build.
+  { id: 'RAW', labelKey: 'condRaw', param: 'raw',
+    build: () => ({ kind: 'ENEMY_IS_ORC' }) },
 ];
 
 /** Eventos de partida a los que puede suscribirse un oyente (LISTEN). */

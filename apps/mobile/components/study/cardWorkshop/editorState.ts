@@ -30,6 +30,10 @@ export interface DndPayload {
   list: number;
   index: number;
   node: EffectNode;
+  /** Todas las keys del subárbol arrastrado (incluida la raíz): permite
+   *  rechazar drops dentro del propio subárbol, que clonaban el nodo y
+   *  borraban el original → desaparición silenciosa. */
+  keys?: Set<number>;
 }
 
 /** Solicitud de borrado pendiente tras un drop entre listas distintas:

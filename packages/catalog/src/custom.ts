@@ -11,6 +11,7 @@
 import {
   ContentSetSchema,
   validateCardEffects,
+  validateDeck,
   type CardDefinition,
   type ContentSet,
   type DeckDefinition,
@@ -86,14 +87,10 @@ export function validateContentSet(
   for (const deck of set.decks) {
     if (deckIds.has(deck.id)) errors.push(`${deck.id}: id de mazo duplicado`);
     deckIds.add(deck.id);
-    if (deck.cardEntries.reduce((a, e) => a + e.copies, 0) !== deck.deckSize) {
-      errors.push(`${deck.id}: el mazo no suma ${deck.deckSize} cartas`);
-    }
-    for (const entry of deck.cardEntries) {
-      if (!mergedById.has(entry.cardDefinitionId)) {
-        errors.push(`${deck.id}: carta desconocida ${entry.cardDefinitionId}`);
-      }
-    }
+    // Reglas completas de mazo (tamaño, copias máximas, clases, multiclase…):
+    // antes solo se comprobaba suma/ids, así que el runner aceptaba mazos
+    // que la UI luego rechazaba (asimetría runner↔UI).
+    errors.push(...validateDeck(deck, mergedById).errors.map(e => `${deck.id}: ${e}`));
   }
 
   return { ok: errors.length === 0, set, errors };

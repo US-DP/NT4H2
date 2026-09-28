@@ -103,10 +103,23 @@ class Player(models.Model):
     # runner (los invitados declaran su héroe al entrar, no en create).
     deck_id = models.CharField(max_length=100, blank=True, default="")
     hero_face = models.CharField(max_length=10, blank=True, default="")
+    # Mazo del Taller: si se informa, sustituye a deck_id en el roster del
+    # motor. La definición viaja en session.config["customDecks"].
+    custom_deck_id = models.CharField(max_length=100, blank=True, default="")
     # D431: token de autorizacion por jugador — requerido para acciones
     # sensibles (start, leave, comandos WS, estado proyectado). Nunca se
     # expone en to_dict() ni en listados.
     auth_token = models.CharField(max_length=128, default=_generate_player_token)
+    # Fase 1 (identidad persistente): si el jugador entró autenticado con
+    # JWT, su Player de sala queda vinculado a su cuenta para historial,
+    # estadísticas y ELO. Invitados: null hasta claim-guest.
+    user = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="game_players",
+    )
     joined_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -123,6 +136,8 @@ class Player(models.Model):
             "heroId": self.hero_id,
             "deckId": self.deck_id,
             "heroFace": self.hero_face,
+            "customDeckId": self.custom_deck_id,
+            "userId": str(self.user_id) if self.user_id else None,
             "joinedAt": self.joined_at.isoformat(),
         }
 
@@ -177,3 +192,25 @@ class GameEvent(models.Model):
         app_label = "game"
         ordering = ["seq"]
         constraints = [models.UniqueConstraint(fields=["session", "seq"], name="uniq_event_seq_per_session")]
+
+
+class GameSnapshot(models.Model):
+    """Checkpoint del estado del motor para replay/recuperación (Fase 2).
+
+    Contiene el estado COMPLETO del runner (manos privadas, RNG, dedup
+    de cids). PRIVACY: nunca se sirve a clientes — es almacenamiento
+    interno de auditoría; la proyección por jugador sigue en el runner.
+    Se conservan como máximo ``MAX_SNAPSHOTS_PER_SESSION`` por sala.
+    """
+
+    session = models.ForeignKey(GameSession, related_name="snapshots", on_delete=models.CASCADE)
+    # seq del último GameEvent cubierto por el snapshot
+    seq = models.IntegerField()
+    # revisión del estado en el runner al tomar el snapshot
+    revision = models.IntegerField(default=0)
+    state = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        app_label = "game"
+        ordering = ["-seq"]

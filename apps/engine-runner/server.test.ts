@@ -130,3 +130,37 @@ test('un reintento con cid ya procesado recibe ack cacheado (no out_of_order)', 
   assert.equal(next.json.accepted, true, JSON.stringify(next.json));
   assert.equal(next.json.revision, 2);
 });
+
+test('GET /full-state devuelve el estado completo (state+rng+revision+dedup)', async () => {
+  // Fase 2: endpoint interno para snapshots de replay/recuperación del
+  // backend. Contiene estado sin proyectar — nunca expuesto a clientes.
+  const created = await postJson('/rooms/test-room-full/create', {
+    config: {
+      mode: 'STANDARD',
+      playerCount: 1,
+      seed: 'full-state',
+      heroes: [
+        { playerId: 'p1', heroId: 'hero.aranel', heroFace: 'FEMALE', deckId: 'explorer.default' },
+      ],
+      useScenarios: false,
+    },
+  });
+  assert.equal(created.status, 200, JSON.stringify(created.json));
+
+  const res = await fetch(`${base}/rooms/test-room-full/full-state`);
+  assert.equal(res.status, 200);
+  const full = await res.json() as {
+    state: { phase?: string };
+    rngState: { seed?: string; state?: number };
+    revision: number;
+    lastClientSeq: Record<string, number>;
+  };
+  assert.ok(full.state && typeof full.state === 'object');
+  assert.equal(typeof full.revision, 'number');
+  assert.ok(full.rngState && typeof full.rngState.state === 'number');
+  assert.ok(full.lastClientSeq && typeof full.lastClientSeq === 'object');
+
+  // Sala inexistente → 404
+  const missing = await fetch(`${base}/rooms/nope-full/full-state`);
+  assert.equal(missing.status, 404);
+});

@@ -8,7 +8,7 @@
 import { useMemo } from 'react';
 import { View, Text } from 'react-native';
 import { useTranslation } from 'react-i18next';
-import { describeEffect } from '../../CardZoom';
+import { describeEffect } from '../../../lib/effectDescriptions';
 import { buildEffects } from './compiler';
 import type { EffectNode } from './model';
 import { styles } from './editorStyles';

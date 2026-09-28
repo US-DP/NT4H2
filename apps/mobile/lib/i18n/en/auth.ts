@@ -1,0 +1,27 @@
+/** EN strings for «auth» — Account screen and identity flow. */
+export default {
+  auth: {
+    title: 'Account',
+    subtitle: 'Sign in to keep your match history, statistics and online rank.',
+    login: 'Sign in',
+    register: 'Create account',
+    email: 'Email',
+    password: 'Password',
+    displayName: 'Display name',
+    logout: 'Sign out',
+    loggedOut: 'Signed out',
+    welcomeBack: 'Hi, {{name}}',
+    linkedHint: 'Your online matches are linked to this account.',
+    optionalHint: 'You can keep playing without an account and claim your matches later.',
+    loginFailed: 'Wrong email or password',
+    registerFailed: 'Could not create the account',
+    account: 'Account',
+    signedInAs: 'Signed in as {{name}}',
+    signIn: 'Sign in or register',
+    signInHint: 'Link your online matches to a persistent account',
+    guest: 'Guest',
+    'err.email already registered': 'That email is already registered',
+    'err.display name already taken': 'That name is already taken',
+    'err.invalid display name': 'Invalid name (2–32 letters, numbers or .-_)',
+  },
+};

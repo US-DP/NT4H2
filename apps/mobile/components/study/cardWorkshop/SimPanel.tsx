@@ -5,10 +5,11 @@
  * con modo de ejecucion paso a paso. Nunca lanza.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { NtButton } from '../../ui/NtButton';
+import { NtInput } from '../../ui/NtInput';
 import { Chip } from './EffectTree';
 import { buildEffects } from './compiler';
 import {
@@ -16,7 +17,7 @@ import {
 } from './simulate';
 import type { EffectNode } from './model';
 import type { CardDefinition } from '@nt4h/schema';
-import { loadCatalog } from '@nt4h/catalog';
+import type { loadCatalog } from '@nt4h/catalog';
 import { styles } from './editorStyles';
 export function SimPanel({ nodes, cardDef, catalog }: {
   nodes: EffectNode[];
@@ -30,6 +31,14 @@ export function SimPanel({ nodes, cardDef, catalog }: {
   // Ejecución paso a paso (§19): revela la traza evento a evento.
   const [stepMode, setStepMode] = useState(false);
   const [stepIdx, setStepIdx] = useState(0);
+
+  // El resultado pertenece al árbol que lo generó: tras editar los nodos
+  // la traza mostrada ya no refleja la carta — descartarla.
+  useEffect(() => {
+    setResult(null);
+    setOpen(false);
+    setStepIdx(0);
+  }, [nodes]);
 
   const run = () => {
     const effects = buildEffects(nodes);
@@ -59,6 +68,30 @@ export function SimPanel({ nodes, cardDef, catalog }: {
           onPress={() => setOpt({ heroWounds: opts.heroWounds > 0 ? 0 : 2 })} />
         <Chip label={t('workshop.simStepMode')} selected={stepMode}
           onPress={() => setStepMode(m => !m)} />
+      </View>
+      {/* Tamaños de zonas + semilla: la mitad de SimOptions existía sin UI. */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <Text style={styles.miniLabel}>{t('workshop.simHand')}</Text>
+        {[0, 2, 4].map(n => (
+          <Chip key={n} label={String(n)} selected={opts.handSize === n}
+            onPress={() => setOpt({ handSize: n })} />
+        ))}
+        <Text style={styles.miniLabel}>{t('workshop.simDeck')}</Text>
+        {[0, 3, 8].map(n => (
+          <Chip key={n} label={String(n)} selected={opts.deckSize === n}
+            onPress={() => setOpt({ deckSize: n })} />
+        ))}
+        <Text style={styles.miniLabel}>{t('workshop.simWear')}</Text>
+        {[0, 2, 5].map(n => (
+          <Chip key={n} label={String(n)} selected={opts.wearSize === n}
+            onPress={() => setOpt({ wearSize: n })} />
+        ))}
+      </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <Text style={styles.miniLabel}>{t('workshop.simSeed')}</Text>
+        <NtInput label={t('workshop.simSeed')} value={opts.seed}
+          onChangeText={v => setOpt({ seed: v || DEFAULT_SIM_OPTIONS.seed })}
+          style={{ flex: 1, maxWidth: 220 }} />
       </View>
       {open && result && (
         <View accessibilityLiveRegion="polite">

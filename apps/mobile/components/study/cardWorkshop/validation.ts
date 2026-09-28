@@ -8,7 +8,10 @@
  *   combos potencialmente infinitos, complejidad) que Zod no puede ver.
  */
 
-import { MAX_EFFECT_DEPTH, MAX_EFFECT_NODES, type CardEffect } from '@nt4h/schema';
+import {
+  MAX_EFFECT_DEPTH, MAX_EFFECT_NODES, ConditionSchema, ValueExprSchema,
+  type CardEffect,
+} from '@nt4h/schema';
 import {
   countNodes, maxDepth, num, walkNodes, esT,
   type EffectNode, type TFunc,
@@ -70,10 +73,12 @@ const collectConstants = (v: unknown): number[] => {
 };
 
 const effectAmounts = (eff: CardEffect): number[] => {
-  const e = eff as Record<string, unknown>;
+  const e = eff as {
+    amount?: unknown; modifier?: unknown; bonus?: unknown; maxTotal?: unknown;
+    times?: unknown; threshold?: unknown; stacks?: unknown; limit?: unknown; count?: unknown;
+  };
   const out: number[] = [];
-  for (const key of ['amount', 'modifier', 'bonus', 'maxTotal', 'times', 'threshold', 'stacks', 'limit', 'count'] as const) {
-    const v = e[key];
+  for (const v of [e.amount, e.modifier, e.bonus, e.maxTotal, e.times, e.threshold, e.stacks, e.limit, e.count]) {
     if (typeof v === 'number') out.push(v);
     else out.push(...collectConstants(v));
   }
@@ -91,8 +96,8 @@ export const collectAllEffects = (list: CardEffect[]): CardEffect[] => {
       onMatch?: CardEffect[]; onMismatch?: CardEffect[]; onFailure?: CardEffect[];
       options?: { effects?: CardEffect[] }[];
     };
-    for (const key of ['effects', 'then', 'else', 'onMatch', 'onMismatch', 'onFailure'] as const) {
-      if (Array.isArray(c[key])) stack.push(...(c[key] as CardEffect[]));
+    for (const list of [c.effects, c.then, c.else, c.onMatch, c.onMismatch, c.onFailure]) {
+      if (Array.isArray(list)) stack.push(...(list as CardEffect[]));
     }
     if (Array.isArray(c.options)) {
       for (const o of c.options) if (Array.isArray(o.effects)) stack.push(...o.effects);
@@ -108,7 +113,7 @@ export const collectAllEffects = (list: CardEffect[]): CardEffect[] => {
  */
 export function balanceWarnings(effects: CardEffect[], t: TFunc = esT): string[] {
   const warns: string[] = [];
-  const labelKeys: Record<string, string> = {
+  const labelKeys = new Map<string, string>(Object.entries({
     DEAL_DAMAGE: 'balanceDamage', PREVENT_DAMAGE: 'balancePrevention', SHIELD: 'balanceShield',
     DRAW_CARDS: 'balanceCardDraw', LOSE_CARDS: 'balanceCardLoss',
     GAIN_COINS: 'balanceCoinGain', GAIN_GLORY: 'balanceGloryGain',
@@ -119,9 +124,10 @@ export function balanceWarnings(effects: CardEffect[], t: TFunc = esT): string[]
     MOVE_CARD: 'balanceCardMove', APPLY_STATUS: 'balanceStatusStacks',
     INCREASE_STATUS: 'balanceStatusIncrease',
     BLOCK_NEXT_DAMAGE: 'balanceBlock', DISCARD_FROM_HAND: 'balanceDiscard',
-  };
+  }));
+  const balanceLimits = new Map<string, number>(Object.entries(BALANCE_LIMITS));
   for (const eff of collectAllEffects(effects)) {
-    const key = labelKeys[eff.type];
+    const key = labelKeys.get(eff.type);
     const name = key ? t(`workshop.${key}`) : eff.type;
     for (const v of effectAmounts(eff)) {
       if (MAGNITUDE_EFFECTS.has(eff.type) && v <= 0) {
@@ -129,7 +135,7 @@ export function balanceWarnings(effects: CardEffect[], t: TFunc = esT): string[]
       } else if (MODIFIER_EFFECTS.has(eff.type) && v === 0) {
         warns.push(t('workshop.warnZeroModifier', { name }));
       }
-      if (Math.abs(v) > (BALANCE_LIMITS[eff.type] ?? EXTREME_VALUE)) {
+      if (Math.abs(v) > (balanceLimits.get(eff.type) ?? EXTREME_VALUE)) {
         warns.push(t('workshop.warnExtremePower', { name, value: v }));
       }
     }
@@ -193,19 +199,25 @@ export function semanticDiagnostics(
     diags.push({ ...d, path: `nodo #${key}`, nodeKey: key });
 
   // --- Variables: definidas vs leídas (orden de documento) ------------------
+  // Las keys reflejan orden de CREACIÓN, no de ejecución: tras duplicar,
+  // envolver o deshacer, key<n no implica "antes en el árbol". Por eso se
+  // compara la posición DFS de walkNodes (orden del documento ≈ orden de
+  // ejecución del resolver, salvo ramas condicionales).
   const defined = new Set<string>();
-  const reads: { name: string; key: number }[] = [];
-  const definedOrder: { name: string; key: number }[] = [];
+  const reads: { name: string; key: number; pos: number }[] = [];
+  const definedOrder: { name: string; key: number; pos: number }[] = [];
+  let posCounter = 0;
   walkNodes(nodes, (n) => {
+    const pos = posCounter++;
     if (n.kind === 'ACTION' && n.actionType === 'SET_VARIABLE') {
       const name = n.varName?.trim();
-      if (name) { defined.add(name); definedOrder.push({ name, key: n.key }); }
+      if (name) { defined.add(name); definedOrder.push({ name, key: n.key, pos }); }
     }
     if (n.amountMode === 'variable' && n.varName?.trim()) {
-      reads.push({ name: n.varName.trim(), key: n.key });
+      reads.push({ name: n.varName.trim(), key: n.key, pos });
     }
     if (n.kind === 'COND' && VAR_COND_KINDS.has(n.condKind ?? '') && n.condParam?.trim()) {
-      reads.push({ name: n.condParam.trim(), key: n.key });
+      reads.push({ name: n.condParam.trim(), key: n.key, pos });
     }
   });
   for (const r of reads) {
@@ -216,9 +228,7 @@ export function semanticDiagnostics(
       });
     } else {
       const firstDef = definedOrder.find((d) => d.name === r.name);
-      // Lectura antes de la primera asignación (orden del documento ≈ orden
-      // de ejecución en el resolver, salvo ramas condicionales).
-      if (firstDef && r.key < firstDef.key) {
+      if (firstDef && r.pos < firstDef.pos) {
         at(r.key, {
           severity: 'warning', code: 'VARIABLE_READ_BEFORE_SET',
           message: t('workshop.diagVarReadBeforeSet', { name: r.name }),
@@ -274,6 +284,33 @@ export function semanticDiagnostics(
     }
   }
 
+  // Listener auto-disparado: LISTEN(evento E) cuyos hijos emiten E vuelve
+  // a dispararse a sí mismo → bucle hasta el budget del resolver.
+  const EMITS = new Map<string, Set<string>>([
+    ['DAMAGE_DEALT', new Set(['DEAL_DAMAGE', 'DEAL_DAMAGE_ALL_ENEMIES', 'DEAL_DAMAGE_SPLIT',
+      'DEAL_DAMAGE_TO_HERO', 'DEAL_DAMAGE_TO_OTHER_HEROES', 'OVERKILL_DAMAGE'])],
+    ['CARDS_DRAWN', new Set(['DRAW_CARDS', 'SEARCH_WEAR_PILE_PUT_IN_HAND',
+      'DRAW_AND_ADD_ATTACK', 'DRAW_AND_CHECK', 'RECOVER_CARDS'])],
+    ['CARD_PLAYED', new Set(['PLAY_IMMEDIATELY'])],
+    ['ENEMY_DEFEATED', new Set(['DEFEAT_ENEMY'])],
+    ['COINS_GAINED', new Set(['GAIN_COINS', 'STEAL_COINS'])],
+  ]);
+  walkNodes(nodes, (n) => {
+    if (n.kind !== 'LISTEN' || !n.listenEvent || n.once) return;
+    const emitters = EMITS.get(n.listenEvent);
+    if (!emitters) return;
+    let selfTrigger = false;
+    walkNodes(n.children ?? [], (c) => {
+      if (c.kind === 'ACTION' && emitters.has(c.actionType ?? '')) selfTrigger = true;
+    });
+    if (selfTrigger) {
+      at(n.key, {
+        severity: 'warning', code: 'LISTENER_SELF_TRIGGER',
+        message: t('workshop.diagListenerSelfTrigger', { event: n.listenEvent }),
+      });
+    }
+  });
+
   // --- Combos potencialmente infinitos ---------------------------------------
   let hasPlayImmediately = false;
   let hasRecoverThis = false;
@@ -299,6 +336,27 @@ export function semanticDiagnostics(
       message: t('workshop.diagLoopBottomRecover'),
     });
   }
+
+  // --- Passthrough 'raw' con JSON inválido o que no valida contra schema ---
+  walkNodes(nodes, (n) => {
+    const rawChecks: { raw?: string; ok: (v: unknown) => boolean }[] = [];
+    if (n.amountMode === 'raw' || n.timesMode === 'raw') {
+      rawChecks.push({ raw: n.rawExpr, ok: (v) => ValueExprSchema.safeParse(v).success });
+    }
+    if (n.condKind === 'RAW') {
+      rawChecks.push({ raw: n.condRaw, ok: (v) => ConditionSchema.safeParse(v).success });
+    }
+    for (const c of rawChecks) {
+      let valid = false;
+      try { valid = !!c.raw && c.ok(JSON.parse(c.raw)); } catch { valid = false; }
+      if (!valid) {
+        at(n.key, {
+          severity: 'error', code: 'INVALID_RAW_EXPR',
+          message: t('workshop.diagInvalidRawExpr'),
+        });
+      }
+    }
+  });
 
   // --- Referencias de cartas -------------------------------------------------
   if (opts.knownCardNames && opts.knownCardNames.size > 0) {

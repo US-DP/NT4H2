@@ -23,7 +23,7 @@ import { useTranslation } from 'react-i18next';
 import { useGameStore } from '../../store/gameStore';
 import { useCollection, type CollectionSort, type OriginFilter } from '../../store/collectionStore';
 import { cardImage, buildAccessibleLabel } from '../../store/cardImage';
-import { describeResolution } from '../../components/CardZoom';
+import { describeResolution } from '../../lib/effectDescriptions';
 import type { CardDefinition, HeroClass } from '@nt4h/schema';
 import { validateDeck } from '@nt4h/schema';
 import { CLASS_TOKENS } from '../../lib/classTokens';

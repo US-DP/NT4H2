@@ -22,14 +22,15 @@ import { EFFECT_REGISTRY } from '@nt4h/catalog';
 import type { CardType } from '@nt4h/schema';
 import {
   CAPABILITIES, CAP_NAME_KEYS, DESTINATIONS,
-  k, cloneSubtree, countNodes, wrapInContainer, wrapManyInContainer, unwrapAt,
-  moveToIndex, type EffectNode, type NodeKind, type WrapKind,
+  k, cloneSubtree, cloneDeep, countNodes, wrapInContainer, wrapManyInContainer, unwrapAt,
+  moveToIndex, walkNodes, type EffectNode, type NodeKind, type WrapKind,
 } from './model';
 import {
   ACTION_DEFS, CONDITIONS, ENEMY_TARGETS, HERO_TARGETS, AMOUNT_MODES,
   DURATIONS, SCOPES, STATUS_IDS, LISTEN_EVENTS, EFFECT_TEMPLATES,
 } from './registry';
 import { nodeText } from './text';
+import { toast } from '../../../lib/toast';
 import {
   collapsedNodes, diagErrorKeys, diagWarnKeys, editorUi,
 } from './editorState';
@@ -59,14 +60,18 @@ function DndDrop({ index, onDropAt, children }: {
 function DndHandle({ payload }: {
   payload: { list: number; index: number; node: EffectNode };
 }) {
+  const { t } = useTranslation();
   if (!IS_WEB) return null;
+  // Keys de todo el subárbol: el receptor rechaza drops dentro de sí mismo.
+  const keys = new Set<number>();
+  walkNodes([payload.node], (x) => keys.add(x.key));
   return createElement('span', {
     draggable: true,
     role: 'button',
-    'aria-label': 'Arrastrar nodo',
+    'aria-label': t('workshop.dragNodeA11y'),
     style: { cursor: 'grab', userSelect: 'none', padding: '0 4px' },
     onDragStart: (e: DragEvent<HTMLElement>) => {
-      editorUi.dnd = payload;
+      editorUi.dnd = { ...payload, keys };
       e.dataTransfer?.setData('text/plain', String(payload.node.key));
       if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
     },
@@ -79,6 +84,9 @@ export interface ListProps {
   onChange: (nodes: EffectNode[]) => void;
   depth: number;
   cardType: CardType;
+  /** key del nodo dueño de esta lista (undefined = raíz de la zona). El
+   *  drag & drop la usa para rechazar drops dentro del propio subárbol. */
+  ownerKey?: number;
 }
 
 export function Chip({ label, selected, onPress, a11y }: { label: string; selected: boolean; onPress: () => void; a11y?: string }) {
@@ -147,6 +155,10 @@ function ActionParams({ node, update }: { node: EffectNode; update: (p: Partial<
           {(node.amountMode ?? '').endsWith('Mult') && (
             <NtInput label={t('workshop.multiplierLabel')} value={node.amount ?? '2'} onChangeText={v => update({ amount: v })} keyboardType="number-pad" />
           )}
+          {(node.amountMode ?? '') === 'raw' && (
+            <NtInput label={t('workshop.rawExprLabel')} value={node.rawExpr ?? ''}
+              onChangeText={v => update({ rawExpr: v })} />
+          )}
         </View>
       )}
       {def.enemyTarget && (
@@ -211,7 +223,10 @@ function ActionParams({ node, update }: { node: EffectNode; update: (p: Partial<
         <View>
           <Text style={styles.miniLabel}>{t('workshop.destinationLabel')}</Text>
           <View style={styles.chipRow}>
-            {DESTINATIONS.filter(d => d.id !== 'REMOVED_FROM_GAME').map(d => (
+            {/* El schema solo permite HAND | BOTTOM_OF_DECK en las acciones
+                con `to` (RECOVER_CARDS/THIS_CARD/CARD_BY_NAME): ofrecer
+                WEAR_PILE producía un safeParse fallido al guardar. */}
+            {DESTINATIONS.filter(d => d.id === 'HAND' || d.id === 'BOTTOM_OF_DECK').map(d => (
               <Chip key={d.id} label={t(`workshop.${d.labelKey}`)} selected={(node.to ?? 'HAND') === d.id}
                 onPress={() => update({ to: d.id })} />
             ))}
@@ -289,7 +304,10 @@ function ActionParams({ node, update }: { node: EffectNode; update: (p: Partial<
           </View>
         </View>
       )}
-      {def.statusId && (
+      {/* statusId también se usa con amountMode 'statusStacks' (VALUE lee
+          las marcas de un estado) — sin el picker la compilación caía al
+          fallback 'mark' sin que el usuario pudiera elegir. */}
+      {(def.statusId || node.amountMode === 'statusStacks') && (
         <View>
           <Text style={styles.miniLabel}>{t('workshop.statusLabel')}</Text>
           <View style={styles.chipRow}>
@@ -297,10 +315,14 @@ function ActionParams({ node, update }: { node: EffectNode; update: (p: Partial<
               <Chip key={s.id} label={t(`workshop.${s.labelKey}`)} selected={(node.statusId ?? 'mark') === s.id}
                 onPress={() => update({ statusId: s.id })} />
             ))}
-            <Chip label={t('workshop.statusCustom')} selected={node.statusId === 'custom'}
-              onPress={() => update({ statusId: 'custom' })} />
+            {/* 'custom' como valor de lectura no tiene sentido (solo como
+                id al APLICAR estado) — solo visible en acciones statusId. */}
+            {def.statusId && (
+              <Chip label={t('workshop.statusCustom')} selected={node.statusId === 'custom'}
+                onPress={() => update({ statusId: 'custom' })} />
+            )}
           </View>
-          {node.statusId === 'custom' && (
+          {def.statusId && node.statusId === 'custom' && (
             <NtInput label={t('workshop.customStatusIdLabel')} value={node.cardName ?? ''}
               onChangeText={v => update({ cardName: v })} placeholder="mi_estado" />
           )}
@@ -369,20 +391,21 @@ function ActionParams({ node, update }: { node: EffectNode; update: (p: Partial<
   );
 }
 
-export const KIND_META: Record<NodeKind, { badgeKey: string; labelKey: string; hintKey: string }> = {
-  ACTION: { badgeKey: 'kindActionBadge', labelKey: 'kindActionLabel', hintKey: 'kindActionHint' },
-  COND: { badgeKey: 'kindCondBadge', labelKey: 'kindCondLabel', hintKey: 'kindCondHint' },
-  REPEAT: { badgeKey: 'kindRepeatBadge', labelKey: 'kindRepeatLabel', hintKey: 'kindRepeatHint' },
-  CHOOSE: { badgeKey: 'kindChooseBadge', labelKey: 'kindChooseLabel', hintKey: 'kindChooseHint' },
-  ON_DEFEAT: { badgeKey: 'kindOnDefeatBadge', labelKey: 'kindOnDefeatLabel', hintKey: 'kindOnDefeatHint' },
-  ON_HORDE: { badgeKey: 'kindOnHordeBadge', labelKey: 'kindOnHordeLabel', hintKey: 'kindOnHordeHint' },
-  ON_ENEMY_DEF: { badgeKey: 'kindOnEnemyDefBadge', labelKey: 'kindOnEnemyDefLabel', hintKey: 'kindOnEnemyDefHint' },
-  PERSISTENT: { badgeKey: 'kindPersistentBadge', labelKey: 'kindPersistentLabel', hintKey: 'kindPersistentHint' },
-  DRAW_CHECK: { badgeKey: 'kindDrawCheckBadge', labelKey: 'kindDrawCheckLabel', hintKey: 'kindDrawCheckHint' },
-  FOR_EACH: { badgeKey: 'kindForEachBadge', labelKey: 'kindForEachLabel', hintKey: 'kindForEachHint' },
-  TRY: { badgeKey: 'kindTryBadge', labelKey: 'kindTryLabel', hintKey: 'kindTryHint' },
-  LISTEN: { badgeKey: 'kindListenBadge', labelKey: 'kindListenLabel', hintKey: 'kindListenHint' },
-};
+export const KIND_META = new Map<NodeKind, { badgeKey: string; labelKey: string; hintKey: string }>([
+  ['ACTION', { badgeKey: 'kindActionBadge', labelKey: 'kindActionLabel', hintKey: 'kindActionHint' }],
+  ['COND', { badgeKey: 'kindCondBadge', labelKey: 'kindCondLabel', hintKey: 'kindCondHint' }],
+  ['REPEAT', { badgeKey: 'kindRepeatBadge', labelKey: 'kindRepeatLabel', hintKey: 'kindRepeatHint' }],
+  ['CHOOSE', { badgeKey: 'kindChooseBadge', labelKey: 'kindChooseLabel', hintKey: 'kindChooseHint' }],
+  ['ON_DEFEAT', { badgeKey: 'kindOnDefeatBadge', labelKey: 'kindOnDefeatLabel', hintKey: 'kindOnDefeatHint' }],
+  ['ON_HORDE', { badgeKey: 'kindOnHordeBadge', labelKey: 'kindOnHordeLabel', hintKey: 'kindOnHordeHint' }],
+  ['ON_ENEMY_DEF', { badgeKey: 'kindOnEnemyDefBadge', labelKey: 'kindOnEnemyDefLabel', hintKey: 'kindOnEnemyDefHint' }],
+  ['PERSISTENT', { badgeKey: 'kindPersistentBadge', labelKey: 'kindPersistentLabel', hintKey: 'kindPersistentHint' }],
+  ['DRAW_CHECK', { badgeKey: 'kindDrawCheckBadge', labelKey: 'kindDrawCheckLabel', hintKey: 'kindDrawCheckHint' }],
+  ['FOR_EACH', { badgeKey: 'kindForEachBadge', labelKey: 'kindForEachLabel', hintKey: 'kindForEachHint' }],
+  ['TRY', { badgeKey: 'kindTryBadge', labelKey: 'kindTryLabel', hintKey: 'kindTryHint' }],
+  ['LISTEN', { badgeKey: 'kindListenBadge', labelKey: 'kindListenLabel', hintKey: 'kindListenHint' }],
+]);
+const kindMeta = (k: NodeKind) => KIND_META.get(k) ?? KIND_META.get('ACTION')!;
 
 
 
@@ -392,9 +415,9 @@ export const hasChildren = (n: EffectNode): boolean =>
   (n.thenN?.length ?? 0) + (n.elseN?.length ?? 0) + (n.children?.length ?? 0)
     + (n.options ?? []).reduce((s, o) => s + o.children.length, 0) > 0;
 
-export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
+export function EffectList({ nodes, onChange, depth, cardType, ownerKey }: ListProps) {
   const { t } = useTranslation();
-  const [pickerFor, setPickerFor] = useState<'root' | number | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerQuery, setPickerQuery] = useState('');
   const [wrapFor, setWrapFor] = useState<number | null>(null);
   // Selección múltiple (§3.2): modo selección + conjunto de keys marcadas.
@@ -413,9 +436,13 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
   // proximo render (el onChange del destino ya inserto el clon).
   useEffect(() => {
     const r = editorUi.dndPendingRemoval;
-    if (r && r.list === listIdRef.current && nodes[r.index]?.key === r.key) {
+    if (r && r.list === listIdRef.current) {
+      // Siempre se limpia: si la guarda índice+key falla (la lista cambió
+      // mid-drag), borrar por key evita duplicados silenciosos.
       editorUi.dndPendingRemoval = null;
-      onChange(nodes.filter((_, xi) => xi !== r.index));
+      if (nodes.some((n) => n.key === r.key)) {
+        onChange(nodes.filter((n) => n.key !== r.key));
+      }
     }
   });
   /** Drop en la posicion toIndex: reordena dentro de la lista o mueve el
@@ -423,9 +450,25 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
   const dropOn = (toIndex: number) => {
     const p = editorUi.dnd;
     if (!p) return;
+    // Soltar dentro del propio subárbol clonaba el nodo y después borraba
+    // el original → desaparición silenciosa. Cancelar el drag entero.
+    if (ownerKey !== undefined && p.keys?.has(ownerKey)) {
+      editorUi.dnd = null;
+      toast.show(t('workshop.dropIntoSelf'));
+      bump();
+      return;
+    }
     editorUi.dnd = null;
     if (p.list === listIdRef.current) {
-      onChange(moveToIndex(nodes, p.index, toIndex));
+      // Identificar por key, no por el índice capturado en dragStart:
+      // si la lista cambió mid-drag, p.index apuntaría al nodo equivocado.
+      // Semántica "insertar ANTES de la fila toIndex": al bajar, la
+      // extracción desplaza el objetivo una posición (-1). Sin el ajuste,
+      // arrastrar hacia abajo caía un hueco más allá de lo señalado.
+      const fromIdx = nodes.findIndex((x) => x.key === p.node.key);
+      if (fromIdx >= 0) {
+        onChange(moveToIndex(nodes, fromIdx, toIndex > fromIdx ? toIndex - 1 : toIndex));
+      }
     } else {
       editorUi.dndPendingRemoval = { list: p.list, index: p.index, key: p.node.key };
       onChange([...nodes.slice(0, toIndex), cloneSubtree(p.node), ...nodes.slice(toIndex)]);
@@ -473,7 +516,14 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
         return;
       }
     }
-    collapsedNodes.delete(nodes[i].key);
+    // Podar keys muertas del estado compartido: todo el subárbol en
+    // collapsedNodes y la key en la selección múltiple.
+    walkNodes([nodes[i]], (x) => collapsedNodes.delete(x.key));
+    // Toda la rama sale de la selección, no solo la raíz: si no quedaban
+    // keys fantasma y el contador de selección mentía.
+    const deadKeys = new Set<number>();
+    walkNodes([nodes[i]], (x) => deadKeys.add(x.key));
+    setSel(prev => { const s = new Set(prev); for (const kk of deadKeys) s.delete(kk); return s; });
     onChange(nodes.filter((_, xi) => xi !== i));
   };
 
@@ -505,7 +555,7 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
       base.elseN = [];
     }
     onChange([...nodes, base]);
-    setPickerFor(null);
+    setPickerOpen(false);
   };
 
   /** Envuelve el nodo i dentro de un contenedor (§3.2 "agrupar bajo"). */
@@ -526,7 +576,7 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
   };
   const selIndices = nodes.map((n, i) => (sel.has(n.key) ? i : -1)).filter(i => i >= 0);
   const bulkCopy = () => {
-    editorUi.clipboard = nodes.filter(n => sel.has(n.key)).map(n => structuredClone(n));
+    editorUi.clipboard = nodes.filter(n => sel.has(n.key)).map(n => cloneDeep(n));
     bump();
   };
   const bulkWrap = (kind: WrapKind) => {
@@ -540,7 +590,7 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
       if (typeof g.confirm === 'function'
         && !g.confirm(t('workshop.deleteBranchConfirm', { count: total - 1 }))) return;
     }
-    for (const n of nodes) if (sel.has(n.key)) collapsedNodes.delete(n.key);
+    for (const n of nodes) if (sel.has(n.key)) walkNodes([n], (x) => collapsedNodes.delete(x.key));
     onChange(nodes.filter(n => !sel.has(n.key)));
     setSel(new Set());
   };
@@ -551,7 +601,7 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
     const name = typeof g.prompt === 'function'
       ? (g.prompt(t('workshop.fragmentNamePrompt'), nodeText(nodes[i], t).slice(0, 40)) ?? '')
       : '';
-    saveFragment(name, structuredClone([nodes[i]]));
+    saveFragment(name, cloneDeep([nodes[i]]));
   };
 
   /** Pega el portapapeles después del nodo i (insertar debajo, §3.2). */
@@ -579,7 +629,7 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
           : diagErrorKeys.has(n.key) ? styles.nodeError
           : diagWarnKeys.has(n.key) ? styles.nodeWarn : null]}
           accessibilityLabel={t('workshop.nodeDepthA11y', {
-            kind: t(`workshop.${KIND_META[n.kind].labelKey}`), depth: depth + 1,
+            kind: t(`workshop.${kindMeta(n.kind).labelKey}`), depth: depth + 1,
           })}>
           <View style={styles.nodeHeader}>
             {selMode && (
@@ -599,7 +649,7 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
                 <Text style={styles.ctrlTxt}>{collapsedNodes.has(n.key) ? '▸' : '▾'}</Text>
               </Pressable>
             )}
-            <NtBadge label={t(`workshop.${KIND_META[n.kind].badgeKey}`)} tone="accent" />
+            <NtBadge label={t(`workshop.${kindMeta(n.kind).badgeKey}`)} tone="accent" />
             <Text style={styles.nodeText} numberOfLines={1}>{nodeText(n, t)}</Text>
             <View style={styles.ctrlRow}>
               {IS_WEB && <DndHandle payload={{ list: listIdRef.current, index: i, node: n }} />}
@@ -610,7 +660,7 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
                 </>
               )}
               <Pressable onPress={() => dup(i)} accessibilityRole="button" accessibilityLabel={t('workshop.duplicate')} style={styles.ctrl}><Text style={styles.ctrlTxt}>⧉</Text></Pressable>
-              <Pressable onPress={() => { editorUi.clipboard = [structuredClone(nodes[i])]; bump(); }}
+              <Pressable onPress={() => { editorUi.clipboard = [cloneDeep(nodes[i])]; bump(); }}
                 accessibilityRole="button" accessibilityLabel={t('workshop.copyNodeA11y')} style={styles.ctrl}><Text style={styles.ctrlTxt}>⎘</Text></Pressable>
               {editorUi.clipboard.length > 0 && (
                 <Pressable onPress={() => pasteBelow(i)}
@@ -631,14 +681,14 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
             <View style={styles.chipRow}>
               <Text style={styles.miniLabel}>{t('workshop.wrapTitle')}</Text>
               {(['COND', 'REPEAT', 'TRY', 'FOR_EACH'] as const).map(kind => (
-                <Chip key={kind} label={t(`workshop.${KIND_META[kind].badgeKey}`)} selected={false}
+                <Chip key={kind} label={t(`workshop.${kindMeta(kind).badgeKey}`)} selected={false}
                   onPress={() => wrap(i, kind)} />
               ))}
             </View>
           )}
 
           {!collapsedNodes.has(n.key) && (<>
-          <Text style={styles.hint}>{t(`workshop.${KIND_META[n.kind].hintKey}`)}</Text>
+          <Text style={styles.hint}>{t(`workshop.${kindMeta(n.kind).hintKey}`)}</Text>
           {n.kind === 'ACTION' && <ActionParams node={n} update={p => update(i, p)} />}
 
           {n.kind === 'COND' && (
@@ -653,14 +703,10 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
               {CONDITIONS.find(c => c.id === n.condKind)?.param === 'cap' && (
                 <View style={styles.chipRow}>
                   {CAPABILITIES.map(cap => (
-                    <Chip key={cap} label={t(`workshop.${CAP_NAME_KEYS[cap]}`)} selected={(n.condParam ?? 'EXPERTISE') === cap}
+                    <Chip key={cap} label={t(`workshop.${CAP_NAME_KEYS.get(cap)}`)} selected={(n.condParam ?? 'EXPERTISE') === cap}
                       onPress={() => update(i, { condParam: cap })} />
                   ))}
                 </View>
-              )}
-              {CONDITIONS.find(c => c.id === n.condKind)?.param === 'name' && (
-                <NtInput label={t('workshop.cardNameLabel')} value={n.condParam ?? ''}
-                  onChangeText={v => update(i, { condParam: v })} />
               )}
               {CONDITIONS.find(c => c.id === n.condKind)?.param === 'int' && (
                 <NtInput label={t('workshop.valueLabel')} value={n.condParam ?? '2'} onChangeText={v => update(i, { condParam: v })} keyboardType="number-pad" />
@@ -675,6 +721,10 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
               )}
               {CONDITIONS.find(c => c.id === n.condKind)?.param === 'name' && (
                 <NtInput label={t('workshop.cardNameLabel')} value={n.condParam ?? ''} onChangeText={v => update(i, { condParam: v })} placeholder={t('workshop.cardNamePlaceholderSword')} />
+              )}
+              {CONDITIONS.find(c => c.id === n.condKind)?.param === 'raw' && (
+                <NtInput label={t('workshop.condRawLabel')} value={n.condRaw ?? ''}
+                  onChangeText={v => update(i, { condRaw: v })} />
               )}
               {CONDITIONS.find(c => c.id === n.condKind)?.param === 'status' && (
                 <View>
@@ -715,7 +765,7 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
                       {CONDITIONS.find(c => c.id === n.condKind2)?.param === 'cap' && (
                         <View style={styles.chipRow}>
                           {CAPABILITIES.map(cap => (
-                            <Chip key={cap} label={t(`workshop.${CAP_NAME_KEYS[cap]}`)} selected={(n.condParam2 ?? 'EXPERTISE') === cap}
+                            <Chip key={cap} label={t(`workshop.${CAP_NAME_KEYS.get(cap)}`)} selected={(n.condParam2 ?? 'EXPERTISE') === cap}
                               onPress={() => update(i, { condParam2: cap })} />
                           ))}
                         </View>
@@ -734,9 +784,9 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
                 </View>
               )}
               <Text style={styles.miniLabel}>{t('workshop.thenLabel')}</Text>
-              <EffectList nodes={n.thenN ?? []} onChange={l => update(i, { thenN: l })} depth={depth + 1} cardType={cardType} />
+              <EffectList nodes={n.thenN ?? []} onChange={l => update(i, { thenN: l })} depth={depth + 1} cardType={cardType} ownerKey={n.key} />
               <Text style={styles.miniLabel}>{t('workshop.elseLabel')}</Text>
-              <EffectList nodes={n.elseN ?? []} onChange={l => update(i, { elseN: l })} depth={depth + 1} cardType={cardType} />
+              <EffectList nodes={n.elseN ?? []} onChange={l => update(i, { elseN: l })} depth={depth + 1} cardType={cardType} ownerKey={n.key} />
             </View>
           )}
 
@@ -752,7 +802,7 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
                 <Chip label={t('workshop.repeatPerEnemy')} selected={n.timesMode === 'enemies'} onPress={() => update(i, { timesMode: 'enemies' })} />
                 <Chip label={t('workshop.repeatPerFieldEnemy')} selected={n.timesMode === 'fieldEnemies'} onPress={() => update(i, { timesMode: 'fieldEnemies' })} />
               </View>
-              <EffectList nodes={n.children ?? []} onChange={l => update(i, { children: l })} depth={depth + 1} cardType={cardType} />
+              <EffectList nodes={n.children ?? []} onChange={l => update(i, { children: l })} depth={depth + 1} cardType={cardType} ownerKey={n.key} />
             </View>
           )}
 
@@ -773,7 +823,7 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
                   </View>
                   <EffectList nodes={o.children}
                     onChange={l => update(i, { options: (n.options ?? []).map((x, xi) => xi === oi ? { ...x, children: l } : x) })}
-                    depth={depth + 1} cardType={cardType} />
+                    depth={depth + 1} cardType={cardType} ownerKey={n.key} />
                 </View>
               ))}
               {(n.options ?? []).length < 6 && (
@@ -797,7 +847,7 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
               <Text style={styles.hint}>
                 {t('workshop.forEachHint')}
               </Text>
-              <EffectList nodes={n.children ?? []} onChange={l => update(i, { children: l })} depth={depth + 1} cardType={cardType} />
+              <EffectList nodes={n.children ?? []} onChange={l => update(i, { children: l })} depth={depth + 1} cardType={cardType} ownerKey={n.key} />
             </View>
           )}
 
@@ -819,16 +869,16 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
                 <NtInput label={t('workshop.fortitudeGteLabel')} value={n.fortitudeGte ?? ''}
                   onChangeText={v => update(i, { fortitudeGte: v })} keyboardType="number-pad" />
               )}
-              <EffectList nodes={n.children ?? []} onChange={l => update(i, { children: l })} depth={depth + 1} cardType={cardType} />
+              <EffectList nodes={n.children ?? []} onChange={l => update(i, { children: l })} depth={depth + 1} cardType={cardType} ownerKey={n.key} />
             </View>
           )}
 
           {n.kind === 'TRY' && (
             <View>
               <Text style={styles.miniLabel}>{t('workshop.tryEffectsLabel')}</Text>
-              <EffectList nodes={n.children ?? []} onChange={l => update(i, { children: l })} depth={depth + 1} cardType={cardType} />
+              <EffectList nodes={n.children ?? []} onChange={l => update(i, { children: l })} depth={depth + 1} cardType={cardType} ownerKey={n.key} />
               <Text style={styles.miniLabel}>{t('workshop.tryFallbackLabel')}</Text>
-              <EffectList nodes={n.elseN ?? []} onChange={l => update(i, { elseN: l })} depth={depth + 1} cardType={cardType} />
+              <EffectList nodes={n.elseN ?? []} onChange={l => update(i, { elseN: l })} depth={depth + 1} cardType={cardType} ownerKey={n.key} />
             </View>
           )}
 
@@ -852,7 +902,7 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
               <NtInput label={t('workshop.listenTagLabel')} value={n.listenTag ?? ''}
                 onChangeText={v => update(i, { listenTag: v })} placeholder={t('workshop.listenTagPlaceholder')} />
               <Text style={styles.hint}>{t('workshop.listenHint')}</Text>
-              <EffectList nodes={n.children ?? []} onChange={l => update(i, { children: l })} depth={depth + 1} cardType={cardType} />
+              <EffectList nodes={n.children ?? []} onChange={l => update(i, { children: l })} depth={depth + 1} cardType={cardType} ownerKey={n.key} />
             </View>
           )}
 
@@ -866,9 +916,9 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
                   onChangeText={v => update(i, { amount: v })} keyboardType="number-pad" />
               </View>
               <Text style={styles.miniLabel}>{t('workshop.onMatchLabel')}</Text>
-              <EffectList nodes={n.thenN ?? []} onChange={l => update(i, { thenN: l })} depth={depth + 1} cardType={cardType} />
+              <EffectList nodes={n.thenN ?? []} onChange={l => update(i, { thenN: l })} depth={depth + 1} cardType={cardType} ownerKey={n.key} />
               <Text style={styles.miniLabel}>{t('workshop.onMismatchLabel')}</Text>
-              <EffectList nodes={n.elseN ?? []} onChange={l => update(i, { elseN: l })} depth={depth + 1} cardType={cardType} />
+              <EffectList nodes={n.elseN ?? []} onChange={l => update(i, { elseN: l })} depth={depth + 1} cardType={cardType} ownerKey={n.key} />
             </View>
           )}
           </>)}
@@ -878,7 +928,7 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
       <DndDrop index={nodes.length} onDropAt={dropOn}><View style={{ height: 6 }} /></DndDrop>
 
       <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <NtButton label={t('workshop.addEffect')} variant="secondary" size="sm" onPress={() => setPickerFor(pickerFor === -1 ? null : -1)} />
+        <NtButton label={t('workshop.addEffect')} variant="secondary" size="sm" onPress={() => setPickerOpen(v => !v)} />
         {editorUi.clipboard.length > 0 && (
           <NtButton label={t('workshop.pasteNode')} variant="ghost" size="sm"
             onPress={() => onChange([...nodes, ...editorUi.clipboard.map(cloneSubtree)])} />
@@ -904,20 +954,20 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
           <Text style={styles.miniLabel}>{t('workshop.selectedCount', { count: sel.size })}</Text>
           <Chip label={t('workshop.bulkCopy')} selected={false} onPress={bulkCopy} />
           {(['COND', 'REPEAT', 'TRY', 'FOR_EACH'] as const).map(kind => (
-            <Chip key={kind} label={t(`workshop.${KIND_META[kind].badgeKey}`)} selected={false}
+            <Chip key={kind} label={t(`workshop.${kindMeta(kind).badgeKey}`)} selected={false}
               onPress={() => bulkWrap(kind)} />
           ))}
           <Chip label={t('workshop.bulkDelete')} selected={false} onPress={bulkDelete} />
         </View>
       )}
-      {pickerFor === -1 && (
+      {pickerOpen && (
         <View style={styles.picker}>
           <NtInput label={t('workshop.pickerSearchLabel')} value={pickerQuery}
             onChangeText={setPickerQuery} placeholder={t('workshop.pickerSearchPlaceholder')} />
           <Text style={styles.miniLabel}>{t('workshop.templatesTitle')}</Text>
           {EFFECT_TEMPLATES.map(tpl => (
             <Pressable key={tpl.id} style={styles.pickerRow}
-              onPress={() => { onChange([...nodes, ...tpl.build()]); setPickerFor(null); }}
+              onPress={() => { onChange([...nodes, ...tpl.build()]); setPickerOpen(false); }}
               accessibilityRole="button" accessibilityLabel={t(`workshop.${tpl.labelKey}`)}>
               <Text style={styles.pickerName}>📦 {t(`workshop.${tpl.labelKey}`)}</Text>
             </Pressable>
@@ -931,7 +981,7 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
                     accessibilityLabel={t('workshop.insertFragmentA11y', { name: frag.name })}
                     onPress={() => {
                       onChange([...nodes, ...(frag.nodes as EffectNode[]).map(cloneSubtree)]);
-                      setPickerFor(null);
+                      setPickerOpen(false);
                     }}>
                     <Text style={styles.pickerName}>▤ {frag.name}</Text>
                   </Pressable>
@@ -947,8 +997,8 @@ export function EffectList({ nodes, onChange, depth, cardType }: ListProps) {
           {(['COND', 'REPEAT', 'CHOOSE', 'FOR_EACH', 'TRY', 'LISTEN', 'ON_DEFEAT', 'ON_HORDE', 'ON_ENEMY_DEF', 'PERSISTENT', 'DRAW_CHECK'] as NodeKind[])
             .filter(kd => !editorUi.basicMode || kd !== 'LISTEN').map(kd => (
             <Pressable key={kd} style={styles.pickerRow} onPress={() => addNode(kd)}
-              accessibilityRole="button" accessibilityLabel={t('workshop.addNodeA11y', { label: t(`workshop.${KIND_META[kd].labelKey}`) })}>
-              <Text style={styles.pickerName}>{t(`workshop.${KIND_META[kd].labelKey}`)}</Text>
+              accessibilityRole="button" accessibilityLabel={t('workshop.addNodeA11y', { label: t(`workshop.${kindMeta(kd).labelKey}`) })}>
+              <Text style={styles.pickerName}>{t(`workshop.${kindMeta(kd).labelKey}`)}</Text>
             </Pressable>
           ))}
           <Text style={styles.miniLabel}>{t('workshop.actionsTitle', { count: filteredActions.length })}</Text>

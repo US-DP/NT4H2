@@ -59,6 +59,8 @@ export default {
     pickHero: 'Choose your hero',
     /** Label for the class (deck) picker when joining a room */
     pickClass: 'Choose your class (deck)',
+    pickCustomDeck: 'Or use a Workshop deck',
+    classDeck: 'Class deck',
     /** Join-form error: no hero selected */
     errPickHero: 'Pick a hero to play',
     chat: {

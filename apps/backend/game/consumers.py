@@ -37,7 +37,7 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
     """
 
     async def connect(self):
-        room_id = self.scope["url_route"]["kwargs"].get("room_id", "default")
+        room_id = self.scope.get("url_route", {}).get("kwargs", {}).get("room_id", "default")
         self.room_id = room_id
         self.room_group = f"game_{room_id}"
 
@@ -84,7 +84,7 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
             }
         )
 
-    async def disconnect(self, close_code):
+    async def disconnect(self, code):
         if hasattr(self, "room_group"):
             await self.channel_layer.group_discard(self.room_group, self.channel_name)
             if getattr(self, "player_id", None):
@@ -111,7 +111,7 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
         self._msg_timestamps.append(now)
         return False
 
-    async def receive_json(self, content):
+    async def receive_json(self, content, **kwargs):
         if self._throttled():
             await self.send_json({"type": "error", "reason": "rate_limited"})
             return
@@ -130,49 +130,71 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
             # crecería indefinidamente tras el cierre de la partida.
             await self.handle_chat(content)
 
-    async def handle_chat(self, content):
-        """Chat de sala: servidor asigna sender/tipo/seq/timestamp.
-
-        - Rate limit propio (5 msg / 5 s por conexión).
-        - Idempotencia por clientMessageId (reintentos tras reconexión).
-        - Sanitización: el chat es texto plano — se eliminan caracteres de
-          control y se normalizan saltos de línea.
-        """
+    def _chat_rate_limited(self) -> bool:
+        """Token bucket de chat (5 msg / 5 s por conexión). True = descartar."""
         now = time.monotonic()
         self._chat_timestamps = [t for t in self._chat_timestamps if now - t < _CHAT_WINDOW]
         if len(self._chat_timestamps) >= _CHAT_MAX:
+            return True
+        self._chat_timestamps.append(now)
+        return False
+
+    def _seen_client_message(self, content) -> str | None:
+        """Idempotencia por clientMessageId (reintentos tras reconexión).
+
+        Devuelve el cmid normalizado ("" si no viene) o None si es un
+        duplicado ya emitido.
+        """
+        cmid = str(content.get("clientMessageId") or "")[:64]
+        if not cmid:
+            return ""
+        if cmid in self._seen_cmids:
+            return None
+        self._seen_cmids.append(cmid)
+        return cmid
+
+    @staticmethod
+    def _sanitize_chat_text(raw: str) -> str:
+        """Texto plano: fuera caracteres de control y saltos de línea colapsados."""
+        text = "".join(c for c in raw if c in "\n\t" or ord(c) >= 32)
+        return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    @staticmethod
+    def _sanitize_chat_meta(meta_raw):
+        """Ping estructurado opcional (emote con objetivo).
+
+        Solo se admite un subconjunto blanqueado — el cliente no puede
+        inyectar campos arbitrarios en el meta.
+        """
+        if not isinstance(meta_raw, dict) or meta_raw.get("kind") != "ping":
+            return None
+        meta = {"kind": "ping"}
+        target = meta_raw.get("target")
+        if isinstance(target, str) and target:
+            meta["target"] = target[:100]
+        return meta
+
+    async def handle_chat(self, content):
+        """Chat de sala: servidor asigna sender/tipo/seq/timestamp."""
+        if self._chat_rate_limited():
             await self.send_json({"type": "error", "reason": "chat_rate_limited"})
             return
-        self._chat_timestamps.append(now)
 
-        cmid = str(content.get("clientMessageId") or "")[:64]
-        if cmid:
-            if cmid in self._seen_cmids:
-                return  # duplicado: ya fue emitido
-            self._seen_cmids.append(cmid)
+        cmid = self._seen_client_message(content)
+        if cmid is None:
+            return  # duplicado: ya fue emitido
 
-        raw = str(content.get("text", ""))[:_CHAT_MAX_LEN]
-        text = "".join(c for c in raw if c in "\n\t" or ord(c) >= 32)
-        text = re.sub(r"\n{3,}", "\n\n", text).strip()
+        text = self._sanitize_chat_text(str(content.get("text", ""))[:_CHAT_MAX_LEN])
         if not text:
             return
 
-        # Ping estructurado opcional (emote con objetivo): solo se admite
-        # un subconjunto blanqueado — el cliente no puede inyectar campos.
-        meta_raw = content.get("meta")
-        meta = None
-        if isinstance(meta_raw, dict) and meta_raw.get("kind") == "ping":
-            target = meta_raw.get("target")
-            meta = {"kind": "ping"}
-            if isinstance(target, str) and target:
-                meta["target"] = target[:100]
-
+        meta = self._sanitize_chat_meta(content.get("meta"))
         seq = await self.persist_event("CHAT", self.player_id, {"text": text, **({"meta": meta} if meta else {})})
         await self.broadcast(
             {
                 "type": "chat.message",
                 # Identidad y orden asignados por el servidor (D431)
-                "messageId": f"chat-{seq}" if seq is not None else f"chat-{int(now * 1000)}",
+                "messageId": f"chat-{seq}" if seq is not None else f"chat-{int(time.monotonic() * 1000)}",
                 "seq": seq,
                 "clientMessageId": cmid or None,
                 "sender": self.player_id,
@@ -213,6 +235,24 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
                     "ref": cid,
                     "accepted": False,
                     "reason": f"Room is not in play (status={status or 'unknown'})",
+                }
+            )
+            return
+
+        # Idempotencia persistente (Fase 2): si este cid ya se procesó en
+        # esta sala (GameEvent durable), devolver el veredicto registrado
+        # sin re-ejecutar en el runner. El runner también deduplica cids
+        # en memoria; este chequeo sobrevive a reinicios del runner sin
+        # STATE_DIR y cubre el resend tras reconexión del cliente.
+        seen = await self._command_seen(cid)
+        if seen is not None:
+            await self.send_json(
+                {
+                    "type": "game.command_ack",
+                    "ref": cid,
+                    "accepted": seen["accepted"],
+                    "reason": seen["reason"],
+                    "deduplicated": True,
                 }
             )
             return
@@ -272,7 +312,7 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json(ack)
 
         # Persist event
-        await self.persist_event(
+        seq = await self.persist_event(
             "COMMAND",
             player_id,
             {
@@ -283,6 +323,8 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
                 "reason": reason,
             },
         )
+        # Fase 2: snapshot periódico + cierre de sala en GAME_ENDED.
+        await self._finalize_command(seq, result.get("events") or [])
 
         # Broadcast to the room
         # D425 (RF-J095): NO difundir el estado completo — filtraría manos
@@ -301,11 +343,41 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
             "reason": reason,
             "stateChanged": result.get("stateChanged", False),
         }
-        # La revisión permite a TODOS los clientes (no solo al emisor, que ya
+        # La revisión permite a todos los clientes (no solo al emisor, que ya
         # recibe el ack) mantener lastRevision sincronizada sin re-pedir.
         if revision is not None:
             broadcast_msg["revision"] = revision
         await self.broadcast(broadcast_msg)
+
+    @database_sync_to_async
+    def _command_seen(self, cid):
+        """Veredicto ya persistido para este cid en esta sala, o None."""
+        if not cid or not isinstance(cid, str):
+            return None
+        event = GameEvent.objects.filter(session__room_id=self.room_id, event_type="COMMAND", data__cid=cid).first()
+        if event is None:
+            return None
+        return {
+            "accepted": bool((event.data or {}).get("accepted", False)),
+            "reason": (event.data or {}).get("reason"),
+        }
+
+    @database_sync_to_async
+    def _finalize_command(self, seq, events):
+        """Post-comando: snapshot periódico y cierre de sala en GAME_ENDED."""
+        from .views.engine import SNAPSHOT_EVERY_EVENTS, mark_finished, take_snapshot
+
+        session = GameSession.objects.filter(room_id=self.room_id).first()
+        if session is None:
+            return
+        ended = next(
+            (e for e in events if isinstance(e, dict) and e.get("type") == "GAME_ENDED"),
+            None,
+        )
+        if ended is not None:
+            mark_finished(session, ended.get("winnerId"))
+        elif seq is not None and seq % SNAPSHOT_EVERY_EVENTS == 0:  # noqa: S001 - módulo entero, no format
+            take_snapshot(session)
 
     async def broadcast(self, payload):
         """Send a message to the whole room group."""

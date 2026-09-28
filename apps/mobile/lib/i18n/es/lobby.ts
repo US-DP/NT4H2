@@ -59,6 +59,8 @@ export default {
     pickHero: 'Elige tu héroe',
     /** Etiqueta del selector de clase (mazo) al unirse a una sala */
     pickClass: 'Elige tu clase (mazo)',
+    pickCustomDeck: 'O usa un mazo del Taller',
+    classDeck: 'Mazo de clase',
     /** Error del formulario de unirse: héroe no elegido */
     errPickHero: 'Elige un héroe para jugar',
 

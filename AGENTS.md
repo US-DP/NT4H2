@@ -41,7 +41,7 @@ pnpm test:e2e     # Ejecutar tests E2E (Playwright)
 ```bash
 cd apps/backend
 python manage.py runserver
-python manage.py test       # 89 tests Django
+python manage.py test       # 113 tests Django
 ruff check .                # Linter Python (ruff.toml configurado)
 bandit -r .                 # Análisis de seguridad Python
 ```
@@ -65,7 +65,22 @@ cd apps/backend && black --check -l 120 .   # formateado (config en .flake8/.pyl
 cd apps/backend && flake8 .                 # 0 (config .flake8; plugins ANN/DAR/WPS excluidos)
 cd apps/backend && pydocstyle --convention=google --add-ignore=D1 .   # 0
 cd apps/backend && DJANGO_DEBUG=true pylint backend content game      # 10/10 (.pylintrc + pylint-django)
+cd apps/backend && deptry .                 # 0 (config en pyproject.toml [tool.deptry])
+cd apps/backend && vulture .                # 0 (config en pyproject.toml [tool.vulture] — convenciones Django en ignore_names)
+cd apps/backend && python -m pip_audit -r requirements.txt            # 0 CVEs
+cd apps/backend && npx pyright              # type-check (pyrightconfig.json; ~67 falsos positivos Django/DRF sin stubs (.players inversa, .user_id FK, .data en tests, Client.get/patch posicional, username=None del User custom))
+cd .. && cd .. && yamllint .                # 0 (config .yamllint.yml — 'on:' de GHA y 120 cols)
+cd .. && cd .. && actionlint .github/workflows/*.yml                  # 0 errores en CI workflows
+cd apps/backend && radon cc -s -a backend game content --exclude "migrations,tests.py"  # media A (2.7); ninguna función ≥C
+cd apps/backend && radon mi -s game/views                           # todo A
+# detect-secrets scan apps/backend                                   # 0 secretos
+# codespell: NO usar con el dict por defecto — el repo es ES-first y
+#   solo produce falsos positivos (fase/oficial/comando/hiLight…).
+# mypy/refurb: bloqueados en Windows por WDAC (módulos mypyc compilados
+#   no autorizados por el Control de Aplicaciones) — usar pyright.
 ```
+
+**Tipado Python**: `mypy`/`refurb` quedan bloqueados por Windows App Control (WDAC bloquea las DLLs nativas de mypy); se usa `pyright` vía Node como sustituto. `vulture`/`codespell` no aportan en este repo: todo falsos positivos por convenciones Django (settings, admin, migrations) y por ser un proyecto en español.
 
 **Configuración ESLint**: `eslint.config.js` en cada paquete TS con reglas de seguridad (no-eval, no-child-process, unsafe-regex, pseudoRandomBytes), TypeScript estricto (no-explicit-any, consistent-type-imports) y calidad (prefer-const, eqeqeq, no-debugger).
 
@@ -90,10 +105,25 @@ Es necesario instalar `react-dom@19.0.0` explícitamente (no viene por defecto c
 - `app/_layout.tsx` — layout raíz con Stack navigator
 
 ### Estado del juego (Zustand + immer)
-- `store/gameStore.ts` — estado global con Zustand + immer
+- `store/gameStore.ts` — compositor: estado inicial + `useGameStore` (Zustand + immer)
+- `store/shared.ts` — tipos (GameStore, SavedGame…) + helpers compartidos (sanitizeOnlineState, newCid)
+- `store/slices/{ui,gameplay,online,saves}.ts` — acciones por dominio (StateCreator con immer)
 - `store/useProjectedState.ts` — hook para estado proyectado (ocultación de info)
 - Hot-seat: `viewerId` + `privacyScreen` para cambiar de jugador
 - Persistencia: localStorage (web) para guardar/cargar partidas
+
+### Estructura del engine (paquete @nt4h/engine)
+- `effects/registry.ts` — EffectRegistry + evaluadores compartidos (evalValue, resolveTarget…)
+- `effects/handlers/{damage,cards,economy,enemies,control}.ts` — los 68 `register()` por dominio
+- `effects/resolver.ts` — resolveCard + executeEffectChain; `rapidShot.ts`/`hordeTriggers.ts` aparte
+- `commands/execute.ts` — execute + isLegal; `commands/resolveChoice.ts` — despacho RESOLVE_CHOICE
+- `events/applyEvent.ts` — fold + helpers; `events/reducers/{combat,cards,economy,flow}.ts` — un applyXxx por tipo
+- `phases/engine.ts` — orquestador processPhases; `phases/steps/*.ts` — una fase por archivo
+
+### Check de complejidad/LOC
+`python scripts/check-complexity.py [--fail]` — informe LOC + densidad de decisiones
+por archivo (excluye node_modules/tests/datos declarativos). WARN >800 LOC,
+FAIL >1500 LOC (con `--fail` sale 1). Ratchet: no dejar crecer sin refactor.
 
 ### Motor de reglas
 - 679 tests pasan (vitest)
@@ -117,6 +147,7 @@ Es necesario instalar `react-dom@19.0.0` explícitamente (no viene por defecto c
 - **Escrituras de contenido (D438)**: `ContentWritePermission` exige `Authorization: Bearer $CONTENT_API_TOKEN` en POST/PUT/DELETE de `/api/cards*` cuando el token está configurado.
 - **Reconexión WS (D439)**: `connectOnline` reconecta con backoff exponencial (1s→15s máx, gobernado por NetInfo) + heartbeat ping cada 20s; tras cada reconexión re-pide el estado proyectado y **vacía la cola de comandos pendientes** (`_pendingCmds`, máx acotado) — un comando enviado con el socket caído se encola en vez de perderse.
 - **Persistencia del runner**: `ENGINE_RUNNER_STATE_DIR` activa snapshots atómicos por sala (tmp+rename tras cada comando aceptado) y restauración al arrancar (estado + RNG + cids + customSets). Sin la var, el runner es memoria pura.
+- **Persistencia Fase-2 (backend)**: el consumer deduplica `cid` contra `GameEvent.data__cid` ANTES de llamar al runner (sobrevive a reinicios del runner sin STATE_DIR); `GET /api/rooms/<id>/sync/?playerId&after=<seq>` devuelve `roomRevision`, `latestSeq` y proyección compacta de eventos (sin payloads privados) para resincronizar tras reconexión; `GameSnapshot` guarda el estado COMPLETO del runner (vía `GET /rooms/<id>/full-state`, interno) cada `SNAPSHOT_EVERY_EVENTS=50` eventos y al cerrar la sala — base del replay (≤10 por sala, poda FIFO); un `GAME_ENDED` del runner cierra la sesión a FINISHED (`mark_finished`: evento terminal + snapshot final + broadcast `room.finished`). `skip_turn` persiste su cid para cubrir la dedup.
 - **Contenido custom online**: `config.customSets` viaja al runner, que lo valida (`ContentSetSchema` + `validateContentSet`) y fusiona solo para esa sala (`mergeCustomCards`); el backend reenvía pools (`hordeCardIds`, `warlordIds`, `marketCardIds`, `customDecks`, `scenarioIds`…). `config.contentManifest` (id+versión de sets del host) permite al invitado ver qué le falta e importarlo desde la propia sala.
 - **Roster online por miembros**: el invitado elige héroe+clase+cara al unirse (`Player.hero_id/deck_id/hero_face`); `start_room` exige roster completo y **reconstruye la sala del runner** (`delete` + `create` con los `heroes` de todos los miembros) antes de marcar PLAYING — en WAITING no hay estado de motor que perder.
 - **Config pública vs privada**: `GameSession.to_dict(include_private_config=…)` filtra la config por `_PUBLIC_CONFIG_KEYS` (manifest, versiones, customSets — lo que un invitado necesita para jugar); los pools del motor (`hordeCardIds`…) solo salen a miembros autenticados (`room_state` con `?playerId` + `X-Player-Token`).
@@ -135,7 +166,9 @@ Es necesario instalar `react-dom@19.0.0` explícitamente (no viene por defecto c
 - [x] Tests E2E: Nivel 16 configurado (Playwright, recorridos críticos)
 - [x] CI: Workflow por capas para motor y UI
 - [x] Fase 11: Backend + online — salas REST + WebSocket + integración engine-runner + UI online
+- [x] Fase 13: Identidad persistente (cuentas) — app `accounts` con `User` custom (login por email, `display_name` único, `PlayerProfile`, `PlayerStatistics`), JWT simplejwt (access 15 min + refresh rotatorio con blacklist), endpoints `/api/v1/auth/*` (register/login/refresh/logout/claim-guest), `/api/v1/me/`, `/api/v1/players/<id>/` (público/statistics/match-history). `Player.user` FK vinculada en create/join si la petición lleva Bearer JWT (`accounts.authentication.get_auth_user` — auth POR VISTA, no global: el Bearer de CONTENT_API_TOKEN no es JWT y moriría con 401). Mobile: `lib/auth.ts` (secure-store + authFetch con refresh automático), `store/authStore.ts`, `app/(auth)/index.tsx`, entrada «Cuenta» en Perfil. Migrar AUTH_USER_MODEL en una DB existente exige recrearla (admin.0001 migra antes que accounts): en dev basta renombrar db.sqlite3 y `migrate`.
 - [x] Fase 12: Estudio de creación — pantalla StudyScreen con 12 pestañas (UI-240..325), navegación secundaria, migas de pan, estado de guardado, constructor de mazos, sandbox, versionado
+- [x] Plataforma Fase 2: persistencia/idempotencia — dedup de `cid` en Django (GameEvent), snapshots `GameSnapshot` del runner (cada 50 eventos + fin de partida), endpoint `full-state` interno en el runner, `GET /sync/` para resync, `mark_finished` en GAME_ENDED
 
 ## Sistema de tests
 
@@ -155,8 +188,8 @@ Es necesario instalar `react-dom@19.0.0` explícitamente (no viene por defecto c
 - **Nivel 15c**: Pruebas del Estudio (7 tests) — UI-240..325, navegación, migas, guardado, versionado
 - **Nivel 16**: Pruebas E2E (Playwright) — 12 passed, 3 flaky, 1 skipped
 - **Total UI**: 365 tests (vitest) + E2E (Playwright)
-- **Backend**: 89 tests (Django TestCase) — API REST salas, jugadores, engine state, content CRUD (CardDefinition, CardVersion), autorización por token
-- **Engine-runner**: `pnpm test` (node:test + tsx, sin deps nuevas) — regresión de dedup por cid antes de clientSequence
+- **Backend**: 113 tests (Django TestCase) — API REST salas, jugadores, engine state, content CRUD (CardDefinition, CardVersion), autorización por token, persistencia Fase-2
+- **Engine-runner**: `pnpm test` (node:test + tsx, sin deps nuevas) — regresión de dedup por cid antes de clientSequence + endpoint `full-state`
 - CI: `.github/workflows/ui-ci.yml` (8 capas)
 
 ### Componentes UI recientes
@@ -177,7 +210,7 @@ Es necesario instalar `react-dom@19.0.0` explícitamente (no viene por defecto c
 - `apps/mobile/store/gameStore.ts` — conexión online: `setGameState`, `connectOnline`, `sendOnlineCommand`, modo `local`/`online`.
 - `app/(game)/index.tsx` — indicador de sala online.
 - `app/(room)/index.tsx` — carga estado del motor y arranca partida online.
-- `backend/game/consumers.py`, `game/engine_client.py`, `game/views.py` — salas REST + WebSocket con delegación a engine-runner.
+- `backend/game/consumers.py`, `game/engine_client.py`, `game/views/` — salas REST + WebSocket con delegación a engine-runner. `game/views/` es un paquete por dominio (antes un solo views.py ~1400 líneas): `rooms.py` (ciclo de vida/join/leave/start), `players.py` (kick/unkick/transfer/skip), `engine.py` (estado proyectado + tickets WS), `stats.py` (leaderboard/salud), `_common.py` (guardas, rate limit, `_require_host`, `_verify_player`, broadcast). `__init__.py` reexporta la superficie pública — los patch targets `game.views.X` de los tests siguen válidos.
 - `app/(profile)/index.tsx` — perfil y accesibilidad (UI-014, UI-007).
 - `components/MarketView.tsx` — mercado con costes, descuentos y penalizaciones (UI-140..UI-146).
 - `components/Battlefield.tsx` — campo de batalla con fortaleza efectiva y daño aportado (UI-090..UI-099).

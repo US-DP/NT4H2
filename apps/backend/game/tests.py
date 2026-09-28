@@ -1,6 +1,7 @@
 """Tests básicos para el backend de juego."""
 
 import json
+from unittest import SkipTest
 from unittest.mock import patch
 
 import httpx  # noqa: ASYNC127 - httpx sigue mantenido; la sugerencia httpx2 es errónea
@@ -978,10 +979,7 @@ class RoomApiTests(TestCase):
         )
         host = Player.objects.create(session=session, player_id="h1", name="Ana", is_host=True)
 
-        r1 = self.client.get(
-            "/api/rooms/CLOCK1/engine/?playerId=h1",
-            HTTP_X_PLAYER_TOKEN=host.auth_token,
-        )
+        r1 = self.client.get("/api/rooms/CLOCK1/engine/?playerId=h1", headers={"x-player-token": host.auth_token})
         self.assertEqual(r1.status_code, 200)
         self.assertIn("turnStartedAt", r1.json())
         session.refresh_from_db()
@@ -990,19 +988,13 @@ class RoomApiTests(TestCase):
         self.assertIsNotNone(first_stamp)
 
         # Mismo activo: el sello no se mueve
-        self.client.get(
-            "/api/rooms/CLOCK1/engine/?playerId=h1",
-            HTTP_X_PLAYER_TOKEN=host.auth_token,
-        )
+        self.client.get("/api/rooms/CLOCK1/engine/?playerId=h1", headers={"x-player-token": host.auth_token})
         session.refresh_from_db()
         self.assertEqual(session.turn_started_at, first_stamp)
 
         # Cambio de jugador: nuevo sello
         mock_state.return_value = {"state": {"activePlayerId": "p2"}}
-        self.client.get(
-            "/api/rooms/CLOCK1/engine/?playerId=h1",
-            HTTP_X_PLAYER_TOKEN=host.auth_token,
-        )
+        self.client.get("/api/rooms/CLOCK1/engine/?playerId=h1", headers={"x-player-token": host.auth_token})
         session.refresh_from_db()
         self.assertEqual(session.turn_player_id, "p2")
         self.assertGreaterEqual(session.turn_started_at, first_stamp)
@@ -1651,3 +1643,207 @@ class SecurityRegressionTests(TestCase):
             await comm.disconnect()
 
         async_to_sync(flow)()
+
+
+@override_settings(ROOM_RATE_LIMIT_MAX=10000)
+class PersistencePhase2Tests(TestCase):
+    """Fase 2: dedup persistente por cid, snapshots, sync y cierre automático."""
+
+    def _playing(self, room_id="P2ROOM1"):
+        session = GameSession.objects.create(
+            room_id=room_id, mode="STANDARD", max_players=2, host_id="p1", status="PLAYING"
+        )
+        Player.objects.create(session=session, player_id="p1", name="Ana", is_host=True)
+        return session
+
+    def _ws_app(self):
+        """Router WS de test; lanza SkipTest si channels.testing falta."""
+        import importlib.util
+
+        if importlib.util.find_spec("channels.testing") is None:
+            raise SkipTest("channels.testing no disponible")
+        from channels.routing import URLRouter
+
+        from game.routing import websocket_urlpatterns
+
+        return URLRouter(websocket_urlpatterns)
+
+    def test_ws_command_cid_deduplicated(self):
+        """Dedup persistente por cid ya procesado.
+
+        Un cid ya procesado responde con el veredicto registrado sin
+        re-ejecutar el comando en el runner.
+        """
+        try:
+            from asgiref.sync import async_to_sync
+            from channels.testing import WebsocketCommunicator
+        except ImportError:
+            self.skipTest("channels.testing no disponible")
+        self._playing("DEDUP1")
+        application = self._ws_app()
+
+        async def flow():
+            comm = WebsocketCommunicator(application, _ws_ticket_url("DEDUP1", "p1"))
+            connected, _ = await comm.connect()
+            self.assertTrue(connected)
+            await comm.receive_json_from()  # 'connected'
+            with patch("game.consumers.EngineRunnerClient.execute_command") as mock_cmd:
+                mock_cmd.return_value = {"accepted": True, "revision": 2, "stateChanged": True, "events": []}
+                await comm.send_json_to({"type": "game.command", "cid": "dup-1", "command": {"type": "END_TURN"}})
+                ack1 = await comm.receive_json_from()
+                self.assertTrue(ack1["accepted"])
+                self.assertNotIn("deduplicated", ack1)
+                await comm.receive_json_from()  # broadcast command_result
+                # Reenvío del mismo cid → dedup, sin tocar el runner
+                await comm.send_json_to({"type": "game.command", "cid": "dup-1", "command": {"type": "END_TURN"}})
+                ack2 = await comm.receive_json_from()
+                self.assertTrue(ack2["accepted"])
+                self.assertTrue(ack2["deduplicated"])
+                self.assertEqual(mock_cmd.call_count, 1)
+            await comm.disconnect()
+
+        async_to_sync(flow)()
+
+    def test_ws_game_ended_marks_finished(self):
+        """Un GAME_ENDED del runner cierra la sala y deja el evento + snapshot."""
+        try:
+            from asgiref.sync import async_to_sync
+            from channels.testing import WebsocketCommunicator
+        except ImportError:
+            self.skipTest("channels.testing no disponible")
+        self._playing("ENDG1")
+        application = self._ws_app()
+
+        async def flow():
+            comm = WebsocketCommunicator(application, _ws_ticket_url("ENDG1", "p1"))
+            connected, _ = await comm.connect()
+            self.assertTrue(connected)
+            await comm.receive_json_from()
+            with (
+                patch("game.consumers.EngineRunnerClient.execute_command") as mock_cmd,
+                patch("game.views.engine.EngineRunnerClient.get_full_state") as mock_full,
+            ):
+                mock_cmd.return_value = {
+                    "accepted": True,
+                    "revision": 9,
+                    "stateChanged": True,
+                    "events": [{"type": "GAME_ENDED", "winnerId": "p1"}],
+                }
+                mock_full.return_value = {"state": {"phase": "FINISHED"}, "revision": 9, "rngState": {}}
+                await comm.send_json_to({"type": "game.command", "cid": "end-1", "command": {"type": "END_TURN"}})
+                await comm.receive_json_from()  # ack
+                # Broadcasts de grupo: room.finished y command_result
+                types = {(await comm.receive_json_from())["type"]}
+                types.add((await comm.receive_json_from())["type"])
+                self.assertEqual(types, {"room.finished", "game.command_result"})
+            await comm.disconnect()
+
+        async_to_sync(flow)()
+        session = GameSession.objects.get(room_id="ENDG1")
+        self.assertEqual(session.status, "FINISHED")
+        from .models import GameEvent, GameSnapshot
+
+        self.assertTrue(GameEvent.objects.filter(session=session, event_type="GAME_ENDED").exists())
+        self.assertTrue(GameSnapshot.objects.filter(session=session).exists())
+
+    def test_snapshot_taken_every_n_events(self):
+        """El checkpoint se toma cada SNAPSHOT_EVERY_EVENTS eventos."""
+        try:
+            from asgiref.sync import async_to_sync
+            from channels.testing import WebsocketCommunicator
+        except ImportError:
+            self.skipTest("channels.testing no disponible")
+        self._playing("SNAP1")
+        application = self._ws_app()
+
+        async def flow():
+            comm = WebsocketCommunicator(application, _ws_ticket_url("SNAP1", "p1"))
+            connected, _ = await comm.connect()
+            self.assertTrue(connected)
+            await comm.receive_json_from()
+            with (
+                patch("game.consumers.EngineRunnerClient.execute_command") as mock_cmd,
+                patch("game.views.engine.SNAPSHOT_EVERY_EVENTS", 2),
+                patch("game.views.engine.take_snapshot") as mock_snap,
+            ):
+                mock_cmd.return_value = {"accepted": True, "revision": 1, "stateChanged": True, "events": []}
+                await comm.send_json_to({"type": "game.command", "cid": "s1", "command": {"type": "END_TURN"}})
+                await comm.receive_json_from()
+                await comm.receive_json_from()
+                self.assertEqual(mock_snap.call_count, 0)  # seq=1, no toca
+                await comm.send_json_to({"type": "game.command", "cid": "s2", "command": {"type": "END_TURN"}})
+                await comm.receive_json_from()
+                await comm.receive_json_from()
+                self.assertEqual(mock_snap.call_count, 1)  # seq=2 → snapshot
+            await comm.disconnect()
+
+        async_to_sync(flow)()
+
+    def test_take_snapshot_prunes_old(self):
+        """Solo se conservan los últimos MAX_SNAPSHOTS_PER_SESSION."""
+        from .models import GameEvent, GameSnapshot
+        from .views.engine import MAX_SNAPSHOTS_PER_SESSION, take_snapshot
+
+        session = self._playing("PRUNE1")
+        GameEvent.objects.create(session=session, seq=1, event_type="COMMAND", player_id="p1", data={})
+        with patch("game.views.engine.EngineRunnerClient.get_full_state") as mock_full:
+            mock_full.return_value = {"state": {}, "revision": 1, "rngState": {}}
+            for _ in range(MAX_SNAPSHOTS_PER_SESSION + 3):
+                take_snapshot(session)
+        snaps = GameSnapshot.objects.filter(session=session)
+        self.assertEqual(snaps.count(), MAX_SNAPSHOTS_PER_SESSION)
+        self.assertEqual(snaps.first().seq, 1)
+
+    def test_take_snapshot_survives_runner_down(self):
+        """Runner caído → snapshot no se toma pero no explota."""
+        from .models import GameSnapshot
+        from .views.engine import take_snapshot
+
+        session = self._playing("SNDOWN")
+        with patch("game.views.engine.EngineRunnerClient.get_full_state") as mock_full:
+            mock_full.side_effect = httpx.HTTPError("down")
+            self.assertFalse(take_snapshot(session))
+        self.assertFalse(GameSnapshot.objects.filter(session=session).exists())
+
+    def test_sync_endpoint_events_after_seq(self):
+        """GET /sync/?after=N devuelve solo los eventos posteriores."""
+        from .models import GameEvent
+
+        session = self._playing("SYNC1")
+        for i in range(1, 4):
+            GameEvent.objects.create(
+                session=session,
+                seq=i,
+                event_type="COMMAND",
+                player_id="p1",
+                data={"command": {"type": "END_TURN"}, "accepted": True},
+            )
+        player = session.players.get(player_id="p1")
+        r = self.client.get(
+            "/api/rooms/SYNC1/sync/?playerId=p1&after=1",
+            HTTP_X_PLAYER_TOKEN=player.auth_token,
+        )
+        self.assertEqual(r.status_code, 200)
+        data = r.json()
+        self.assertEqual([e["seq"] for e in data["events"]], [2, 3])
+        self.assertEqual(data["latestSeq"], 3)
+        self.assertFalse(data["truncated"])
+        # El payload privado del comando NO viaja en el sync
+        self.assertNotIn("payload", data["events"][0])
+
+    def test_sync_requires_player_token(self):
+        session = self._playing("SYNCX")
+        Player.objects.filter(session=session, player_id="p1").update(
+            auth_token="tok"  # noqa: S106 # nosec B106 - token de test
+        )
+        r = self.client.get("/api/rooms/SYNCX/sync/?playerId=p1")
+        self.assertEqual(r.status_code, 403)
+
+    def test_sync_invalid_after(self):
+        session = self._playing("SYNCB")
+        player = session.players.get(player_id="p1")
+        r = self.client.get(
+            "/api/rooms/SYNCB/sync/?playerId=p1&after=abc",
+            HTTP_X_PLAYER_TOKEN=player.auth_token,
+        )
+        self.assertEqual(r.status_code, 400)

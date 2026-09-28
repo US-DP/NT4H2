@@ -1,0 +1,61 @@
+# Configuración de herramientas Python del backend.
+# (Los formatos/linters viven en ruff.toml, .flake8, .pylintrc.)
+
+# deptry — las dependencias usadas SOLO por nombre en settings.py
+# (INSTALLED_APPS, MIDDLEWARE, motor de BD, channel layer) no son
+# importables desde el código y deptry las marcaría como DEP002.
+[tool.deptry.per_rule_ignores]
+DEP002 = [
+  "django-cors-headers",  # corsheaders en INSTALLED_APPS + CorsMiddleware
+  "daphne",               # INSTALLED_APPS + servidor ASGI de entrada
+  "channels-redis",       # CHANNEL_LAYERS backend 'channels_redis'
+  "psycopg2-binary",      # ENGINE 'django.db.backends.postgresql' (DATABASE_URL)
+]
+
+# vulture — las convenciones de Django (settings module-level, Meta,
+# urlpatterns, admin list_display…) son "usadas" por el framework, no por
+# imports: sin esta lista vulture reporta solo falsos positivos.
+[tool.vulture]
+min_confidence = 60
+paths = ["backend", "content", "game"]
+exclude = ["migrations/", "db.sqlite3", ".pytest_cache/", ".ruff_cache/", ".turbo/"]
+ignore_names = [
+  # settings.py
+  "ALLOWED_HOSTS", "INSTALLED_APPS", "MIDDLEWARE", "ROOT_URLCONF", "TEMPLATES",
+  "WSGI_APPLICATION", "ASGI_APPLICATION", "CHANNEL_LAYERS", "REST_FRAMEWORK",
+  "LANGUAGE_CODE", "TIME_ZONE", "USE_I18N", "USE_TZ", "DEFAULT_AUTO_FIELD",
+  "STATIC_URL", "STATIC_ROOT", "SESSION_COOKIE_SECURE", "CSRF_COOKIE_SECURE",
+  "AUTH_USER_MODEL", "SIMPLE_JWT",
+  "SECURE_CONTENT_TYPE_NOSNIFF", "SECURE_HSTS_SECONDS",
+  "SECURE_HSTS_INCLUDE_SUBDOMAINS", "X_FRAME_OPTIONS", "SECURE_PROXY_SSL_HEADER",
+  "SECURE_SSL_REDIRECT", "SECRET_KEY", "DATABASES", "AUTH_PASSWORD_VALIDATORS",
+  "LOGGING", "CACHES", "DEBUG",
+  # urls.py / routing.py
+  "urlpatterns", "websocket_urlpatterns", "app_name",
+  # models.py / admin.py / serializers.py / migraciones / views
+  "Meta", "list_display", "list_filter", "search_fields", "ordering",
+  "app_label", "unique_together", "indexes", "constraints",
+  "model", "fields", "read_only_fields", "csrf_exempt",
+  "initial", "dependencies", "operations",
+  # Django model fields (assignments leídos por el ORM, no por Python)
+  "*_id", "card_type", "hero_class", "printed_*", "effects", "token_hash",
+  "connection_count", "state",
+  # API de Channels/DRF/management (firmas exigidas por el framework)
+  "code", "receive_json", "room_message", "Command", "handle",
+  "args", "options", "help", "queryset", "serializer_class",
+  "lookup_field", "lookup_value_regex", "perform_create",
+  "authentication_classes", "permission_classes", "get_*", "validate_*",
+  "average_turn_seconds", "win_rate", "require_auth",
+  # Convenciones accounts (User custom, admin, serializers)
+  "create_superuser", "USERNAME_FIELD", "REQUIRED_FIELDS", "avatar", "locale",
+  "biography", "country_code", "preferred_game_mode", "online",
+  "allow_friend_requests", "allow_match_invites",
+  "games_lost", "games_abandoned", "total_turns",
+  "can_delete", "fieldsets", "add_fieldsets", "readonly_fields", "inlines",
+  "PlayerProfileAdmin", "PlayerStatisticsAdmin", "AccountsConfig",
+  "perform_update", "perform_destroy", "has_permission",
+  "has_object_permission", "versions", "default_auto_field",
+  "CardDefinitionAdmin", "CardVersionAdmin", "GameConfig",
+  # Convenciones de tests (unittest/pytest/mocks)
+  "setUp", "setUpTestData", "tearDown", "return_value", "side_effect",
+]
