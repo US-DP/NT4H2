@@ -75,16 +75,24 @@ try {
   await page.waitForTimeout(1000);
   if (/Elección|Turno \d/.test(await body())) await shot('game-board.png', 300);
 
-  for (let step = 0; step < 10; step++) {
+  for (let step = 0; step < 14; step++) {
+    // El asalto de la Horda se detecta por sus botones exclusivos — el resumen
+    // modal ("Continuar partida") o la ventana de reacción ("Usar pericia") —
+    // ANTES de pulsar nada: el texto "la Horda" también aparece en el log de
+    // eventos y disparaba la captura ya en fase Mercado.
+    const hordeBtn = page.locator('button, [role="button"], div[tabindex="0"]')
+      .filter({ hasText: /Continuar partida|Usar pericia/ }).first();
+    if (await hordeBtn.isVisible().catch(() => false)) {
+      await shot('game-horde.png', 400);
+    }
     const clicked = await clickVis(/Atac.{0,15}Horda|a la Horda/i, 2500)
       || await clickVis(/Evadir/i, 2500)
-      || await clickVis(/Terminar|Pasar|Continuar|Siguiente|Finalizar|mercado/i, 2500);
+      || await clickVis(/Continuar partida|Terminar|Pasar|Continuar|Siguiente|Finalizar|mercado/i, 2500);
     if (!clicked) break;
     await settle();
     const txt = await body();
     if (/Elección de ataque/.test(txt)) await shot('game-attack.png', 300);
     if (/Mercado/.test(txt)) await shot('game-market.png', 300);
-    if (/Horda ataca|ataque de la Horda/i.test(txt)) await shot('game-horde.png', 300);
     if (/Victoria|Derrota|Fin de la partida/i.test(txt)) { await shot('game-end.png', 300); break; }
   }
 } catch (e) { console.log('game flow FAIL', e.message.slice(0, 100)); }
