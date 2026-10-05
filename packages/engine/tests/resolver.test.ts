@@ -5,7 +5,7 @@ import { resolveCard, processHordeAttackTriggers, resetResolveSeq } from '../src
 import { setupGame, startFirstTurn, resetInstanceCounter } from '../src/phases/setup.js';
 import { resetPhaseSeq } from '../src/phases/engine.js';
 import { loadCatalog } from '@nt4h/catalog';
-import type { GameState, CardInstance, Zone } from '@nt4h/schema';
+import type { GameState, CardInstance, CardDefinition, Zone } from '@nt4h/schema';
 
 describe('CardResolver — efectos especiales', () => {
   let catalog: ReturnType<typeof loadCatalog>;
@@ -224,9 +224,67 @@ describe('CardResolver — efectos especiales', () => {
     if (swap && swap.type === 'ENEMY_SWAPPED') {
       expect(swap.oldEnemyInstanceId).toBe(enemy.instanceId);
       expect(swap.newEnemyInstanceId).toBe(expectedNew.instanceId);
-      // El botín queda oculto hasta que el enemigo cae
-      expect(swap.newEnemyReward).toBeNull();
+      // La recompensa impresa viaja en el evento (la proyección la
+      // redacta en el campo de batalla); con null el sustituto pagaba
+      // {0,0} al ser derrotado — bug de auditoría.
+      const newDef = catalog.byId.get(expectedNew.definitionId)!;
+      expect(swap.newEnemyReward).toEqual(newDef.reward ?? null);
     }
+    // Y al plegar, el enemigo sustituto conserva la recompensa para que
+    // ENEMY_DEFEATED la pague.
+    if (result.newState) {
+      const swapped = result.newState.battlefield.find(
+        e => e.instanceId === expectedNew.instanceId,
+      );
+      const newDef = catalog.byId.get(expectedNew.definitionId)!;
+      expect(swapped?.reward ?? null).toEqual(newDef.reward ?? null);
+    }
+  });
+
+  it('OVERKILL_DAMAGE: el exceso incluye bonus/marcas del golpe primario (E-12)', () => {
+    const state = makeSetupState();
+    const player = state.players.p1;
+    // Primario: Fortaleza 3, +2 daño recibido (modificador DAMAGE_BONUS).
+    // Secundario: Fortaleza 5, sin modificadores.
+    state.battlefield = [
+      {
+        ...state.battlefield[0],
+        instanceId: 'e-over',
+        baseFortitude: 3,
+        wounds: 0,
+        modifiers: [{
+          id: 'vuln-1', sourceId: 'test', layer: 'DAMAGE_BONUS',
+          timestamp: 1, duration: 'PERMANENT', amount: 2,
+        }],
+      },
+      {
+        ...state.battlefield[1],
+        instanceId: 'e-spill',
+        baseFortitude: 5,
+        wounds: 0,
+        modifiers: [],
+      },
+    ];
+    const card = makeCardInstance('test.overkill', 'p1');
+    const cardDef = {
+      id: 'test.overkill', name: 'Test Overkill', type: 'ABILITY',
+      effects: [{
+        type: 'OVERKILL_DAMAGE',
+        amount: { kind: 'CONSTANT', value: 5 },
+        target: { kind: 'SELECTED_ENEMY' },
+        spill: { kind: 'OTHER_ENEMY' },
+      }],
+    } as unknown as CardDefinition;
+
+    const result = resolveCard(state, card, cardDef, 'e-over', player, rng, registry, catalog);
+
+    const hits = result.events.filter(e => e.type === 'DAMAGE_DEALT');
+    const primary = hits.find(e => e.type === 'DAMAGE_DEALT' && e.targetId === 'e-over');
+    const spill = hits.find(e => e.type === 'DAMAGE_DEALT' && e.targetId === 'e-spill');
+    // Golpe primario: 5 base + 2 de vulnerabilidad = 7; quedan 3 → exceso 4.
+    // Con el bug el exceso se calculaba solo con la base (5-3=2).
+    expect(primary?.type === 'DAMAGE_DEALT' ? primary.amount : 0).toBe(7);
+    expect(spill?.type === 'DAMAGE_DEALT' ? spill.amount : 0).toBe(4);
   });
 
   it('resuelve Recoger Flechas (RECOVER_CARD_BY_NAME + SHUFFLE_DECK + GAIN_COINS)', () => {

@@ -17,7 +17,7 @@ DEP002 = [
 # imports: sin esta lista vulture reporta solo falsos positivos.
 [tool.vulture]
 min_confidence = 60
-paths = ["backend", "content", "game"]
+paths = ["backend", "game"]
 exclude = ["migrations/", "db.sqlite3", ".pytest_cache/", ".ruff_cache/", ".turbo/"]
 ignore_names = [
   # settings.py

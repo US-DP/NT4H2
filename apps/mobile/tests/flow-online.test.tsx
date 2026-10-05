@@ -104,6 +104,9 @@ describe('Flujo online — gameStore real', () => {
     useGameStore.getState().connectOnline('ROOM2', 'p2', 'tok');
     const ws = await waitForSocket();
     useGameStore.getState().sendOnlineCommand({ type: 'END_TURN' });
+    // El dedup de doble-submit veta un comando idéntico en vuelo —
+    // simular el ack del servidor antes del segundo envío.
+    ws.onmessage?.({ data: JSON.stringify({ type: 'game.command_result', cid: ws.sent[0].cid, accepted: true }) });
     useGameStore.getState().sendOnlineCommand({ type: 'END_TURN' });
     expect(ws.sent).toHaveLength(2);
     expect(ws.sent[0].type).toBe('game.command');
@@ -126,7 +129,9 @@ describe('Flujo online — gameStore real', () => {
   it('command_result stateChanged pide el estado proyectado con token por header', async () => {
     fetchMock.mockImplementation((url: any) => {
       if (String(url).includes('/ws-ticket/')) return Promise.resolve(jsonResponse({ ticket: 'tk-1' }));
-      return Promise.resolve(jsonResponse({ state: { phase: 'PLAYER_ATTACK', players: {} } }));
+      return Promise.resolve(jsonResponse({
+        state: { phase: 'PLAYER_ATTACK', players: {}, playerOrder: [] },
+      }));
     });
     useGameStore.getState().connectOnline('ROOM4', 'p4', 'tok-4');
     const ws = await waitForSocket();
@@ -179,7 +184,7 @@ describe('Flujo online — gameStore real', () => {
   it('saveGame se niega en modo online (estado sanitizado)', () => {
     useGameStore.setState({
       connectionMode: 'online',
-      online: { roomId: 'R', playerId: 'p1', playerToken: 't', socket: null, lastRevision: null, lastMessageAt: null, hostId: null, turnStartedAt: null },
+      online: { roomId: 'R', playerId: 'p1', playerToken: 't', socket: null, lastRevision: null, lastMessageAt: null, hostId: null, turnStartedAt: null, lastCid: null },
       gameState: {} as any,
       rng: {} as any,
       initialConfig: {} as any,
@@ -226,5 +231,228 @@ describe('Flujo online — gameStore real', () => {
     const gameCmd = ws2.sent.find(m => m.type === 'game.command');
     expect(gameCmd?.command?.type).toBe('END_TURN');
     useGameStore.getState().disconnectOnline();
+  });
+
+  it('clientSequence crece entre rejoins (semilla wall-clock, no vuelve a 1)', async () => {
+    // Regresión: _clientSeq=0 en cada connectOnline hacía que tras un
+    // re-join completo (reinicio de app) el runner rechazara todo con
+    // out_of_order_command — conserva lastClientSeq del jugador.
+    useGameStore.getState().connectOnline('SEQ1', 'ps', 'tok');
+    const ws1 = await waitForSocket(0);
+    useGameStore.getState().sendOnlineCommand({ type: 'END_TURN' });
+    const seq1 = ws1.sent.find(m => m.type === 'game.command')?.clientSequence;
+    expect(typeof seq1).toBe('number');
+    // Semilla epoch-ms: claramente > el contador por sesión (1,2,3…)
+    expect(seq1).toBeGreaterThan(1e12);
+
+    // Rejoin completo a la MISMA sala (connectOnline de nuevo)
+    useGameStore.getState().connectOnline('SEQ1', 'ps', 'tok');
+    const ws2 = await waitForSocket(1);
+    useGameStore.getState().sendOnlineCommand({ type: 'END_TURN' });
+    const seq2 = ws2.sent.find(m => m.type === 'game.command')?.clientSequence;
+    // Estrictamente mayor que el último de la sesión anterior —
+    // el runner los acepta en vez de rechazarlos como out_of_order.
+    expect(seq2).toBeGreaterThan(seq1);
+    useGameStore.getState().disconnectOnline();
+  });
+});
+
+describe('Robustez del estado proyectado online', () => {
+  beforeEach(() => {
+    MockWebSocket.instances.length = 0;
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(routeFetch);
+    useGameStore.setState(initialStore, true);
+  });
+
+  const plausibleState = {
+    phase: 'PLAYER_ATTACK',
+    players: { p1: { playerId: 'p1', hand: [] } },
+    playerOrder: ['p1'],
+  };
+
+  it('connectOnline conserva hostId fijado por setConnectionMode para la misma sala', async () => {
+    useGameStore.getState().setConnectionMode('online', 'RH1', 'ph1', 'tok', 'host-9');
+    useGameStore.getState().connectOnline('RH1', 'ph1', 'tok');
+    expect(useGameStore.getState().online.hostId).toBe('host-9');
+    useGameStore.getState().disconnectOnline();
+  });
+
+  it('connectOnline a OTRA sala no hereda el hostId de la anterior', async () => {
+    useGameStore.getState().setConnectionMode('online', 'RH2a', 'ph', 'tok', 'host-old');
+    useGameStore.getState().connectOnline('RH2a', 'ph', 'tok');
+    expect(useGameStore.getState().online.hostId).toBe('host-old');
+    // Reconectar a otra sala sin setConnectionMode previo → sin hostId
+    useGameStore.getState().connectOnline('RH2b', 'ph', 'tok');
+    expect(useGameStore.getState().online.roomId).toBe('RH2b');
+    expect(useGameStore.getState().online.hostId).toBeNull();
+    useGameStore.getState().disconnectOnline();
+  });
+
+  it('una respuesta REST tardía tras disconnect no pisa el estado local', async () => {
+    let resolveFetch: ((r: Response) => void) | null = null;
+    fetchMock.mockImplementation((url: any) => {
+      if (String(url).includes('/ws-ticket/')) return Promise.resolve(jsonResponse({ ticket: 'tk' }));
+      return new Promise<Response>((resolve) => { resolveFetch = resolve; });
+    });
+    useGameStore.getState().connectOnline('RS1', 'ps1', 'tok');
+    const ws = await waitForSocket();
+    ws.emitMessage({ type: 'game.command_result', cid: 'c1', stateChanged: true });
+    await vi.waitFor(() => expect(resolveFetch).not.toBeNull());
+
+    // El usuario abandona antes de que llegue la respuesta
+    useGameStore.getState().disconnectOnline();
+    resolveFetch!(jsonResponse({ state: plausibleState, revision: 5 }));
+    await Promise.resolve();
+
+    const s = useGameStore.getState();
+    expect(s.connectionMode).toBe('local');
+    expect(s.gameState).toBeNull();
+  });
+
+  it('un payload de estado malformado no rompe el store', async () => {
+    fetchMock.mockImplementation((url: any) => {
+      if (String(url).includes('/ws-ticket/')) return Promise.resolve(jsonResponse({ ticket: 'tk' }));
+      return Promise.resolve(jsonResponse({ state: { garbage: true }, revision: 1 }));
+    });
+    useGameStore.getState().connectOnline('RM1', 'pm1', 'tok');
+    const ws = await waitForSocket();
+    ws.emitMessage({ type: 'game.command_result', cid: 'c1', stateChanged: true });
+    await vi.waitFor(() => {
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/engine/'))).toBe(true);
+    });
+    // state sin players/playerOrder → ignorado
+    await vi.waitFor(() => expect(useGameStore.getState().gameState).toBeNull());
+    useGameStore.getState().disconnectOnline();
+  });
+
+  it('una respuesta sin revisión no retrocede un estado ya versionado', async () => {
+    let n = 0;
+    fetchMock.mockImplementation((url: any) => {
+      if (String(url).includes('/ws-ticket/')) return Promise.resolve(jsonResponse({ ticket: 'tk' }));
+      n += 1;
+      // 1ª respuesta: revisión 7 (válida). 2ª: sin revision → vieja.
+      return Promise.resolve(jsonResponse(
+        n === 1
+          ? { state: { ...plausibleState, phase: 'RESTORATION' }, revision: 7 }
+          : { state: { ...plausibleState, phase: 'STALE_PHASE' } },
+      ));
+    });
+    useGameStore.getState().connectOnline('RV1', 'pv1', 'tok');
+    const ws = await waitForSocket();
+    ws.emitMessage({ type: 'game.command_result', cid: 'c1', stateChanged: true });
+    await vi.waitFor(() => {
+      expect(useGameStore.getState().gameState?.phase).toBe('RESTORATION');
+    });
+    ws.emitMessage({ type: 'game.command_result', cid: 'c2', stateChanged: true });
+    await vi.waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([u]) => String(u).includes('/engine/')).length).toBe(2);
+    });
+    await vi.waitFor(() => {
+      // La respuesta revision-less no debe haber pisado el estado
+      expect(useGameStore.getState().gameState?.phase).toBe('RESTORATION');
+    });
+    useGameStore.getState().disconnectOnline();
+  });
+
+  it('una revisión antigua (<= lastRevision) se descarta', async () => {
+    fetchMock.mockImplementation((url: any) => {
+      if (String(url).includes('/ws-ticket/')) return Promise.resolve(jsonResponse({ ticket: 'tk' }));
+      return Promise.resolve(jsonResponse({ state: plausibleState, revision: 3 }));
+    });
+    useGameStore.getState().connectOnline('RV2', 'pv2', 'tok');
+    const ws = await waitForSocket();
+    // Simular que ya conocemos la revisión 9 (vía command_ack)
+    ws.emitMessage({ type: 'game.command_ack', revision: 9 });
+    ws.emitMessage({ type: 'game.command_result', cid: 'c1', stateChanged: true });
+    await vi.waitFor(() => {
+      expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/engine/'))).toBe(true);
+    });
+    await vi.waitFor(() => expect(useGameStore.getState().gameState).toBeNull());
+    useGameStore.getState().disconnectOnline();
+  });
+
+  it('disconnectOnline limpia estado/rng/registry del juego proyectado', async () => {
+    useGameStore.getState().connectOnline('RD1', 'pd1', 'tok');
+    await waitForSocket();
+    useGameStore.setState({
+      gameState: { phase: 'PLAYER_ATTACK' } as any,
+      rng: {} as any,
+      registry: {} as any,
+      initialCommands: [{ type: 'END_TURN', cid: 'c' } as any],
+      undoBase: {} as any,
+      viewerId: 'pd1',
+    });
+    useGameStore.getState().disconnectOnline();
+    const s = useGameStore.getState();
+    expect(s.gameState).toBeNull();
+    expect(s.rng).toBeNull();
+    expect(s.registry).toBeNull();
+    expect(s.initialCommands).toHaveLength(0);
+    expect(s.undoBase).toBeNull();
+    expect(s.viewerId).toBeNull();
+  });
+
+  it('newGame con sesión online activa la desconecta primero', async () => {
+    useGameStore.getState().connectOnline('RN1', 'pn1', 'tok');
+    await waitForSocket();
+    expect(useGameStore.getState().connectionMode).toBe('online');
+    useGameStore.getState().newGame({
+      mode: 'SOLO',
+      playerCount: 1,
+      seed: 'disconnect-on-newgame',
+      heroes: [
+        { playerId: 'pn1', heroId: 'hero.aranel', heroFace: 'FEMALE', deckId: 'explorer.default' },
+      ],
+      useScenarios: false,
+    });
+    const s = useGameStore.getState();
+    expect(s.connectionMode).toBe('local');
+    expect(s.online.roomId).toBeNull();
+    expect(s.gameState?.mode).toBe('SOLO');
+  });
+});
+
+describe('sanitizeOnlineState — paridad con redactCard del runner', () => {
+  it('oculta definitionId + name + persistentTrigger + auraModifiers de cartas ajenas', async () => {
+    const { sanitizeOnlineState, HIDDEN_CARD } = await import('../store/shared.js');
+    const secretCard = {
+      instanceId: 'i1',
+      definitionId: 'card.secret',
+      name: 'Nombre secreto',
+      zone: 'HAND',
+      ownerId: 'other',
+      persistentTrigger: { on: 'X' },
+      auraModifiers: [{ layer: 'Y' }],
+    } as any;
+    const state = {
+      players: {
+        me: { playerId: 'me', hand: [secretCard], abilityDeck: [], wearPile: [] },
+        other: { playerId: 'other', hand: [secretCard], abilityDeck: [secretCard], wearPile: [secretCard] },
+      },
+      playerOrder: ['me', 'other'],
+      hordeDeck: [secretCard],
+      marketDeck: [secretCard],
+      scenarioDeck: [],
+      battlefield: [],
+      pendingChoices: [],
+      eventLog: [],
+      rngState: { seed: 'real', state: 42 },
+    } as any;
+
+    const clean = sanitizeOnlineState(state, 'me');
+    // Mi mano NO se redacta
+    expect(clean.players.me.hand[0].definitionId).toBe('card.secret');
+    // Mano ajena: redacción completa
+    const other = clean.players.other.hand[0] as any;
+    expect(other.definitionId).toBe(HIDDEN_CARD);
+    expect(other.name).toBeUndefined();
+    expect(other.persistentTrigger).toBeUndefined();
+    expect(other.auraModifiers).toBeUndefined();
+    // Mazos: igual
+    expect(clean.hordeDeck[0].name).toBeUndefined();
+    expect(clean.hordeDeck[0].persistentTrigger).toBeUndefined();
+    // RNG sellado
+    expect(clean.rngState.seed).toBe('');
   });
 });

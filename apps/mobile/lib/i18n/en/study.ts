@@ -82,6 +82,7 @@ export default {
       customTitle: 'Custom decks ({{count}})',
       meta: '{{count}} cards · {{classes}}',
       deleteA11y: 'Delete deck {{name}}',
+      editA11y: 'Edit deck {{name}}',
       customHint: 'Selectable when creating a game (★ mark next to the class).',
       copies: 'Copies: {{count}}/{{max}}',
       removeCopyA11y: 'Remove one copy of {{name}}',

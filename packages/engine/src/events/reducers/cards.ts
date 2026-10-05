@@ -212,7 +212,7 @@ export function applyCardMoved(
   event: Extract<GameEvent, { type: 'CARD_MOVED' }>,
 ): GameState {
 
-  return moveCard(state, event.cardInstanceId, event.to, event.toPlayerId, event.playerId);
+  return moveCard(state, event.cardInstanceId, event.to, event.toPlayerId, event.playerId, event.supportDeckIndex);
 }
 
 export function applyCardRemovedFromGame(

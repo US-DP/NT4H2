@@ -44,8 +44,8 @@ export function DeckPanel({ incomingDamage = 0 }: DeckPanelProps) {
         ]}
         accessibilityLabel={`${t('panels.deckAbilityA11y', { count: deckCount })}${rebuildImminent ? t('panels.deckRebuildWarn') : ''}`}
       >
-        <Text style={styles.miniTitle}>{t('panels.deckTitle')}</Text>
-        <Text style={[styles.deckIcon]}>🂠</Text>
+        <Text style={[styles.miniTitle, { color: colors.textMuted }]}>{t('panels.deckTitle')}</Text>
+        <Text style={[styles.deckIcon, { color: colors.textMuted }]}>🂠</Text>
         <Text style={[styles.count, { color: rebuildImminent ? colors.warning : colors.text, fontSize: fs(fontSize.body) }]}>
           {deckCount}
         </Text>
@@ -60,7 +60,7 @@ export function DeckPanel({ incomingDamage = 0 }: DeckPanelProps) {
         style={[styles.miniCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
         accessibilityLabel={t('panels.discardA11y', { count: wearCount })}
       >
-        <Text style={styles.miniTitle}>{t('panels.discardTitle')}</Text>
+        <Text style={[styles.miniTitle, { color: colors.textMuted }]}>{t('panels.discardTitle')}</Text>
         <Text style={[styles.deckIcon, { color: colors.textMuted }]}>🂠</Text>
         <Text style={[styles.count, { color: colors.textMuted, fontSize: fs(fontSize.body) }]}>
           {wearCount}
@@ -87,7 +87,6 @@ const styles = StyleSheet.create({
     borderWidth: 2,
   },
   miniTitle: {
-    color: '#92909D',
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 0.5,
@@ -98,7 +97,6 @@ const styles = StyleSheet.create({
   deckIcon: {
     fontSize: 22,
     marginBottom: 2,
-    color: '#C5C3CB',
   },
   count: {
     fontWeight: '800',

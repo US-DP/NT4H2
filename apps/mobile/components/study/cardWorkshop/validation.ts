@@ -294,6 +294,7 @@ export function semanticDiagnostics(
     ['CARD_PLAYED', new Set(['PLAY_IMMEDIATELY'])],
     ['ENEMY_DEFEATED', new Set(['DEFEAT_ENEMY'])],
     ['COINS_GAINED', new Set(['GAIN_COINS', 'STEAL_COINS'])],
+    ['COINS_LOST', new Set(['COST'])],
   ]);
   walkNodes(nodes, (n) => {
     if (n.kind !== 'LISTEN' || !n.listenEvent || n.once) return;

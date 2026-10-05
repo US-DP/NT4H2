@@ -28,8 +28,10 @@ import { useCustomContent } from '../lib/customContent';
 import { cardNameIndex, parseDeckText } from '../lib/deckText';
 import { toast } from '../lib/toast';
 import { storageGet, storageSet } from '../lib/storage';
-import { useColors, useSettingsSafe } from '../lib/useTheme';
+import { useColors, useFs, useSettingsSafe } from '../lib/useTheme';
 import { fontSize, type Colors } from '../lib/theme';
+import { MaybeAppNav, useNavSidebarWidthSafe } from './AppNav';
+import { capListLabel } from '../lib/capabilities';
 
 const DRAFT_KEY = 'nt4h.study.draft';
 
@@ -74,9 +76,10 @@ const TAB_GROUPS: { id: TabGroupId; tabs: StudyTab[] }[] = [
   { id: 'quality', tabs: ['tests', 'versions'] },
 ];
 
-export function StudyScreen({ initialTab }: { initialTab?: string }) {
+export function StudyScreen({ initialTab, editDeckId }: { initialTab?: string; editDeckId?: string }) {
   const { t } = useTranslation();
   const { styles, colors } = useStudyStyles();
+  const navWidth = useNavSidebarWidthSafe();
   const router = useRouter();
   const catalog = useGameStore((s) => s.catalog);
   const [activeTab, setActiveTab] = useState<StudyTab>(
@@ -145,7 +148,7 @@ export function StudyScreen({ initialTab }: { initialTab?: string }) {
       )}
       {activeTab === 'heroes' && <HeroesTab catalog={catalog} />}
       {activeTab === 'abilities' && <AbilitiesTab catalog={catalog} />}
-      {activeTab === 'decks' && <DecksTab catalog={catalog} />}
+      {activeTab === 'decks' && <DecksTab catalog={catalog} editDeckId={editDeckId} />}
       {activeTab === 'enemies' && <EnemiesTab catalog={catalog} />}
       {activeTab === 'bosses' && <BossesTab catalog={catalog} />}
       {activeTab === 'market' && <MarketTab catalog={catalog} />}
@@ -159,7 +162,11 @@ export function StudyScreen({ initialTab }: { initialTab?: string }) {
   );
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <View style={styles.screen}>
+    <ScrollView
+      style={[styles.container, { marginLeft: navWidth }]}
+      contentContainerStyle={styles.content}
+    >
       <Text style={styles.screenTitle}>{t('study.title')}</Text>
 
       {/* Cabecera con estado de guardado (UI-242) */}
@@ -266,13 +273,15 @@ export function StudyScreen({ initialTab }: { initialTab?: string }) {
       {/* Botones de acción (UI-243, UI-244) */}
       <View style={styles.actionBar}>
         <Pressable style={styles.saveButton} onPress={handleSave}>
-          <Text style={styles.actionButtonText}>{t('study.saveDraft')}</Text>
+          <Text style={[styles.actionButtonText, { color: colors.textOnAccent }]}>{t('study.saveDraft')}</Text>
         </Pressable>
         <Pressable style={styles.backButton} onPress={() => router.push('/')}>
           <Text style={styles.actionButtonText}>{t('study.backHome')}</Text>
         </Pressable>
       </View>
     </ScrollView>
+    <MaybeAppNav />
+    </View>
   );
 }
 
@@ -354,7 +363,7 @@ function HeroesTab({ catalog }: { catalog: ReturnType<typeof useGameStore.getSta
           <Text style={styles.fieldLabel}>{t('study.heroes.type', { type: hero.type })}</Text>
           {hero.capabilities && (
             <Text style={styles.fieldLabel}>
-              {t('study.heroes.capabilities', { list: hero.capabilities.join(', ') })}
+              {t('study.heroes.capabilities', { list: capListLabel(t, hero.capabilities) })}
             </Text>
           )}
           {hero.maxWounds !== undefined && (
@@ -388,7 +397,7 @@ function HeroesTab({ catalog }: { catalog: ReturnType<typeof useGameStore.getSta
             accessibilityLabel={t('study.heroes.viewA11y', { name: hero.name })}
           >
             <Text style={styles.cardName}>{hero.name}</Text>
-            <Text style={styles.cardMeta}>{hero.capabilities?.join(', ') ?? ''}</Text>
+            <Text style={styles.cardMeta}>{capListLabel(t, hero.capabilities ?? [])}</Text>
           </Pressable>
         ))}
       </ScrollView>
@@ -427,7 +436,7 @@ function AbilitiesTab({ catalog }: { catalog: ReturnType<typeof useGameStore.get
             style={[styles.filterChip, filterClass === cls && styles.filterChipActive]}
             onPress={() => setFilterClass(cls)}
           >
-            <Text style={styles.filterChipText}>{t(`study.classes.${cls}`, { defaultValue: cls })}</Text>
+            <Text style={[styles.filterChipText, filterClass === cls && styles.filterChipTextActive]}>{t(`study.classes.${cls}`, { defaultValue: cls })}</Text>
           </Pressable>
         ))}
       </ScrollView>
@@ -455,12 +464,15 @@ function AbilitiesTab({ catalog }: { catalog: ReturnType<typeof useGameStore.get
 // Pestaña: Mazos (UI-260..267)
 // ============================================================================
 
-function DecksTab({ catalog }: { catalog: ReturnType<typeof useGameStore.getState>['catalog'] }) {
+function DecksTab({ catalog, editDeckId }: { catalog: ReturnType<typeof useGameStore.getState>['catalog']; editDeckId?: string }) {
   const { t } = useTranslation();
   const { styles, colors } = useStudyStyles();
   const [deckCards, setDeckCards] = useState<Record<string, number>>({});
   const [selectedClass, setSelectedClass] = useState<string>('EXPLORER');
   const [deckName, setDeckName] = useState('');
+  // Mazo en edición (vía /(study)/decks?deckId=… desde la biblioteca):
+  // conserva el id original — regenerar el slug crearía un duplicado.
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [deckErrors, setDeckErrors] = useState<string[]>([]);
   const [importText, setImportText] = useState('');
   const [importNotes, setImportNotes] = useState<string[]>([]);
@@ -475,24 +487,41 @@ function DecksTab({ catalog }: { catalog: ReturnType<typeof useGameStore.getStat
   const maxCards = 15;
   const isValid = totalCards === maxCards;
 
+  // Cargar un mazo existente en el editor (biblioteca → "Editar")
+  const loadDeckIntoEditor = useCallback((deckId: string) => {
+    const deck = savedDecks.find(d => d.id === deckId);
+    if (!deck) return;
+    setEditingId(deck.id);
+    setDeckName(deck.name);
+    setSelectedClass(deck.heroClassIds[0] ?? 'EXPLORER');
+    const counts: Record<string, number> = {};
+    for (const e of deck.cardEntries) counts[e.cardDefinitionId] = e.copies;
+    setDeckCards(counts);
+    setDeckErrors([]);
+  }, [savedDecks]);
+
+  useEffect(() => {
+    if (editDeckId) loadDeckIntoEditor(editDeckId);
+    // Solo al montar / cambiar el param — el editor es trabajo del usuario.
+  }, [editDeckId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const saveDeck = () => {
     if (!deckName.trim()) { setDeckErrors([t('study.decks.needsName')]); return; }
     const slug = deckName.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
       .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const errors = upsertDeck({
-      id: `deck.custom.${slug || 'mazo'}`,
+      id: editingId ?? `deck.custom.${slug || 'mazo'}`,
       name: deckName.trim(),
       heroClassIds: [selectedClass as 'EXPLORER'],
       cardEntries: Object.entries(deckCards).map(([cardDefinitionId, copies]) => ({ cardDefinitionId, copies })),
       deckSize: 15,
-      allowedGameModes: ['STANDARD', 'SOLO'],
       setId: 'set.taller-local',
       officialStatus: 'CUSTOM',
       author: 'local',
       version: '1.0.0',
     });
     setDeckErrors(errors);
-    if (errors.length === 0) { setDeckCards({}); setDeckName(''); }
+    if (errors.length === 0) { setDeckCards({}); setDeckName(''); setEditingId(null); }
   };
 
   const addCard = (cardId: string) => {
@@ -539,7 +568,7 @@ function DecksTab({ catalog }: { catalog: ReturnType<typeof useGameStore.getStat
           />
           <Pressable style={styles.saveButton} onPress={saveDeck}
             accessibilityRole="button" accessibilityLabel={t('study.decks.saveA11y')}>
-            <Text style={styles.actionButtonText}>{t('study.decks.save')}</Text>
+            <Text style={[styles.actionButtonText, { color: colors.textOnAccent }]}>{t('study.decks.save')}</Text>
           </Pressable>
         </View>
       )}
@@ -584,7 +613,7 @@ function DecksTab({ catalog }: { catalog: ReturnType<typeof useGameStore.getStat
           accessibilityRole="button"
           accessibilityLabel={t('study.decks.importA11y')}
         >
-          <Text style={styles.actionButtonText}>{t('study.decks.importButton')}</Text>
+          <Text style={[styles.actionButtonText, { color: colors.textOnAccent }]}>{t('study.decks.importButton')}</Text>
         </Pressable>
         {importNotes.map((n, i) => (
           <Text key={i} style={styles.deckWarning} accessibilityLiveRegion="polite">• {n}</Text>
@@ -607,6 +636,11 @@ function DecksTab({ catalog }: { catalog: ReturnType<typeof useGameStore.getStat
                 </Text>
               </View>
               <Pressable
+                onPress={() => loadDeckIntoEditor(d.id)}
+                accessibilityRole="button" accessibilityLabel={t('study.decks.editA11y', { name: d.name })}>
+                <Text style={styles.cardMeta}>✎</Text>
+              </Pressable>
+              <Pressable
                 onPress={holdToConfirm ? undefined : () => removeDeck(d.id)}
                 onLongPress={holdToConfirm ? () => removeDeck(d.id) : undefined}
                 delayLongPress={600}
@@ -626,7 +660,7 @@ function DecksTab({ catalog }: { catalog: ReturnType<typeof useGameStore.getStat
             style={[styles.filterChip, selectedClass === cls && styles.filterChipActive]}
             onPress={() => setSelectedClass(cls)}
           >
-            <Text style={styles.filterChipText}>{t(`study.classes.${cls}`, { defaultValue: cls })}</Text>
+            <Text style={[styles.filterChipText, selectedClass === cls && styles.filterChipTextActive]}>{t(`study.classes.${cls}`, { defaultValue: cls })}</Text>
           </Pressable>
         ))}
       </ScrollView>
@@ -743,7 +777,9 @@ function MarketTab({ catalog }: { catalog: ReturnType<typeof useGameStore.getSta
               <Text style={styles.cardName}>{card.name}</Text>
               <Text style={styles.cardMeta}>
                 {t('study.market.meta', { cost: card.printedCost ?? '-', copies: card.copies })}
-                {card.requiredCapabilities?.length ? ` · ${card.requiredCapabilities.join('+')}` : ''}
+                {card.requiredCapabilities?.length
+                  ? ` · ${capListLabel(t, card.requiredCapabilities, '+')}`
+                  : ''}
               </Text>
             </View>
           </View>
@@ -825,7 +861,7 @@ function RulesTab({ catalog }: { catalog: ReturnType<typeof useGameStore.getStat
 
 function SetsTab() {
   const { t } = useTranslation();
-  const { styles } = useStudyStyles();
+  const { styles, colors } = useStudyStyles();
   const sets = useCustomContent((s) => s.sets);
   const history = useCustomContent((s) => s.history);
   const published = useCustomContent((s) => s.published);
@@ -867,10 +903,12 @@ function SetsTab() {
                 <Pressable
                   onPress={() => { if (!undo(set.id)) toast.show(t('study.sets.nothingToUndo')); }}
                   disabled={(history[set.id]?.length ?? 0) === 0}
+                  style={[styles.linkTouch, (history[set.id]?.length ?? 0) === 0 && { opacity: 0.45 }]}
                   accessibilityRole="button"
+                  accessibilityState={{ disabled: (history[set.id]?.length ?? 0) === 0 }}
                   accessibilityLabel={t('study.sets.undoA11y', { name: set.name })}
                 >
-                  <Text style={[styles.cardMeta, { color: '#7fb3d3', textDecorationLine: 'underline' }]}>
+                  <Text style={[styles.cardMeta, { color: colors.info, textDecorationLine: 'underline' }]}>
                     {t('study.sets.undo', { count: history[set.id]?.length ?? 0 })}
                   </Text>
                 </Pressable>
@@ -880,10 +918,11 @@ function SetsTab() {
                     setPublishErrors((prev) => ({ ...prev, [set.id]: errs }));
                     if (errs.length === 0) toast.show(t('study.sets.published'));
                   }}
+                  style={styles.linkTouch}
                   accessibilityRole="button"
                   accessibilityLabel={t('study.sets.publishA11y', { name: set.name })}
                 >
-                  <Text style={[styles.cardMeta, { color: '#82e0aa', textDecorationLine: 'underline' }]}>
+                  <Text style={[styles.cardMeta, { color: colors.success, textDecorationLine: 'underline' }]}>
                     {t('study.sets.publish')}
                   </Text>
                 </Pressable>
@@ -906,10 +945,11 @@ function SetsTab() {
                   </Text>
                   <Pressable
                     onPress={() => { restoreVersion(set.id, v.version); toast.show(t('study.sets.restored', { version: v.version })); }}
+                    style={styles.linkTouch}
                     accessibilityRole="button"
                     accessibilityLabel={t('study.sets.restoreA11y', { version: v.version, name: set.name })}
                   >
-                    <Text style={[styles.cardMeta, { color: '#f5b041', textDecorationLine: 'underline' }]}>
+                    <Text style={[styles.cardMeta, { color: colors.warning, textDecorationLine: 'underline' }]}>
                       {t('study.sets.restore')}
                     </Text>
                   </Pressable>
@@ -1052,25 +1092,25 @@ function VersionsTab({ projectStatus, setProjectStatus }: {
 // Estilos (tokens de tema vía useColors)
 // ============================================================================
 
-/** Hook de estilos del Taller: reconstruye la hoja si cambia la paleta. */
+/** Hook de estilos del Taller: reconstruye la hoja si cambia la paleta o la escala tipográfica. */
 function useStudyStyles() {
   const c = useColors();
-  const styles = useMemo(() => makeStyles(c), [c]);
+  const fs = useFs();
+  const styles = useMemo(() => makeStyles(c, fs), [c, fs]);
   return { styles, colors: c };
 }
 
-const makeStyles = (c: Colors) => StyleSheet.create({
+const makeStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
+  screen: { flex: 1 },
   container: { flex: 1, backgroundColor: c.background },
-  content: { padding: 16 },
-  screenTitle: { color: c.accent, fontSize: fontSize.section, fontWeight: 'bold', marginBottom: 8 },
+  content: { padding: 16, paddingBottom: 84 }, // barra inferior de AppNav en móvil
+  screenTitle: { color: c.accent, fontSize: fs(fontSize.section), fontWeight: 'bold', marginBottom: 8 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   headerLeft: { flex: 1 },
-  projectName: { color: c.accent, fontSize: fontSize.section, fontWeight: 'bold', marginBottom: 4 },
-  projectStatus: { color: c.textMuted, fontSize: fontSize.micro },
+  projectName: { color: c.accent, fontSize: fs(fontSize.section), fontWeight: 'bold', marginBottom: 4 },
+  projectStatus: { color: c.textMuted, fontSize: fs(fontSize.micro) },
   breadcrumbRow: { marginBottom: 12 },
-  breadcrumb: { color: c.info, fontSize: fontSize.micro },
-  tabBar: { flexDirection: 'row', marginBottom: 16 },
-  tabGroup: { marginRight: 18 },
+  breadcrumb: { color: c.info, fontSize: fs(fontSize.micro) },
   // Selector compacto de sección (pantallas estrechas)
   menuButton: {
     flexDirection: 'row',
@@ -1085,7 +1125,7 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     marginBottom: 10,
     minHeight: 44,
   },
-  menuButtonText: { color: c.text, fontSize: fontSize.detail, fontWeight: '700' },
+  menuButtonText: { color: c.text, fontSize: fs(fontSize.detail), fontWeight: '700' },
   menuList: {
     backgroundColor: c.surface,
     borderWidth: 1,
@@ -1102,28 +1142,17 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     minHeight: 44,
     justifyContent: 'center',
   },
-  menuItemLabel: { color: c.textMuted, fontSize: fontSize.detail },
+  menuItemLabel: { color: c.textMuted, fontSize: fs(fontSize.detail) },
   tabGroupLabel: {
     color: c.textFaint,
-    fontSize: fontSize.micro,
+    fontSize: fs(fontSize.micro),
     fontWeight: '800',
     letterSpacing: 1,
     textTransform: 'uppercase',
     marginBottom: 4,
   },
-  tabGroupItems: { flexDirection: 'row', gap: 4 },
-  tab: {
-    backgroundColor: c.surface,
-    padding: 8,
-    borderRadius: 8,
-    marginRight: 6,
-    alignItems: 'center',
-    minWidth: 60,
-  },
-  tabActive: { backgroundColor: c.primary },
-  tabIcon: { fontSize: 18 },
-  tabLabel: { color: c.textMuted, fontSize: fontSize.micro, marginTop: 2 },
-  tabLabelActive: { color: c.text },
+  tabIcon: { fontSize: fs(18) },
+  tabLabelActive: { color: c.textOnAccent },
   bodyRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 16 },
   sideNav: { width: 200 },
   sideGroup: { marginBottom: 14 },
@@ -1136,14 +1165,15 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     paddingHorizontal: 10,
     borderRadius: 8,
     marginBottom: 4,
+    minHeight: 44,
   },
-  sideTabActive: { backgroundColor: c.primary },
-  sideTabLabel: { color: c.textMuted, fontSize: fontSize.detail },
+  sideTabActive: { backgroundColor: c.accent },
+  sideTabLabel: { color: c.textMuted, fontSize: fs(fontSize.detail) },
   contentCol: { flex: 1 },
   contentArea: { minHeight: 300, marginBottom: 16 },
-  sectionTitle: { color: c.accent, fontSize: fontSize.section, fontWeight: 'bold', marginBottom: 8 },
-  fieldLabel: { color: c.text, fontSize: fontSize.detail, marginBottom: 4 },
-  hint: { color: c.textFaint, fontSize: fontSize.micro, fontStyle: 'italic', marginBottom: 8 },
+  sectionTitle: { color: c.accent, fontSize: fs(fontSize.section), fontWeight: 'bold', marginBottom: 8 },
+  fieldLabel: { color: c.text, fontSize: fs(fontSize.detail), marginBottom: 4 },
+  hint: { color: c.textFaint, fontSize: fs(fontSize.micro), fontStyle: 'italic', marginBottom: 8 },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   statCard: {
     backgroundColor: c.surface,
@@ -1153,9 +1183,9 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     minWidth: 90,
     marginBottom: 8,
   },
-  statIcon: { fontSize: 24 },
-  statValue: { color: c.accent, fontSize: fontSize.section, fontWeight: 'bold' },
-  statLabel: { color: c.textMuted, fontSize: fontSize.micro },
+  statIcon: { fontSize: fs(24) },
+  statValue: { color: c.accent, fontSize: fs(fontSize.section), fontWeight: 'bold' },
+  statLabel: { color: c.textMuted, fontSize: fs(fontSize.micro) },
   cardList: { maxHeight: 400 },
   cardRow: {
     flexDirection: 'row',
@@ -1167,32 +1197,29 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     marginBottom: 6,
   },
   cardInfo: { flex: 1 },
-  cardName: { color: c.text, fontSize: fontSize.detail, fontWeight: 'bold' },
-  cardMeta: { color: c.textMuted, fontSize: fontSize.micro, marginTop: 2 },
-  ruleCount: { color: c.textMuted, fontSize: fontSize.micro, marginLeft: 'auto' },
-  addButton: {
-    backgroundColor: c.success,
-    padding: 10,
-    borderRadius: 6,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  addButtonText: { color: c.text, fontSize: fontSize.detail, fontWeight: 'bold' },
+  cardName: { color: c.text, fontSize: fs(fontSize.detail), fontWeight: 'bold' },
+  cardMeta: { color: c.textMuted, fontSize: fs(fontSize.micro), marginTop: 2 },
+  ruleCount: { color: c.textMuted, fontSize: fs(fontSize.micro), marginLeft: 'auto' },
   filterBar: { flexDirection: 'row', marginBottom: 12 },
   filterChip: {
     backgroundColor: c.surface,
     padding: 6,
+    paddingHorizontal: 12,
     borderRadius: 12,
     marginRight: 6,
+    minHeight: 44,
+    justifyContent: 'center',
   },
-  filterChipActive: { backgroundColor: c.primary },
-  filterChipText: { color: c.text, fontSize: fontSize.micro },
-  deckCounter: { color: c.accent, fontSize: fontSize.body, fontWeight: 'bold', marginBottom: 4 },
-  deckWarning: { color: c.danger, fontSize: fontSize.micro, marginBottom: 8 },
+  filterChipActive: { backgroundColor: c.accent },
+  filterChipText: { color: c.text, fontSize: fs(fontSize.micro) },
+  filterChipTextActive: { color: c.textOnAccent },
+  deckCounter: { color: c.accent, fontSize: fs(fontSize.body), fontWeight: 'bold', marginBottom: 4 },
+  deckWarning: { color: c.danger, fontSize: fs(fontSize.micro), marginBottom: 8 },
   deckSaveRow: { flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 8 },
   deckNameInput: {
     flex: 1, borderWidth: 1, borderColor: c.border, borderRadius: 8,
-    paddingHorizontal: 10, paddingVertical: 8, color: c.text, fontSize: fontSize.detail,
+    paddingHorizontal: 10, paddingVertical: 8, color: c.text, fontSize: fs(fontSize.detail),
+    minHeight: 44,
   },
   cardControls: { flexDirection: 'row', alignItems: 'center' },
   qtyButton: {
@@ -1204,12 +1231,12 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     justifyContent: 'center',
   },
   qtyButtonDisabled: { opacity: 0.3 },
-  qtyButtonText: { color: c.text, fontSize: fontSize.body, fontWeight: 'bold' },
-  qtyValue: { color: c.text, fontSize: fontSize.detail, marginHorizontal: 8 },
-  backLink: { marginBottom: 12 },
-  backLinkText: { color: c.info, fontSize: fontSize.detail },
+  qtyButtonText: { color: c.text, fontSize: fs(fontSize.body), fontWeight: 'bold' },
+  qtyValue: { color: c.text, fontSize: fs(fontSize.detail), marginHorizontal: 8 },
+  backLink: { marginBottom: 12, minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingRight: 8 },
+  backLinkText: { color: c.info, fontSize: fs(fontSize.detail) },
   subSection: { marginTop: 12, padding: 10, backgroundColor: c.surface, borderRadius: 6 },
-  subTitle: { color: c.accent, fontSize: fontSize.detail, fontWeight: 'bold', marginBottom: 4 },
+  subTitle: { color: c.accent, fontSize: fs(fontSize.detail), fontWeight: 'bold', marginBottom: 4 },
   ruleBlock: {
     flexDirection: 'row',
     backgroundColor: c.surface,
@@ -1217,53 +1244,63 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     borderRadius: 6,
     marginBottom: 6,
   },
-  ruleNumber: { color: c.accent, fontSize: fontSize.detail, fontWeight: 'bold', marginRight: 8 },
-  ruleText: { color: c.text, fontSize: fontSize.detail },
+  ruleNumber: { color: c.accent, fontSize: fs(fontSize.detail), fontWeight: 'bold', marginRight: 8 },
+  ruleText: { color: c.text, fontSize: fs(fontSize.detail) },
   emptyState: { alignItems: 'center', padding: 20 },
-  emptyText: { color: c.textMuted, fontSize: fontSize.detail, marginBottom: 12, textAlign: 'center' },
-  setStatus: { color: c.accent, fontSize: fontSize.micro, fontWeight: 'bold' },
+  emptyText: { color: c.textMuted, fontSize: fs(fontSize.detail), marginBottom: 12, textAlign: 'center' },
+  setStatus: { color: c.accent, fontSize: fs(fontSize.micro), fontWeight: 'bold' },
   sandboxRun: {
-    backgroundColor: c.primary,
+    backgroundColor: c.accent,
     padding: 12,
     borderRadius: 6,
     alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: 12,
+    minHeight: 44,
   },
-  sandboxRunText: { color: c.text, fontSize: fontSize.detail, fontWeight: 'bold' },
-  sandboxError: { color: c.danger, fontSize: fontSize.micro, marginBottom: 8 },
+  sandboxRunText: { color: c.textOnAccent, fontSize: fs(fontSize.detail), fontWeight: 'bold' },
+  sandboxError: { color: c.danger, fontSize: fs(fontSize.micro), marginBottom: 8 },
   sandboxState: {
     backgroundColor: c.surface,
     padding: 12,
     borderRadius: 6,
   },
-  sandboxStateTitle: { color: c.text, fontSize: fontSize.detail, fontWeight: 'bold', marginBottom: 4, marginTop: 8 },
-  sandboxMeta: { color: c.textMuted, fontSize: fontSize.micro, marginBottom: 4 },
+  sandboxStateTitle: { color: c.text, fontSize: fs(fontSize.detail), fontWeight: 'bold', marginBottom: 4, marginTop: 8 },
+  sandboxMeta: { color: c.textMuted, fontSize: fs(fontSize.micro), marginBottom: 4 },
   sandboxEvents: { maxHeight: 300 },
-  sandboxEvent: { color: c.textMuted, fontSize: fontSize.micro, marginBottom: 2 },
+  sandboxEvent: { color: c.textMuted, fontSize: fs(fontSize.micro), marginBottom: 2 },
   versionActions: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   versionButton: {
     backgroundColor: c.surfaceRaised,
     padding: 10,
     borderRadius: 6,
     marginRight: 8,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   publishButton: { backgroundColor: c.success },
-  versionButtonText: { color: c.text, fontSize: fontSize.detail, fontWeight: 'bold' },
+  versionButtonText: { color: c.text, fontSize: fs(fontSize.detail), fontWeight: 'bold' },
   actionBar: { flexDirection: 'row', gap: 8, marginTop: 16 },
   saveButton: {
-    backgroundColor: c.primary,
+    backgroundColor: c.accent,
     padding: 12,
     borderRadius: 8,
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
   },
   backButton: {
-    backgroundColor: c.textFaint,
+    backgroundColor: c.surfaceRaised,
     padding: 12,
     borderRadius: 8,
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
   },
-  actionButtonText: { color: c.text, fontSize: fontSize.body, fontWeight: 'bold' },
+  actionButtonText: { color: c.text, fontSize: fs(fontSize.body), fontWeight: 'bold' },
+  // Enlaces inline de acción (deshacer/publicar/restaurar) con objetivo táctil
+  linkTouch: { minHeight: 44, justifyContent: 'center', paddingRight: 6 },
 });
 

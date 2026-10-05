@@ -3,9 +3,15 @@
  *
  * Cumple UI-350: una biblioteca/zona vacía muestra qué debería aparecer,
  *                cómo crear el primero, cómo importar, enlace a ayuda.
+ *
+ * Toda la paleta y tipografía vienen del tema (useColors/useFs): respeta
+ * alto contraste, daltonismo y escala de fuente del usuario.
  */
 
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { NtButton } from './ui/NtButton';
+import { fontSize, spacing, type Colors } from '../lib/theme';
+import { useColors, useFs } from '../lib/useTheme';
 
 interface EmptyStateProps {
   title: string;
@@ -16,6 +22,8 @@ interface EmptyStateProps {
   secondaryAction?: { label: string; onPress: () => void };
   /** Enlace a ayuda */
   helpAction?: { label: string; onPress: () => void };
+  /** Contenido en carga: muestra spinner en lugar de acciones */
+  loading?: boolean;
 }
 
 export function EmptyState({
@@ -24,85 +32,57 @@ export function EmptyState({
   primaryAction,
   secondaryAction,
   helpAction,
+  loading,
 }: EmptyStateProps) {
+  const c = useColors();
+  const fs = useFs();
+  const styles = createStyles(c, fs);
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>{title}</Text>
+      <Text style={styles.title} accessibilityRole="header">{title}</Text>
       <Text style={styles.description}>{description}</Text>
-      <View style={styles.actions}>
-        {primaryAction && (
-          <Pressable style={styles.primaryButton} onPress={primaryAction.onPress} accessibilityRole="button">
-            <Text style={styles.primaryText}>{primaryAction.label}</Text>
-          </Pressable>
-        )}
-        {secondaryAction && (
-          <Pressable style={styles.secondaryButton} onPress={secondaryAction.onPress} accessibilityRole="button">
-            <Text style={styles.secondaryText}>{secondaryAction.label}</Text>
-          </Pressable>
-        )}
-        {helpAction && (
-          <Pressable style={styles.helpButton} onPress={helpAction.onPress} accessibilityRole="link">
-            <Text style={styles.helpText}>{helpAction.label}</Text>
-          </Pressable>
-        )}
-      </View>
+      {loading ? (
+        <ActivityIndicator size="large" color={c.accent} />
+      ) : (
+        <View style={styles.actions}>
+          {primaryAction && (
+            <NtButton label={primaryAction.label} onPress={primaryAction.onPress} variant="primary" />
+          )}
+          {secondaryAction && (
+            <NtButton label={secondaryAction.label} onPress={secondaryAction.onPress} variant="secondary" />
+          )}
+          {helpAction && (
+            <NtButton label={helpAction.label} onPress={helpAction.onPress} variant="ghost" size="sm" />
+          )}
+        </View>
+      )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   container: {
-    padding: 24,
+    padding: spacing.xl,
     alignItems: 'center',
     justifyContent: 'center',
   },
   title: {
-    color: '#f1c40f',
-    fontSize: 18,
+    color: c.accent,
+    fontSize: fs(fontSize.section),
     fontWeight: 'bold',
-    marginBottom: 8,
+    marginBottom: spacing.sm,
     textAlign: 'center',
   },
   description: {
-    color: '#bdc3c7',
-    fontSize: 13,
+    color: c.textMuted,
+    fontSize: fs(fontSize.detail),
     textAlign: 'center',
-    marginBottom: 16,
+    marginBottom: spacing.lg,
   },
   actions: {
-    gap: 8,
+    gap: spacing.sm,
     alignItems: 'center',
-  },
-  primaryButton: {
-    backgroundColor: '#2980b9',
-    padding: 12,
-    borderRadius: 8,
-    minWidth: 200,
-    alignItems: 'center',
-  },
-  primaryText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  secondaryButton: {
-    backgroundColor: '#27ae60',
-    padding: 12,
-    borderRadius: 8,
-    minWidth: 200,
-    alignItems: 'center',
-  },
-  secondaryText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  helpButton: {
-    padding: 8,
-  },
-  helpText: {
-    color: '#3498db',
-    fontSize: 12,
-    textDecorationLine: 'underline',
+    alignSelf: 'stretch',
+    maxWidth: 320,
   },
 });

@@ -29,6 +29,7 @@ export const ZoneSchema = z.enum([
   'HORDE_DECK',
   'SCENARIO_DECK',
   'SCENARIO_ACTIVE',
+  'SUPPORT_DECK',
 ]);
 export type Zone = z.infer<typeof ZoneSchema>;
 
@@ -294,7 +295,6 @@ export const CardEffectSchema: z.ZodType<CardEffect> = z.lazy((): z.ZodType<Card
       type: z.literal('DEAL_DAMAGE'),
       amount: ValueExprSchema,
       target: TargetSelectorSchema,
-      splittable: z.boolean().default(false),
     }),
     z.object({
       type: z.literal('DEAL_DAMAGE_ALL_ENEMIES'),
@@ -342,7 +342,9 @@ export const CardEffectSchema: z.ZodType<CardEffect> = z.lazy((): z.ZodType<Card
     z.object({
       type: z.literal('DRAW_AND_ADD_ATTACK'),
       amount: ValueExprSchema,
-      source: z.enum(['ABILITY_DECK', 'SUPPORT_DECK']).default('ABILITY_DECK'),
+      // Sin `source`: el resolver siempre roba del mazo de Habilidad
+      // (Todo o Nada); aceptar SUPPORT_DECK aquí robaba del mazo
+      // equivocado en silencio — retirado en la auditoría.
     }),
     z.object({ type: z.literal('LOSE_CARDS'), amount: ValueExprSchema }),
     z.object({
@@ -451,8 +453,8 @@ export const CardEffectSchema: z.ZodType<CardEffect> = z.lazy((): z.ZodType<Card
     z.object({
       type: z.literal('SWAP_ENEMY'),
       target: TargetSelectorSchema,
-      newFrom: z.literal('BOTTOM_OF_HORDE').optional(),
-      new_from: z.literal('BOTTOM_OF_HORDE').optional(),
+      // Sin newFrom/new_from: el resolver siempre toma el fondo de la
+      // Horda — el campo se aceptaba pero nunca se leía.
     }),
     z.object({
       type: z.literal('RETURN_TO_HORDE'),
@@ -653,7 +655,7 @@ export const CardEffectSchema: z.ZodType<CardEffect> = z.lazy((): z.ZodType<Card
 
 export type CardEffect =
   // Dano
-  | { type: 'DEAL_DAMAGE'; amount: ValueExpr; target: TargetSelector; splittable?: boolean }
+  | { type: 'DEAL_DAMAGE'; amount: ValueExpr; target: TargetSelector }
   | { type: 'DEAL_DAMAGE_ALL_ENEMIES'; amount: ValueExpr }
   | { type: 'DEAL_DAMAGE_SPLIT'; amount: ValueExpr; targetCount: number; target: TargetSelector }
   | { type: 'DEAL_DAMAGE_TO_HERO'; amount: ValueExpr; target: HeroSelector }
@@ -665,7 +667,7 @@ export type CardEffect =
   | { type: 'SHIELD'; amount: ValueExpr }
   // Cartas
   | { type: 'DRAW_CARDS'; amount: ValueExpr; source?: 'ABILITY_DECK' | 'SUPPORT_DECK' }
-  | { type: 'DRAW_AND_ADD_ATTACK'; amount: ValueExpr; source?: 'ABILITY_DECK' | 'SUPPORT_DECK' }
+  | { type: 'DRAW_AND_ADD_ATTACK'; amount: ValueExpr }
   | { type: 'LOSE_CARDS'; amount: ValueExpr }
   | { type: 'RECOVER_CARDS'; amount: ValueExpr; from: 'WEAR_PILE'; to: 'BOTTOM_OF_DECK' | 'HAND' }
   | { type: 'RECOVER_CARD_BY_NAME'; name: string; from: 'WEAR_PILE'; to: 'BOTTOM_OF_DECK' | 'HAND' }
@@ -692,7 +694,7 @@ export type CardEffect =
   | { type: 'DISABLE_ENEMY_DAMAGE'; target: TargetSelector; duration: EffectDuration }
   | { type: 'APPLY_VULNERABILITY'; target: TargetSelector; bonus: ValueExpr; duration: EffectDuration }
   | { type: 'DEFEAT_ENEMY'; target: TargetSelector; loot: boolean }
-  | { type: 'SWAP_ENEMY'; target: TargetSelector; newFrom?: 'BOTTOM_OF_HORDE'; new_from?: 'BOTTOM_OF_HORDE' }
+  | { type: 'SWAP_ENEMY'; target: TargetSelector }
   | { type: 'RETURN_TO_HORDE'; target: TargetSelector; position: 'BOTTOM' }
   // Modificadores
   | { type: 'MODIFY_DAMAGE'; modifier: ValueExpr; scope: 'THIS_TURN' | 'NEXT_CARD'; filter?: { name?: string } }
@@ -787,38 +789,15 @@ export const CardDefinitionSchema = z.object({
   /** Valor numerico para icono Anti-Magia (resta de Fortaleza al calcular dano) */
   antiMagicValue: z.number().int().min(1).default(1).optional(),
   sourceImage: z.string().optional(),
-  /** Sistema de imagenes PNG — UI-PNG-001..011 */
-  images: z.object({
-    front: z.string().optional(),
-    back: z.string().optional(),
-    thumbnail: z.string().optional(),
-    game: z.string().optional(),
-    preview: z.string().optional(),
-    mask: z.string().optional(),
-    status: z.enum([
-      'PENDING_EXTRACTION',
-      'EXTRACTED',
-      'CROP_REVIEW_REQUIRED',
-      'CROP_VERIFIED',
-      'FRONT_BACK_MAPPING_REQUIRED',
-      'FRONT_BACK_MAPPING_VERIFIED',
-      'OPTIMIZED',
-      'READY_FOR_GAME',
-      'REJECTED',
-    ]).default('PENDING_EXTRACTION'),
-    hash: z.string().optional(),
-    pdfPage: z.number().int().optional(),
-    pdfRow: z.number().int().optional(),
-    pdfCol: z.number().int().optional(),
-  }).optional(),
   /** Texto manual que sustituye al texto generado (debe ser coherente con los efectos) */
   textOverride: z.string().optional(),
   /** Texto alternativo accesible de la imagen (obligatorio para publicar custom) */
   altText: z.string().optional(),
   /** Pericia de Señor de la Guerra (declarativa): disparador + efectos +
    *  condición opcional sobre la carta origen (p. ej. 'printedAttack == 1').
-   *  El motor la ejecuta genéricamente — los Señores del Taller no
-   *  necesitan código nuevo. */
+   *  DAMAGE_DEALT/CARD_PLAYED se ejecutan genéricamente; CONTINUOUS solo
+   *  tiene implementación hardcodeada (Roghkiller) — validateContentSet
+   *  lo rechaza en contenido custom. */
   peritia: z.object({
     trigger: z.enum(['DAMAGE_DEALT', 'CARD_PLAYED', 'CONTINUOUS']),
     effects: z.array(CardEffectSchema).min(1),
@@ -837,24 +816,8 @@ export const CardDefinitionSchema = z.object({
 
 export type CardDefinition = z.infer<typeof CardDefinitionSchema>;
 
-// ============================================================================
-// CardSet — conjunto de cartas (expansion o edicion)
-// ============================================================================
-
-export const CardSetEntrySchema = z.object({
-  cardId: z.string(),
-  copies: z.number().int().min(1),
-});
-
-export const CardSetSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  slug: z.string(),
-  version: z.string(),
-  entries: z.array(CardSetEntrySchema),
-});
-
-export type CardSet = z.infer<typeof CardSetSchema>;
+// (CardSet/CardSetEntrySchema eliminados en la auditoría: API sin
+// ningún consumidor — el concepto real es ContentSet más abajo.)
 
 // ============================================================================
 // DeckDefinition — mazo de Habilidad (oficial o personalizado)
@@ -872,7 +835,8 @@ export const DeckDefinitionSchema = z.object({
     copies: z.number().int().min(1),
   })).min(1),
   deckSize: z.number().int().min(1).default(DECK_SIZE),
-  allowedGameModes: z.array(z.enum(['STANDARD', 'SOLO', 'MULTICLASS'])).default(['STANDARD', 'SOLO']),
+  // (allowedGameModes eliminado: ningún consumidor — el modo usable se
+  //  deriva de heroClassIds/copies en validateDeck, no de esta lista)
   setId: z.string().default('official'),
   officialStatus: OfficialStatusSchema.default('OFFICIAL'),
   author: z.string().default('official'),
@@ -893,8 +857,8 @@ export const ContentSetSchema = z.object({
   status: z.enum(['DRAFT', 'VALIDATION', 'REVIEW', 'PUBLISHED']).default('DRAFT'),
   cards: z.array(CardDefinitionSchema).default([]),
   decks: z.array(DeckDefinitionSchema).default([]),
-  /** Versiones mínimas requeridas para jugar el conjunto */
-  requiredRulesetVersion: z.string().optional(),
+  /** (requiredRulesetVersion eliminado: sin consumidor — ningún gating
+   *  de versión de reglas existe en runner/engine/UI.) */
   checksum: z.string().optional(),
 });
 export type ContentSet = z.infer<typeof ContentSetSchema>;

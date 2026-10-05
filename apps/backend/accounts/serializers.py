@@ -74,24 +74,6 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "email", "created_at")
 
 
-class PublicUserSerializer(serializers.ModelSerializer):
-    """Vista pública de otro jugador."""
-
-    biography = serializers.CharField(source="profile.biography", read_only=True)
-    country_code = serializers.CharField(source="profile.country_code", read_only=True)
-    online = serializers.SerializerMethodField()
-
-    class Meta:
-        model = User
-        fields = ("id", "display_name", "avatar", "created_at", "biography", "country_code", "online")
-
-    def get_online(self, obj) -> bool | None:
-        # Presencia real vendrá de Redis; solo se expone si el usuario lo permite
-        if getattr(obj, "profile", None) and obj.profile.show_online_status:
-            return obj.last_login is not None
-        return None
-
-
 class PlayerStatisticsSerializer(serializers.Serializer):  # pylint: disable=abstract-method
     """Contadores agregados del jugador."""
 

@@ -12,6 +12,8 @@ import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { format } from 'date-fns';
 import { useTranslation } from 'react-i18next';
+import { touchTarget, type Colors } from '../lib/theme';
+import { useColors, useFs } from '../lib/useTheme';
 
 export interface HistoryEntry {
   id: string;
@@ -73,6 +75,11 @@ export function ActionHistory({
   onEntryPress,
 }: ActionHistoryProps) {
   const { t } = useTranslation();
+  const c = useColors();
+  const fs = useFs();
+  // Sin useMemo: el renderer ligero de tests invoca el componente
+  // directamente y los hooks de React lanzan fuera de un render real.
+  const styles = createStyles(c, fs);
   const FILTER_LABELS: Record<HistoryFilter, string> = {
     all: t('panels.historyFilterAll'),
     turn: t('panels.historyFilterTurn'),
@@ -233,12 +240,12 @@ export function ActionHistory({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   container: {
     padding: 8,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: c.surface,
     borderTopWidth: 1,
-    borderTopColor: '#333',
+    borderTopColor: c.border,
     maxHeight: 200,
   },
   header: {
@@ -248,51 +255,58 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   title: {
-    color: '#ecf0f1',
-    fontSize: 13,
+    color: c.text,
+    fontSize: fs(13),
     fontWeight: 'bold',
   },
   advToggle: {
-    backgroundColor: '#34495e',
+    backgroundColor: c.surfaceRaised,
     padding: 4,
     borderRadius: 4,
+    minHeight: touchTarget,
+    minWidth: touchTarget,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   advText: {
-    color: '#bdc3c7',
-    fontSize: 10,
+    color: c.textMuted,
+    fontSize: fs(10),
   },
   filters: {
     flexDirection: 'row',
     marginBottom: 4,
   },
   filterChip: {
-    backgroundColor: '#2c3e50',
+    backgroundColor: c.surfaceInteractive,
     padding: 4,
     borderRadius: 4,
     marginRight: 4,
+    minHeight: touchTarget,
+    justifyContent: 'center',
+    paddingHorizontal: 8,
   },
   filterActive: {
-    backgroundColor: '#2980b9',
+    backgroundColor: c.info,
   },
   filterText: {
-    color: '#bdc3c7',
-    fontSize: 10,
+    color: c.textMuted,
+    fontSize: fs(10),
   },
   filterTextActive: {
-    color: '#fff',
+    color: c.textOnAccent,
     fontWeight: 'bold',
   },
   list: {
     flex: 1,
   },
   empty: {
-    color: '#777',
-    fontSize: 11,
+    color: c.textFaint,
+    fontSize: fs(11),
     padding: 8,
     textAlign: 'center',
   },
   entry: {
-    backgroundColor: '#2c3e50',
+    backgroundColor: c.surfaceRaised,
     padding: 6,
     borderRadius: 4,
     marginBottom: 4,
@@ -303,48 +317,50 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   entryActor: {
-    color: '#f1c40f',
-    fontSize: 11,
+    color: c.accent,
+    fontSize: fs(11),
     fontWeight: 'bold',
   },
   entryAction: {
-    color: '#ecf0f1',
-    fontSize: 11,
+    color: c.text,
+    fontSize: fs(11),
     flex: 1,
   },
   entryTime: {
-    color: '#7f8c8d',
-    fontSize: 10,
+    color: c.textFaint,
+    fontSize: fs(10),
   },
   entryDetail: {
-    color: '#bdc3c7',
-    fontSize: 10,
+    color: c.textMuted,
+    fontSize: fs(10),
     marginTop: 2,
   },
   entryResult: {
-    color: '#ecf0f1',
-    fontSize: 10,
+    color: c.text,
+    fontSize: fs(10),
     marginTop: 2,
   },
   entryLink: {
     marginTop: 4,
     alignSelf: 'flex-start',
     paddingVertical: 2,
+    minHeight: touchTarget,
+    justifyContent: 'center',
   },
   entryLinkText: {
-    color: '#5dade2',
-    fontSize: 10,
+    color: c.textLink,
+    fontSize: fs(10),
     fontWeight: '600',
   },
   technical: {
     marginTop: 4,
     padding: 4,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: c.surface,
     borderRadius: 3,
   },
   techLine: {
-    color: '#7f8c8d',
-    fontSize: 9,
+    color: c.textFaint,
+    fontSize: fs(9),
     fontFamily: 'monospace',
   },
 });

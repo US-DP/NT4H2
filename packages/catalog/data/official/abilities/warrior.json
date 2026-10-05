@@ -149,8 +149,7 @@
           "amount": {
             "kind": "CONSTANT",
             "value": 1
-          },
-          "source": "ABILITY_DECK"
+          }
         }
       ],
       "destinationAfterUse": "WEAR_PILE",

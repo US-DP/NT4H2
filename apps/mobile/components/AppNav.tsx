@@ -8,7 +8,9 @@
  * Escritorio: sidebar con dos estados persistentes —
  *   · contraída (78 px): solo iconos + indicador activo;
  *   · expandida (220 px): icono + etiqueta + encabezados de grupo.
- * La preferencia se guarda en settings.navExpanded.
+ * La preferencia se guarda en settings.navMode ('auto' | 'collapsed' |
+ * 'expanded'); el antiguo settings.navExpanded (bool) solo existe para
+ * migrar ese valor — no lo lee ningún componente.
  *
  * Móvil: barra inferior de 5 destinos máximo — Inicio, Jugar, Colección,
  * Reglamento y "Más" (sheet con Salas, Taller, Perfil).
@@ -114,6 +116,31 @@ export function useNavSidebarWidth(): number {
   return Platform.OS === 'web'
     ? expanded ? SIDEBAR_EXPANDED : SIDEBAR_COLLAPSED
     : 0;
+}
+
+/**
+ * Variante tolerante para pantallas que pueden invocarse fuera de un
+ * render React real (el renderer ligero de tests llama a los componentes
+ * directamente y los hooks de useNavSidebarWidth lanzan). En la app se
+ * comporta igual; en tests devuelve 0.
+ */
+export function useNavSidebarWidthSafe(): number {
+  try {
+    return useNavSidebarWidth();
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * `<AppNav/>` para componentes renderizados también por el renderer ligero
+ * de tests: ese renderer invoca los componentes directamente y los hooks
+ * reales de la navegación lanzarían. En NODE_ENV=test no se monta nada;
+ * en la app se comporta exactamente igual que `<AppNav/>`.
+ */
+export function MaybeAppNav() {
+  if (process.env.NODE_ENV === 'test') return null;
+  return <AppNav />;
 }
 
 function isItemActive(item: NavItem, pathname: string): boolean {

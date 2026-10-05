@@ -1,12 +1,10 @@
 """Puente con el engine-runner: estado proyectado y tickets WS efímeros."""
 
 import logging
-import secrets
-import threading
-import time
 
 import httpx  # noqa: ASYNC127 - httpx sigue mantenido; la sugerencia httpx2 es errónea
-from django.db.models import Max
+from django.db import transaction
+from django.db.models import Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -14,14 +12,21 @@ from django.views.decorators.csrf import csrf_exempt
 
 from ..engine_client import EngineRunnerClient
 from ..models import GameEvent, GameSession, GameSnapshot
+from ..store import (
+    ws_ticket_consume,
+    ws_ticket_create,
+    ws_tickets_revoke,
+)
 from ._common import (
     _broadcast_room,
+    _bump_player_stat,
     _bump_revision,
     _get_player_token,
     _guard_post,
     _persist_command_event,
     _rate_limited,
     _verify_player,
+    security_logger,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,6 +66,18 @@ def room_engine_state(request, room_id):
             return error
     try:
         result = EngineRunnerClient.get_state(room_id, player_id)
+    except httpx.HTTPStatusError as exc:
+        # Sala ausente en el runner (reinicio sin STATE_DIR): restaurar
+        # desde el último GameSnapshot persistido y reintentar una vez
+        # en vez de dejar la sala PLAYING zombi para siempre.
+        missing = exc.response is not None and exc.response.status_code == 404
+        result = None
+        if missing and session.status == "PLAYING" and restore_room_from_snapshot(room_id):
+            result = _try_get_state(room_id, player_id)
+        if result is None:
+            # D413: no exponer detalles internos del error al cliente
+            logger.warning("engine-runner get_state failed for room %s", room_id)
+            return JsonResponse({"error": "Engine runner unavailable"}, status=503)
     except (httpx.HTTPError, ValueError):
         # D413: no exponer detalles internos del error al cliente
         logger.warning("engine-runner get_state failed for room %s", room_id)
@@ -70,6 +87,52 @@ def room_engine_state(request, room_id):
     if session.turn_started_at is not None:
         result = {**result, "turnStartedAt": session.turn_started_at.isoformat()}
     return JsonResponse(result)
+
+
+def _try_get_state(room_id: str, player_id: str | None) -> dict | None:
+    """get_state tolerante a fallos: devuelve el dict del runner o None."""
+    try:
+        return EngineRunnerClient.get_state(room_id, player_id)
+    except (httpx.HTTPError, ValueError):
+        return None
+
+
+def restore_room_from_snapshot(room_id: str) -> bool:
+    """Recrea en el runner una sala PLAYING desde su último GameSnapshot.
+
+    Los snapshots dejan de ser almacenamiento muerto: el estado completo
+    (manos, RNG, revisión) viaja al endpoint /restore del runner. Los sets
+    del Taller viajan DENTRO del snapshot (full-state los incluye) para
+    que el blob sea autocontenido; si el snapshot es antiguo y no los
+    trae, se cae a session.config. Devuelve True si la sala quedó
+    restaurada.
+    """
+    session = GameSession.objects.filter(room_id=room_id).first()
+    if session is None or session.status != "PLAYING":
+        return False
+    snapshot = session.snapshots.first()  # ordering [-seq] → el más reciente
+    if snapshot is None:
+        return False
+    body = dict(snapshot.state or {})
+    if "customSets" not in body:
+        # Snapshots anteriores a la inclusión de customSets en /full-state
+        body["customSets"] = (session.config or {}).get("customSets") or []
+    try:
+        EngineRunnerClient.restore_room(room_id, body)
+    except httpx.HTTPStatusError as exc:
+        # B-10: 409 = la sala ya existe en el runner (una restauración
+        # concurrente ganó la carrera, o el 404 inicial era una lectura
+        # obsoleta). Es el resultado buscado: éxito, no fallo.
+        if exc.response.status_code == 409:
+            security_logger.info("room %s already alive in runner (restore 409)", room_id)
+            return True
+        logger.warning("restore from snapshot failed for %s", room_id, exc_info=True)
+        return False
+    except (httpx.HTTPError, ValueError):
+        logger.warning("restore from snapshot failed for %s", room_id, exc_info=True)
+        return False
+    security_logger.info("room %s restored from snapshot seq=%s", room_id, snapshot.seq)
+    return True
 
 
 # --- Snapshots de estado del motor (Fase 2) -----------------------------------
@@ -95,8 +158,7 @@ def take_snapshot(session) -> bool:
     GameSnapshot.objects.create(
         session=session,
         seq=latest_seq,
-        revision=int(full.get("revision") or 0),
-        state=full,
+        state=full,  # `full` ya transporta revision/rngState/cids en el JSON
     )
     # Podar: una partida larga no puede acumular snapshots sin límite
     stale = (
@@ -109,19 +171,99 @@ def take_snapshot(session) -> bool:
     return True
 
 
+def _turn_durations(session) -> dict[str, list[float]]:
+    """Duración aproximada de cada turno por jugador (segundos).
+
+    Un turno empieza donde acaba el anterior: el tiempo entre END_TURN
+    consecutivos es la duración del turno que cierra. El primer END_TURN
+    mide desde el primer evento COMMAND de la partida.
+    """
+    end_turns = list(
+        GameEvent.objects.filter(
+            session=session,
+            event_type="COMMAND",
+            data__accepted=True,
+        )
+        .filter(Q(data__command__type="END_TURN") | Q(data__command="END_TURN"))
+        .order_by("seq")
+        .values_list("player_id", "created_at")
+    )
+    if not end_turns:
+        return {}
+    first_at = (
+        GameEvent.objects.filter(session=session, event_type="COMMAND")
+        .order_by("seq")
+        .values_list("created_at", flat=True)
+        .first()
+    )
+    durations: dict[str, list[float]] = {}
+    prev_at = first_at
+    for pid, at in end_turns:
+        if prev_at is not None and pid:
+            durations.setdefault(pid, []).append(max(0.0, (at - prev_at).total_seconds()))
+        prev_at = at
+    return durations
+
+
+def _record_player_statistics(session, winner_id: str | None, roster=None) -> None:
+    """Actualiza PlayerStatistics de los miembros con cuenta vinculada.
+
+    Se llama al cerrar la partida: played+won/lost para todos,
+    total_turns como recuento de END_TURN aceptados del jugador (los
+    forzados por skip_turn también cuentan — le tocaba a él) y
+    average_turn_seconds como media ponderada con el historial.
+
+    ``roster`` = snapshot [(player_id, user_id)] tomado bajo el lock de
+    mark_finished: un leave concurrente entre el cierre y el recuento
+    excluía al jugador de games_played (auditoría).
+    """
+    durations = _turn_durations(session)
+    if roster is None:
+        roster = list(session.players.exclude(user_id__isnull=True).values_list("player_id", "user_id"))
+    for player_id, user_id in roster:
+        if user_id is None:
+            continue
+        won = winner_id is not None and player_id == winner_id
+        turns = len(durations.get(player_id, []))
+        avg = sum(durations[player_id]) / turns if turns else None
+        _bump_player_stat(
+            user_id,
+            games_played=1,
+            games_won=1 if won else 0,
+            games_lost=0 if won else 1,
+            total_turns=turns,
+            avg_turn_seconds=avg,
+        )
+
+
 def mark_finished(session, winner_id: str | None) -> None:
     """Cierra la sala a FINISHED tras un GAME_ENDED del runner.
 
     Persiste el evento terminal, toma el snapshot final (la base del
-    replay completo) y difunde room.finished para que los clientes
-    muestren el resultado.
+    replay completo), actualiza las estadísticas de los jugadores con
+    cuenta y difunde room.finished para que los clientes muestren el
+    resultado.
     """
-    if session.status != "PLAYING":
-        return
-    session.status = "FINISHED"
-    session.save(update_fields=["status", "updated_at"])
+    # Lock de sesión: dos procesadores concurrentes del mismo GAME_ENDED
+    # (consumer + reaper perezoso, o acks duplicados) no deben duplicar
+    # el evento terminal ni las estadísticas de los jugadores.
+    with transaction.atomic():
+        session = GameSession.objects.select_for_update().get(pk=session.pk)
+        if session.status != "PLAYING":
+            return
+        session.status = "FINISHED"
+        # El reloj de turno ya no aplica: limpiarlo para que la vista de
+        # historial no muestre una partida cerrada con turno "en curso".
+        session.turn_player_id = ""
+        session.turn_started_at = None
+        session.save(update_fields=["status", "turn_player_id", "turn_started_at", "updated_at"])
+        # Roster congelado bajo el lock: un leave concurrente entre el
+        # cierre y _record_player_statistics excluía al jugador de las
+        # estadísticas de su cuenta.
+        roster = list(session.players.values_list("player_id", "user_id"))
     _persist_command_event(session, None, "GAME_ENDED", event_type="GAME_ENDED", winnerId=winner_id)
     take_snapshot(session)
+    _record_player_statistics(session, winner_id, roster=roster)
     revision = _bump_revision(session)
     _broadcast_room(
         session.room_id,
@@ -129,76 +271,22 @@ def mark_finished(session, winner_id: str | None) -> None:
     )
 
 
-@csrf_exempt
-def room_sync(request, room_id):
-    """GET /api/rooms/<id>/sync/?after=<seq> — resincronización tras reconexión.
-
-    Devuelve revisión, último seq y los eventos posteriores a ``after``
-    (proyección compacta: sin payloads privados). Permite al cliente
-    decidir si basta re-pedir su estado proyectado o reconstruir el log.
-    """
-    if request.method != "GET":
-        return JsonResponse({"error": "Method not allowed"}, status=405)
-    if _rate_limited(request, "read"):
-        return JsonResponse({"error": "Too many requests"}, status=429)
-    session = get_object_or_404(GameSession, room_id=room_id)
-    player_id = request.GET.get("playerId") or ""
-    _, error = _verify_player(session, player_id, _get_player_token(request))
-    if error is not None:
-        return error
-
-    try:
-        after = max(0, int(request.GET.get("after", "0")))
-    except (TypeError, ValueError):
-        return JsonResponse({"error": "Invalid after"}, status=400)
-
-    qs = GameEvent.objects.filter(session=session, seq__gt=after).order_by("seq")
-    events = list(qs[:200])
-    latest = GameEvent.objects.filter(session=session).aggregate(m=Max("seq"))["m"] or 0
-    return JsonResponse(
-        {
-            "roomRevision": session.revision,
-            "latestSeq": latest,
-            "events": [
-                {
-                    "seq": e.seq,
-                    "type": e.event_type,
-                    "playerId": e.player_id,
-                    "command": (e.data or {}).get("command"),
-                    "accepted": (e.data or {}).get("accepted"),
-                }
-                for e in events
-            ],
-            "truncated": qs.count() > len(events),
-        }
-    )
-
+# (room_sync retirado: ningún cliente aplicaba el delta — tras una
+#  reconexión siempre se re-pide la proyección completa del runner)
 
 # --- Tickets efímeros para WebSocket (P0) -----------------------------------
 # El token de jugador NUNCA viaja en la URL del socket: el cliente autentica
 # por REST y obtiene un ticket de un solo uso vinculado a (sala, jugador).
-# In-memory como _RATE_LIMITS — en multi-worker usar cache compartida.
-_WS_TICKETS: dict[str, dict] = {}
-_WS_TICKET_TTL = 60.0  # segundos
-_WS_TICKET_LOCK = threading.Lock()
+# Estado en game.store (cache compartida: Redis multi-worker, LocMem en
+# dev) — los dicts en memoria dejaban los tickets invisibles a otros
+# workers.
+
+_WS_TICKET_TTL = 60  # segundos
 
 
 def _issue_ws_ticket(room_id: str, player_id: str) -> str:
     """Emite un ticket de un solo uso para (sala, jugador)."""
-    now = time.monotonic()
-    ticket = secrets.token_urlsafe(32)
-    # El barrido de expirados y la inserción bajo el mismo lock —
-    # consume_ws_ticket hace pop() concurrente y un dict iterado
-    # fuera del lock lanza RuntimeError (dictionary changed size).
-    with _WS_TICKET_LOCK:
-        for k in [k for k, v in _WS_TICKETS.items() if v["exp"] < now]:
-            _WS_TICKETS.pop(k, None)
-        _WS_TICKETS[ticket] = {
-            "room_id": room_id,
-            "player_id": player_id,
-            "exp": now + _WS_TICKET_TTL,
-        }
-    return ticket
+    return ws_ticket_create(room_id, player_id)
 
 
 def _revoke_ws_tickets(room_id: str, player_id: str) -> None:
@@ -207,20 +295,15 @@ def _revoke_ws_tickets(room_id: str, player_id: str) -> None:
     Sin esto, un ticket emitido justo antes del kick seguía siendo
     válido ~60 s y permitía reconectar y chatear tras la expulsión.
     """
-    with _WS_TICKET_LOCK:
-        for k in [k for k, v in _WS_TICKETS.items() if v["room_id"] == room_id and v["player_id"] == player_id]:
-            _WS_TICKETS.pop(k, None)
+    ws_tickets_revoke(room_id, player_id)
 
 
 def consume_ws_ticket(ticket: str, room_id: str):
     """Consume el ticket (un solo uso). Devuelve player_id o None."""
-    with _WS_TICKET_LOCK:
-        entry = _WS_TICKETS.pop(ticket, None)
-    if entry is None:
+    info = ws_ticket_consume(ticket)
+    if info is None or info["room_id"] != room_id:
         return None
-    if entry["exp"] < time.monotonic() or entry["room_id"] != room_id:
-        return None
-    return entry["player_id"]
+    return info["player_id"]
 
 
 @csrf_exempt

@@ -50,6 +50,13 @@ export default {
 
     // HandView
     evasionTitle: 'Evasión: elige cartas a descartar',
+    swapTitle: 'Cambio inicial: elige hasta 2 cartas',
+    swapToggle: 'Cambiar cartas',
+    swapToggleA11y: 'Activar el cambio de cartas iniciales (una vez por partida)',
+    swapProgress: 'Cartas elegidas: {{count}} de 2',
+    swapHint: 'Las cartas elegidas vuelven al mazo y robas otras tantas. Solo se puede hacer una vez (solitario).',
+    swapConfirm: 'Cambiar',
+    swapConfirmA11y: 'Cambiar {{count}} cartas iniciales',
     handTitle: 'Mano ({{count}})',
     evasionProgress: '🏃 Evasión: {{count}} de 2 cartas mínimas',
     evasionHint:
@@ -180,6 +187,35 @@ export default {
     warlordRevealed: '¡Revelado!',
     warlordUnrevealed: 'Sin revelar',
     warlordFallback: 'Señor de la Guerra',
+
+    // Motivos del motor (reasonCode → texto localizado; ver lib/engineReasons)
+    reasons: {
+      wrongPhase: 'No es la fase adecuada',
+      notYourTurn: 'No es tu turno',
+      cardNotInHand: 'La carta no está en tu mano',
+      targetNotFound: 'Enemigo objetivo no encontrado',
+      insufficientCoins: 'Monedas insuficientes (necesitas {{need}}, tienes {{have}})',
+      supportCardLimit: 'Solo puedes usar 1 carta de apoyo por turno',
+      evasionUsed: 'Ya usaste la Ficha de Evasión en esta partida',
+      evasionMinCards: 'Debes descartar al menos 2 cartas para evadir',
+      duplicateCards: 'Cartas duplicadas en la evasión',
+      cardsNotInHand: 'Las cartas descartadas deben estar en tu mano',
+      cardNotInMarket: 'La carta no está en el mercado',
+      missingCatalog: 'Catálogo requerido para validar la compra',
+      cardDefNotFound: 'Definición de carta no encontrada',
+      missingCapabilities: 'Te faltan las capacidades requeridas',
+      choiceNotFound: 'Elección no válida o expirada',
+      targetRequired: 'Esta carta necesita un enemigo objetivo',
+      targetInvalid: 'El objetivo no cumple los requisitos de la carta',
+      heroEliminated: 'El héroe está eliminado',
+      gameFinished: 'La partida ha terminado',
+      noAbilityUses: 'No te quedan usos de la habilidad de héroe',
+      pendingChoice: 'Primero resuelve la elección pendiente',
+      invalidSelection: 'Selección no válida',
+      soloOnly: 'Solo disponible en modo solitario',
+      swapUsed: 'Ya usaste el intercambio de cartas inicial',
+      unknown: 'Acción no permitida',
+    },
 
     // HordeAttackSummary (el título reutiliza phase.HORDE_ATTACK)
     annulled: 'anulado',

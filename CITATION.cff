@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "Si usas o citas este software, hazlo así:"
+type: software
+title: "NT4H Digital"
+abstract: >-
+  Digitalización del juego de mesa cooperativo "No Time for Heroes":
+  motor de reglas determinista event-sourced (TypeScript), app Expo
+  web/móvil, backend Django + Channels y runner Node por sala.
+authors:
+  - name: "US-DP"
+url: "https://github.com/US-DP/NT4H2"
+repository-code: "https://github.com/US-DP/NT4H2"
+license: "LicenseRef-Proprietary"

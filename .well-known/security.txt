@@ -1,0 +1,7 @@
+# RFC 9116 — divulgación responsable de vulnerabilidades
+# Publicar en https://<dominio>/.well-known/security.txt cuando haya hosting.
+
+Contact: https://github.com/US-DP/NT4H2/security/advisories/new
+Preferred-Languages: es, en
+Policy: https://github.com/US-DP/NT4H2/blob/main/SECURITY.md
+Expires: 2027-01-01T00:00:00Z

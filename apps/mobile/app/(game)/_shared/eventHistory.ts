@@ -4,12 +4,12 @@
  */
 
 import type { TFunction } from 'i18next';
-import type { GameEvent, GameState } from '@nt4h/schema';
+import type { GameEvent } from '@nt4h/schema';
 import type { CatalogLoadResult } from '@nt4h/catalog';
-import type { HistoryEntry } from '../../components/ActionHistory';
+import type { HistoryEntry } from '../../../components/ActionHistory';
 
 // ============================================================================
-// Historial de acciones â€” mapea eventos del motor a HistoryEntry (UI-170..174)
+// Historial de acciones — mapea eventos del motor a HistoryEntry (UI-170..174)
 // ============================================================================
 
 const HISTORY_PHASE_KEYS: Record<string, string> = {
@@ -24,7 +24,7 @@ const HISTORY_PHASE_KEYS: Record<string, string> = {
 };
 
 export function cardName(catalog: CatalogLoadResult | null, definitionId: string | undefined): string {
-  if (!definitionId) return 'â€”';
+  if (!definitionId) return '—';
   return catalog?.byId.get(definitionId)?.name ?? definitionId;
 }
 
@@ -35,17 +35,26 @@ export function buildHistoryEntries(
 ): HistoryEntry[] {
   const entries: HistoryEntry[] = [];
   let turn = 1;
-  const turnStartIdx = 0;
+  // Mapa instancia→definición construido en una pasada previa: eventos
+  // como MARKET_PURCHASED solo llevan cardInstanceId y sin él el
+  // historial pintaba el id crudo en vez del nombre de la carta.
+  const instanceDefs = new Map<string, string>();
+  for (const e of events) {
+    const ev = e as { cardInstanceId?: string; cardDefinitionId?: string };
+    if (ev.cardInstanceId && ev.cardDefinitionId) {
+      instanceDefs.set(ev.cardInstanceId, ev.cardDefinitionId);
+    }
+  }
 
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
-    const entry = eventToHistoryEntry(e, turn, catalog, t);
+    // El propio TURN_STARTED pertenece al nuevo turno, no al anterior.
+    if (e.type === 'TURN_STARTED') turn = e.turnNumber;
+    const entry = eventToHistoryEntry(e, turn, catalog, t, instanceDefs);
     // Eventos sin actor (fases, sistema) se marcan como globales para que el
     // filtro por jugador no los oculte (UI-172)
-    if (entry && entry.actor === 'â€”') entry.global = true;
+    if (entry && entry.actor === '—') entry.global = true;
     if (entry) entries.push(entry);
-    if (e.type === 'TURN_STARTED') turn = e.turnNumber;
-    void turnStartIdx;
   }
   return entries;
 }
@@ -55,19 +64,27 @@ export function eventToHistoryEntry(
   turn: number,
   catalog: CatalogLoadResult | null,
   t: TFunction,
+  instanceDefs?: Map<string, string>,
 ): HistoryEntry | null {
-  const base = { id: `ev-${e.seq}`, turn, timestamp: e.seq };
-  const actor = (pid: string | undefined) => pid ?? 'â€”';
+  // GameEvent no lleva reloj real: el timestamp es el de ingestión del
+  // evento — NO `e.seq` (un contador; la UI mostraba 00:00 de epoch).
+  // `technical` alimenta el modo avanzado del historial (UI-173).
+  const base = {
+    id: `ev-${e.seq}`,
+    turn,
+    timestamp: Date.now(),
+    technical: { events: [`${e.type} · seq ${e.seq}`] },
+  };
+  const actor = (pid: string | undefined) => pid ?? '—';
   const card = (defId: string | undefined) => cardName(catalog, defId);
-  const hero = (pid: string | undefined, state: GameState | null) =>
-    pid ? (state?.players[pid]?.heroId ?? pid) : 'â€”';
-  void hero;
+  const cardByInstance = (instanceId: string | undefined) =>
+    card(instanceId ? instanceDefs?.get(instanceId) : undefined);
 
   switch (e.type) {
     case 'TURN_STARTED':
       return { ...base, actor: actor(e.playerId), action: t('gm.histTurnStarted'), result: t('gm.histTurnN', { n: e.turnNumber }) };
     case 'TURN_ENDED':
-      return { ...base, actor: actor(e.playerId), action: t('gm.histTurnEnded'), result: 'â€”' };
+      return { ...base, actor: actor(e.playerId), action: t('gm.histTurnEnded'), result: '—' };
     case 'CARD_PLAYED':
       return {
         ...base,
@@ -78,7 +95,7 @@ export function eventToHistoryEntry(
         result: e.cardName ?? card(e.cardDefinitionId),
       };
     case 'DAMAGE_DEALT':
-      return { ...base, actor: 'â€”', action: t('gm.histDamageDealt'), target: e.targetId, result: t('gm.histDamageN', { n: e.amount }) };
+      return { ...base, actor: '—', action: t('gm.histDamageDealt'), target: e.targetId, result: t('gm.histDamageN', { n: e.amount }) };
     case 'ENEMY_DEFEATED':
       return {
         ...base,
@@ -88,7 +105,14 @@ export function eventToHistoryEntry(
         result: t('gm.histReward', { glory: e.reward.glory, coins: e.reward.coins }),
       };
     case 'HORDE_ATTACKED':
-      return { ...base, actor: actor(e.playerId), action: t('gm.histHordeAttack'), result: t('gm.histDamageN', { n: e.totalDamage }) };
+      return {
+        ...base,
+        actor: actor(e.playerId),
+        action: t('gm.histHordeAttack'),
+        result: t('gm.histDamageN', { n: e.totalDamage }),
+        // Enlace al desglose del asalto (abre HordeAttackSummary manual)
+        linkTo: 'horde',
+      };
     case 'EVASION_PERFORMED':
       return {
         ...base,
@@ -107,7 +131,9 @@ export function eventToHistoryEntry(
     case 'GLORY_LOST':
       return { ...base, actor: actor(e.playerId), action: t('gm.histGloryLost'), result: `-${e.amount}` };
     case 'COINS_GAINED':
-      return { ...base, actor: actor(e.playerId), action: t('gm.histCoins'), result: `${e.amount >= 0 ? '+' : ''}${e.amount}` };
+      return { ...base, actor: actor(e.playerId), action: t('gm.histCoins'), result: `+${e.amount}` };
+    case 'COINS_LOST':
+      return { ...base, actor: actor(e.playerId), action: t('gm.histCoinsLost'), result: `-${e.amount}` };
     case 'COINS_STOLEN':
       return { ...base, actor: actor(e.fromPlayerId), action: t('gm.histCoinsStolen'), target: e.toPlayerId, result: `${e.amount}` };
     case 'WOUND_HEALED':
@@ -117,11 +143,11 @@ export function eventToHistoryEntry(
         ...base,
         actor: actor(e.playerId),
         action: t('gm.histMarketPurchase'),
-        card: card(e.cardInstanceId),
+        card: cardByInstance(e.cardInstanceId),
         result: t('gm.histCoinsCost', { cost: e.cost }),
       };
     case 'MARKET_REPLENISHED':
-      return { ...base, actor: t('gm.histActorMarket'), action: t('gm.histReplenish'), result: 'â€”' };
+      return { ...base, actor: t('gm.histActorMarket'), action: t('gm.histReplenish'), result: '—' };
     case 'ENEMY_REVEALED':
       return {
         ...base,
@@ -139,9 +165,9 @@ export function eventToHistoryEntry(
         result: t('gm.histFinalBoss'),
       };
     case 'SCENARIO_REVEALED':
-      return { ...base, actor: t('gm.histActorScenario'), action: t('gm.histScenarioRevealed'), card: card(e.definitionId), result: 'â€”' };
+      return { ...base, actor: t('gm.histActorScenario'), action: t('gm.histScenarioRevealed'), card: card(e.definitionId), result: '—' };
     case 'SCENARIO_DISCARDED':
-      return { ...base, actor: t('gm.histActorScenario'), action: t('gm.histScenarioDiscarded'), result: 'â€”' };
+      return { ...base, actor: t('gm.histActorScenario'), action: t('gm.histScenarioDiscarded'), result: '—' };
     case 'PHASE_CHANGED':
       return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histPhase'), result: HISTORY_PHASE_KEYS[e.phase] ? t(HISTORY_PHASE_KEYS[e.phase]) : e.phase };
     case 'HERO_ABILITY_USED':
@@ -149,7 +175,7 @@ export function eventToHistoryEntry(
     case 'GAME_ENDED':
       return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histGameEnded'), result: e.winnerId ? t('gm.histWinner', { name: e.winnerId }) : t('gm.histCoopDefeat') };
     case 'LEADER_DETERMINED':
-      return { ...base, actor: actor(e.playerId), action: t('gm.histLeaderChosen'), result: 'â€”' };
+      return { ...base, actor: actor(e.playerId), action: t('gm.histLeaderChosen'), result: '—' };
     case 'DECK_EXHAUSTED':
       return { ...base, actor: actor(e.playerId), action: t('gm.histDeckExhausted'), result: t('gm.histWoundRecycle') };
     case 'DECK_RESHUFFLED':
@@ -167,7 +193,7 @@ export function eventToHistoryEntry(
         result: t('gm.histDamageN', { n: e.amount }),
       };
     case 'ENEMY_RETURNED_TO_HORDE':
-      return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histEnemyReturned'), result: 'â€”' };
+      return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histEnemyReturned'), result: '—' };
     case 'ENEMY_SWAPPED':
       return {
         ...base,
@@ -181,19 +207,19 @@ export function eventToHistoryEntry(
     case 'HERO_WOUNDED':
       return { ...base, actor: actor(e.playerId), action: t('gm.histHeroWound'), result: t('gm.histWoundsN', { count: e.woundCount }) };
     case 'CANCELLATION_ACTIVATED':
-      return { ...base, actor: actor(e.playerId), action: t('gm.histCancellation'), result: 'â€”' };
+      return { ...base, actor: actor(e.playerId), action: t('gm.histCancellation'), result: '—' };
     case 'PERSISTENT_CARD_PLACED':
       return { ...base, actor: actor(e.playerId), action: t('gm.histPersistentCard'), card: card(e.cardDefinitionId), result: e.trigger };
     case 'PERSISTENT_CARD_REMOVED':
-      return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histPersistentRemoved'), result: 'â€”' };
+      return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histPersistentRemoved'), result: '—' };
     case 'ENEMY_DAMAGE_DISABLED':
-      return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histEnemyDamageDisabled'), target: e.enemyInstanceId, result: 'â€”' };
+      return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histEnemyDamageDisabled'), target: e.enemyInstanceId, result: '—' };
     case 'MODIFIER_ADDED':
       return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histModifierAdded'), target: e.targetId, result: e.layer };
     case 'MODIFIER_EXPIRED':
       return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histModifierExpired'), result: e.modifierId };
     case 'CARD_MOVED':
-      return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histCardMoved'), result: `${e.from} â†’ ${e.to}` };
+      return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histCardMoved'), result: `${e.from} → ${e.to}` };
     case 'CARD_REMOVED_FROM_GAME':
       return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histCardRemoved'), result: '-' };
     case 'LEADER_TIE_BREAK':
@@ -206,10 +232,10 @@ export function eventToHistoryEntry(
       return { ...base, actor: actor(e.playerId), action: t('gm.histSupportDeck'), result: `#${e.supportDeckIndex + 1}` };
     case 'WOUND_PLACED':
       return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histWoundPlaced'), target: e.enemyInstanceId, result: `${e.amount}` };
-    case 'SHIELD_TRANSFERRED':
-      return { ...base, actor: actor(e.fromPlayerId), action: t('gm.histShieldTransferred'), target: e.toPlayerId, result: `${e.amount}` };
     case 'CARDS_REVEALED_TO_PLAYER':
-      return { ...base, actor: actor(e.playerId), action: t('gm.histCardsRevealed'), result: t('gm.histCardsN', { count: e.cardInstanceIds.length }) };
+      // Las cartas reveladas son privadas del jugador destinatario — la
+      // entrada se renderiza como "información privada" (UI-174).
+      return { ...base, actor: actor(e.playerId), action: t('gm.histCardsRevealed'), result: '', wasPrivate: true };
     case 'BLOCK_GRANTED':
       return { ...base, actor: actor(e.playerId), action: t('gm.histBlock'), result: t('gm.histBlockNext', { n: e.amount }) };
     case 'BLOCK_CONSUMED':
@@ -223,7 +249,7 @@ export function eventToHistoryEntry(
     case 'RESOLUTION_HALTED':
       return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histResolutionHalted'), result: e.reason };
     case 'STATUS_APPLIED':
-      return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histStatusApplied'), target: e.enemyInstanceId, result: `${e.status} Ã—${e.stacks}` };
+      return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histStatusApplied'), target: e.enemyInstanceId, result: `${e.status} ×${e.stacks}` };
     case 'STATUS_REMOVED':
       return { ...base, actor: t('gm.histActorSystem'), action: t('gm.histStatusRemoved'), target: e.enemyInstanceId, result: e.status };
     case 'ARMOR_GRANTED':

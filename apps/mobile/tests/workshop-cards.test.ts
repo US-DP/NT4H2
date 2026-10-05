@@ -211,6 +211,9 @@ describe('Taller → reproducción de cada carta oficial', () => {
     for (const [id, nodes] of Object.entries(OFFICIAL_NODES)) {
       const card = catalog.byId.get(id);
       expect(card, id).toBeTruthy();
+      // CUSTOM_SCENARIO no es construible en el editor: su `handler` solo
+      // despacha los escenarios oficiales hardcodeados del motor.
+      if (card!.effects.every(e => e.type === 'CUSTOM_SCENARIO')) continue;
       const built = buildEffects(nodes);
       expect(canon(built), `${id} (${card!.name})`).toEqual(canon(card!.effects));
     }

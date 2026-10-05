@@ -34,16 +34,16 @@ FILES = [
 
 # Tests específicos conocidos por carta (se amplía a medida que se añaden)
 CARD_TESTS = {
-    'warlord.roghkiller': ['warlords.test.ts', 'projection-replay-modifiers.test.ts'],
-    'warlord.gurdrug': ['warlords.test.ts'],
-    'warlord.shriekknifer': ['warlords.test.ts'],
-    'rogue.elf-dagger': ['effects.test.ts', 'resolver.test.ts'],
-    'hero.valerys': ['hero-abilities.test.ts'],
-    'hero.lisavette': ['hero-abilities.test.ts'],
-    'hero.feldon': ['hero-abilities.test.ts'],
-    'hero.aranel': ['hero-abilities.test.ts'],
-    'scenario.brunmar-ruins': ['scenarios.test.ts'],
-    'scenario.eque-port': ['scenarios.test.ts'],
+    'warlord.roghkiller': ['heroes/heroes.test.ts', 'projection-replay-modifiers.test.ts'],
+    'warlord.gurdrug': ['heroes/heroes.test.ts'],
+    'warlord.shriekknifer': ['heroes/heroes.test.ts'],
+    'rogue.elf-dagger': ['unit/effects.test.ts', 'resolver.test.ts'],
+    'hero.valerys': ['heroes/heroes.test.ts'],
+    'hero.lisavette': ['heroes/heroes.test.ts'],
+    'hero.feldon': ['heroes/heroes.test.ts'],
+    'hero.aranel': ['heroes/heroes.test.ts'],
+    'scenario.brunmar-ruins': ['scenarios/scenarios.test.ts'],
+    'scenario.eque-port': ['scenarios/scenarios.test.ts'],
 }
 
 # Efectos manejados por el registro de efectos (packages/catalog/src/effects +
@@ -52,12 +52,23 @@ KNOWN_EFFECT_KINDS = None  # se rellena leyendo EFFECT_REGISTRY
 
 
 def load_catalog_effects_registry():
-    """Lee los tipos de efecto declarados en el schema (fuente: card.ts)."""
-    schema = os.path.join(ROOT, 'packages', 'schema', 'src', 'card.ts')
-    src = io.open(schema, encoding='utf-8').read()
-    # Tipos de CardEffect: líneas `type: z.literal('XXX')`
+    """Tipos de efecto con handler REAL en el motor.
+
+    Lee los `register('X')` de packages/engine/src/effects/**/*.ts — antes
+    leía los literales del schema Zod, así que un tipo declarado pero sin
+    handler salía como "soportado" y la carta se marcaba VERIFIED aunque
+    en partida el efecto fuese un no-op.
+    """
+    import glob
     import re
-    return set(re.findall(r"type:\s*z\.literal\('([A-Z_]+)'\)", src))
+    registered = set()
+    for src_file in glob.glob(
+        os.path.join(ROOT, 'packages', 'engine', 'src', 'effects', '**', '*.ts'),
+        recursive=True,
+    ):
+        src = io.open(src_file, encoding='utf-8').read()
+        registered.update(re.findall(r"\.register\('([A-Z_]+)'", src))
+    return registered
 
 
 def read_cards():
@@ -74,15 +85,33 @@ def read_cards():
 
 
 def card_effects(card):
-    """Todos los tipos de efecto que usa la carta (efectos + pericia)."""
+    """Todos los tipos de efecto que usa la carta.
+
+    Recursivo: efectos raíz + heroAbility + peritia + anidados
+    (then/else/options/fallback/onMatch…). Sin recursión, un tipo sin
+    handler escondido en una rama no bajaba el estado a REVIEW.
+    """
     kinds = set()
-    for eff in card.get('effects') or []:
-        if isinstance(eff, dict) and 'type' in eff:
-            kinds.add(eff['type'])
-    ability = card.get('heroAbility') or {}
-    for eff in ability.get('effects') or []:
-        if isinstance(eff, dict) and 'type' in eff:
-            kinds.add(eff['type'])
+
+    def walk(effects):
+        for eff in effects or []:
+            if not isinstance(eff, dict):
+                continue
+            if 'type' in eff:
+                kinds.add(eff['type'])
+            for k in ('effects', 'then', 'else', 'onMatch', 'onMismatch',
+                      'on_match', 'on_mismatch', 'fallback'):
+                if isinstance(eff.get(k), list):
+                    walk(eff[k])
+            for opt in eff.get('options') or []:
+                if isinstance(opt, dict):
+                    walk(opt.get('effects'))
+
+    walk(card.get('effects'))
+    for extra in ('heroAbility', 'peritia'):
+        sub = card.get(extra) or {}
+        if isinstance(sub, dict):
+            walk(sub.get('effects'))
     return kinds
 
 

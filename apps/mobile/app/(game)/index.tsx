@@ -1,16 +1,16 @@
 ﻿/**
- * Pantalla de partida â€” mesa de juego principal.
+ * Pantalla de partida — mesa de juego principal.
  *
  * Integra los componentes principales:
- * - GameHeader (UI-070..073): fase, turno, conexiÃ³n, instrucciÃ³n.
+ * - GameHeader (UI-070..073): fase, turno, conexión, instrucción.
  * - PlayerPanel (UI-080..085): paneles de jugadores.
  * - Battlefield (UI-090..099): enemigos.
  * - ScenarioView (UI-150..155): escenario activo.
  * - MarketView (UI-140..146): mercado.
- * - ContextualActions (UI-120..124): acciones segÃºn fase.
+ * - ContextualActions (UI-120..124): acciones según fase.
  * - HandView (UI-100..108): mano del jugador.
  * - ActionHistory (UI-170..174): historial.
- * - CardZoom (UI-110..113): ampliaciÃ³n de carta.
+ * - CardZoom (UI-110..113): ampliación de carta.
  * - PrivacyScreen (UI-202..203): hot-seat.
  */
 
@@ -27,9 +27,11 @@ import { DeckPanel } from '../../components/DeckPanel';
 import { Battlefield } from '../../components/Battlefield';
 import { HandView } from '../../components/HandView';
 import { MarketView } from '../../components/MarketView';
+import { SupportDecksView } from '../../components/SupportDecksView';
 import { PrivacyScreen } from '../../components/PrivacyScreen';
 import { PHASE_LABELS } from '../../lib/phaseLabels';
 import { GameHeader } from '../../components/game/GameHeader';
+import { PhaseIndicator } from '../../components/PhaseIndicator';
 import { ContextBanner } from '../../components/game/ContextBanner';
 import type { ConnectionState } from '../../components/ConnectionStatus';
 import { ContextualActions, type ContextualAction } from '../../components/ContextualActions';
@@ -54,21 +56,22 @@ import { useColors } from '../../lib/useTheme';
 import { useGameShortcuts } from '../../lib/useGameShortcuts';
 import { computeFinalScore, computeHordeAttackBreakdown } from '@nt4h/engine';
 import { recordFinishedGame, configUsedCustom, loadHistory } from '../../lib/gameHistory';
+import { useCustomContent } from '../../lib/customContent';
 import { evaluateAchievements, newlyUnlocked, type Achievement } from '../../lib/achievements';
 import { reportIfOptedIn, reportLeaderboardResult } from '../../lib/communityStats';
 import { Swords, Hand, Coins, Info, ScrollText } from 'lucide-react-native';
 import { useTranslation } from 'react-i18next';
-import { buildContextualActions, buildInstruction } from './gameHelpers';
-import { createStyles } from './gameStyles';
-import { buildHistoryEntries } from './eventHistory';
-import { FinishedScreen, ZoneBoundary, GameErrorFallback } from './auxScreens';
+import { buildContextualActions, buildInstruction } from './_shared/gameHelpers';
+import { createStyles } from './_shared/gameStyles';
+import { buildHistoryEntries } from './_shared/eventHistory';
+import { FinishedScreen, ZoneBoundary, GameErrorFallback } from './_shared/auxScreens';
 
-/** PestaÃ±as del layout estrecho (mÃ³vil) */
+/** Pestañas del layout estrecho (móvil) */
 type MobileTab = 'combat' | 'hand' | 'market' | 'status' | 'log';
 
-// Etiquetas cortas: caben en barra mÃ³vil incluso con texto ampliado.
-// A fontScale >= 1.5 solo la pestaÃ±a activa conserva el texto visible
-// (el resto sigue accesible vÃ­a accessibilityLabel).
+// Etiquetas cortas: caben en barra móvil incluso con texto ampliado.
+// A fontScale >= 1.5 solo la pestaña activa conserva el texto visible
+// (el resto sigue accesible vía accessibilityLabel).
 const MOBILE_TABS: { id: MobileTab; labelKey: string; Icon: typeof Swords }[] = [
   { id: 'combat', labelKey: 'gm.tabCombat', Icon: Swords },
   { id: 'hand', labelKey: 'gm.tabHand', Icon: Hand },
@@ -83,7 +86,7 @@ function GameScreenInner() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const router = useRouter();
   // En nativo: pantalla encendida durante la partida y mesa en horizontal.
-  // En web se omite (Wake Lock API exige gesto de usuario â†’ error).
+  // En web se omite (Wake Lock API exige gesto de usuario → error).
   const gameOrientation = useSettings((s) => s.gameOrientation);
   const shortcutsEnabled = useSettings((s) => s.shortcutsEnabled);
   const initialConfig = useGameStore((s) => s.initialConfig);
@@ -111,30 +114,53 @@ function GameScreenInner() {
   const [newAchievements, setNewAchievements] = useState<Achievement[]>([]);
   useEffect(() => {
     if (!finishedPhase || !gameState || historyRecorded.current) return;
+    // M-16: un espectador online no registró la partida — sin el guard,
+    // viewerId=null caía sobre activePlayerId y la partida se grababa en
+    // su historial/logros con estadísticas de otro jugador.
+    const st = useGameStore.getState();
+    const viewerPid = st.viewerId ?? gameState.activePlayerId;
+    if ((st.connectionMode === 'online' && !st.online.playerId) || !(viewerPid in gameState.players)) return;
     historyRecorded.current = true;
     const scores = computeFinalScore(gameState.players);
     const { winners } = scores;
-    const viewerPid = useGameStore.getState().viewerId ?? gameState.activePlayerId;
     const myScore = scores.players.find((sc) => sc.playerId === viewerPid);
+    const online = st.connectionMode === 'online';
+    // M-21: online no tiene initialConfig fiable (queda el de la última
+    // partida local). contentScope se deriva de los sets del Taller
+    // conocidos localmente: si alguna carta del log pertenece a un set
+    // custom, la partida usó contenido custom.
+    const customIds = new Set(
+      useCustomContent.getState().sets.flatMap((s) => s.cards.map((c) => c.id)),
+    );
+    const usedCustomOnline = customIds.size > 0 && gameState.eventLog.some(
+      (ev) => customIds.has((ev as { cardDefinitionId?: string }).cardDefinitionId ?? '')
+        || customIds.has((ev as { definitionId?: string }).definitionId ?? ''),
+    );
     const entry = {
-      id: `h-${viewerPid}-${Date.now()}`,
+      // M-17: id determinista — recordFinishedGame es idempotente por id,
+      // así un remount de la pantalla en FINISHED no duplica el registro.
+      id: online
+        ? `h-on-${st.online.roomId}-${viewerPid}`
+        : `h-lo-${initialConfig?.seed ?? 'x'}-${gameState.turnNumber}-${scores.players.map((s) => s.total).join('/')}`,
       endedAt: Date.now(),
       mode: gameState.mode ?? 'STANDARD',
       playerCount: Object.keys(gameState.players).length,
       winners: winners.map((w) => w.heroId),
       topScore: winners[0]?.total ?? 0,
-      contentScope: (configUsedCustom(initialConfig) ? 'custom' : 'official') as 'official' | 'custom',
+      contentScope: ((online ? usedCustomOnline : configUsedCustom(initialConfig)) ? 'custom' : 'official') as 'official' | 'custom',
       heroesPlayed: (gameState.playerOrder ?? Object.keys(gameState.players))
         .map((pid) => gameState.players[pid]?.heroId)
         .filter((h): h is string => Boolean(h)),
-      scenariosCount: initialConfig?.scenarioIds?.length ?? 0,
-      flawless: winners.some((w) => w.tenaz === 1),
+      // M-19: escenarios JUGADOS (eventos reales), no el pool configurado.
+      scenariosCount: gameState.eventLog.filter((ev) => ev.type === 'SCENARIO_REVEALED').length,
+      // M-18: cooperativo — "sin heridas" es de equipo, no del ganador.
+      flawless: scores.players.length > 0 && scores.players.every((p) => p.tenaz === 1),
       myHeroId: gameState.players[viewerPid]?.heroId,
       yourScore: myScore?.total,
       won: winners.some((w) => w.playerId === viewerPid),
       warlordsDefeated: gameState.warlordsDefeatedCount ?? 0,
       turnsTaken: gameState.turnNumber ?? 0,
-      online: useGameStore.getState().connectionMode === 'online',
+      online,
       marketBuys: gameState.eventLog.filter(
         (ev) => ev.type === 'MARKET_PURCHASED' && ev.playerId === viewerPid).length,
       enemiesDefeated: gameState.eventLog.filter(
@@ -151,14 +177,14 @@ function GameScreenInner() {
       await recordFinishedGame(entry);
       const after = evaluateAchievements([entry, ...prev]);
       setNewAchievements(newlyUnlocked(before, after));
-      // EstadÃ­sticas de comunidad (anÃ³nimas; no-op si el usuario no optÃ³)
+      // Estadísticas de comunidad (anónimas; no-op si el usuario no optó)
       void reportIfOptedIn();
-      // ClasificaciÃ³n pÃºblica (opt-in; NT4H es cooperativo â†’ won = victoria del equipo)
+      // Clasificación pública (opt-in; NT4H es cooperativo → won = victoria del equipo)
       void reportLeaderboardResult(entry.won);
     })();
   }, [finishedPhase, gameState, initialConfig]);
   useEffect(() => {
-    // Nueva partida â†’ permitir registrar de nuevo
+    // Nueva partida → permitir registrar de nuevo
     if (!finishedPhase) {
       historyRecorded.current = false;
       setNewAchievements([]);
@@ -195,15 +221,27 @@ function GameScreenInner() {
   // Resumen del ataque de la Horda: se muestra una vez por entrada en la
   // fase; al salir de ella se rearma para el siguiente asalto
   // Resumen de la Horda: una vez por asalto, identificado por el evento
-  // HORDE_ATTACKED (su seq). ReconexiÃ³n o re-render no lo reabre.
+  // HORDE_ATTACKED (su seq). Reconexión o re-render no lo reabre.
   const [hordeSummaryAck, setHordeSummaryAck] = useState<string | null>(null);
   const [hordeManualOpen, setHordeManualOpen] = useState(false);
+  // Comando contextual en vuelo (online): 'pending' hasta el ack;
+  // el ack lleva el veredicto del motor (UI-123: confirmed/rejected) y
+  // 'retrying' cuando el socket cambió mientras la acción seguía en vuelo
+  // (reconexión — el comando encolado se drena tras el re-sync).
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [actionVerdict, setActionVerdict] = useState<{ id: string; ok: boolean } | null>(null);
+  // Socket con el que se lanzó la acción pendiente: si cambia (nueva
+  // conexión tras reconexión), la acción está en 'retrying', no 'pending'.
+  const pendingSocket = useRef<WebSocket | null>(null);
+  // cid del comando de la acción pendiente (null = no llegó a enviarse —
+  // encolado o acción sin comando → cualquier ack la resuelve, como antes).
+  const pendingCid = useRef<string | null>(null);
   const { width } = useWindowDimensions();
   const wide = width >= 1100;
 
-  // Layout estrecho: pestaÃ±as contextuales en lugar de una columna Ãºnica.
-  // null = la pestaÃ±a sigue a la fase (mercado â†’ Mercado, restablecimiento â†’
-  // Mano, combate â†’ Combate); al tocar una pestaÃ±a el usuario toma el control.
+  // Layout estrecho: pestañas contextuales en lugar de una columna única.
+  // null = la pestaña sigue a la fase (mercado → Mercado, restablecimiento →
+  // Mano, combate → Combate); al tocar una pestaña el usuario toma el control.
   const [mobileTabOverride, setMobileTabOverride] = useState<MobileTab | null>(null);
   // Auto-seguir la fase solo si el ajuste esta activo y el usuario no ha
   // elegido pestana manualmente en esta partida
@@ -211,11 +249,11 @@ function GameScreenInner() {
   const fontScale = useSettings((s) => s.fontScale);
   const hordeSummaryMode = useSettings((s) => s.hordeSummaryMode);
 
-  // Estado de conexiÃ³n real: refleja el socket en online (RECONNECTING/OFFLINE)
+  // Estado de conexión real: refleja el socket en online (RECONNECTING/OFFLINE)
   const onlineSocketState = useGameStore((s) => s.online.socket);
   const onlineLastMsgAt = useGameStore((s) => s.online.lastMessageAt);
-  // STALE: socket OPEN pero sin trÃ¡fico (ni pong del heartbeat) en >30s.
-  // Se reevalÃºa cada 10s; la recuperaciÃ³n la hace el reconnect del store.
+  // STALE: socket OPEN pero sin tráfico (ni pong del heartbeat) en >30s.
+  // Se reevalúa cada 10s; la recuperación la hace el reconnect del store.
   const [socketStale, setSocketStale] = useState(false);
   useEffect(() => {
     const t = setInterval(() => {
@@ -227,7 +265,7 @@ function GameScreenInner() {
     }, 10_000);
     return () => clearInterval(t);
   }, []);
-  void onlineLastMsgAt; // suscripciÃ³n: re-renderiza al llegar mensajes
+  void onlineLastMsgAt; // suscripción: re-renderiza al llegar mensajes
   const connectionState: ConnectionState = (() => {
     if (connectionMode !== 'online') return 'LOCAL';
     if (!onlineSocketState) return 'OFFLINE';
@@ -238,8 +276,8 @@ function GameScreenInner() {
     }
   })();
 
-  // Al salir de la pantalla de partida: cerrar la conexiÃ³n online
-  // (heartbeat + reconnect + socket) â€” sin esto seguÃ­an vivos de fondo
+  // Al salir de la pantalla de partida: cerrar la conexión online
+  // (heartbeat + reconnect + socket) — sin esto seguían vivos de fondo
   const disconnectOnline = useGameStore((s) => s.disconnectOnline);
   useEffect(() => {
     return () => {
@@ -250,7 +288,7 @@ function GameScreenInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Atajos de teclado (web): 1-5 pestaÃ±as Â· h/e/c panel lateral Â· Esc cierra.
+  // Atajos de teclado (web): 1-5 pestañas · h/e/c panel lateral · Esc cierra.
   useGameShortcuts({
     enabled: shortcutsEnabled,
     setMobileTab: setMobileTabOverride,
@@ -261,7 +299,7 @@ function GameScreenInner() {
       setShowSaveModal(false);
       setShowExitDialog(false);
     }, []),
-    // â† â†’ mueve la selecciÃ³n por la mano del jugador en vista
+    // ← → mueve la selección por la mano del jugador en vista
     cycleHandCard: useCallback((dir: -1 | 1) => {
       const st = useGameStore.getState();
       const gs = st.gameState;
@@ -282,8 +320,8 @@ function GameScreenInner() {
     }, []),
   });
 
-  // SuscripciÃ³n a mensajes del WebSocket (chat y comandos remotos).
-  // Dependemos de online.socket: tras una reconexiÃ³n el socket cambia y el
+  // Suscripción a mensajes del WebSocket (chat y comandos remotos).
+  // Dependemos de online.socket: tras una reconexión el socket cambia y el
   // listener debe re-vincularse al nuevo (si no, el chat muere en silencio).
   const onlineSocket = useGameStore((s) => s.online.socket);
   useEffect(() => {
@@ -291,8 +329,39 @@ function GameScreenInner() {
     const handler = (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data);
+        if (msg.type === 'game.command_ack') {
+          // Veredicto del motor sobre el comando pendiente: breve ✓/✕.
+          // M-23: correlacionar por ref/cid — el ack de un comando encolado
+          // distinto (drenado tras reconectar) no debe resolver la acción
+          // pendiente actual ni mostrar su veredicto.
+          const ackRef = (msg as { ref?: string }).ref;
+          setPendingAction((id) => {
+            if (id && (!pendingCid.current || !ackRef || ackRef === pendingCid.current)) {
+              setActionVerdict({ id, ok: msg.accepted !== false });
+              return null;
+            }
+            return id;
+          });
+          if (!pendingCid.current || !ackRef || ackRef === pendingCid.current) {
+            pendingSocket.current = null;
+            pendingCid.current = null;
+          }
+        } else if (msg.type === 'game.command_result') {
+          // M-23: solo el resultado de NUESTRO comando resuelve la acción
+          // pendiente — el broadcast del comando de un compañero la marcaba
+          // como resuelta (spinner desaparecía sin veredicto real).
+          const resultSender = (msg as { playerId?: string }).playerId;
+          const resultCid = (msg as { cid?: string }).cid;
+          const myPlayerId = useGameStore.getState().online.playerId;
+          if (resultSender === myPlayerId
+              && (!pendingCid.current || !resultCid || resultCid === pendingCid.current)) {
+            setPendingAction(null);
+            pendingSocket.current = null;
+            pendingCid.current = null;
+          }
+        }
         if (msg.type === 'chat.message') {
-          // Dedupe: el propio mensaje ya se aÃ±adiÃ³ localmente al enviar
+          // Dedupe: el propio mensaje ya se añadió localmente al enviar
           const me = useGameStore.getState().online.playerId;
           if (msg.sender === me) return;
           setChatMessages((prev) => [
@@ -303,9 +372,10 @@ function GameScreenInner() {
               text: msg.text,
               type: 'USER',
               timestamp: msg.timestamp ?? Date.now(),
+              ...(msg.meta ? { meta: msg.meta } : {}),
             },
           ]);
-          // Badge de no leÃ­dos: el chat vive en su propia pestaÃ±a
+          // Badge de no leídos: el chat vive en su propia pestaña
           setUnreadChat((n) => n + 1);
         }
       } catch {
@@ -316,26 +386,34 @@ function GameScreenInner() {
     return () => onlineSocket.removeEventListener('message', handler);
   }, [connectionMode, onlineSocket]);
 
-  // â”€â”€ Espectador + reloj de turno + aviso de turno â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // UI-123: el veredicto (✓/✕) es una confirmación breve, no un estado
+  // permanente — se limpia solo tras ~1.2s.
+  useEffect(() => {
+    if (!actionVerdict) return;
+    const timer = setTimeout(() => setActionVerdict(null), 1200);
+    return () => clearTimeout(timer);
+  }, [actionVerdict]);
+
+  // ── Espectador + reloj de turno + aviso de turno ────────────────────
   const onlinePlayerId = useGameStore((s) => s.online.playerId);
   const isSpectator = connectionMode === 'online' && !onlinePlayerId;
 
-  // Reloj de turno: reinicia al cambiar el jugador activo (aproximado en
-  // online â€” el motor no envÃ­a timestamps; basta para detectar AFK).
+  // Reloj de turno: en online se ancla al timestamp autoritativo del
+  // servidor (online.turnStartedAt, sincronizado en cada resync). En
+  // local/hot-seat se usa el cambio de jugador activo con el reloj local.
   const activePid = gameState?.activePlayerId ?? null;
-  const turnStartRef = useRef(Date.now());
+  const serverTurnAt = useGameStore((s) => s.online.turnStartedAt);
   const [turnElapsed, setTurnElapsed] = useState(0);
   useEffect(() => {
-    turnStartRef.current = Date.now();
-    setTurnElapsed(0);
-    const timer = setInterval(() => {
-      setTurnElapsed(Math.floor((Date.now() - turnStartRef.current) / 1000));
-    }, 1000);
+    const start = connectionMode === 'online' && serverTurnAt ? serverTurnAt : Date.now();
+    const tick = () => setTurnElapsed(Math.max(0, Math.floor((Date.now() - start) / 1000)));
+    tick();
+    const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
-  }, [activePid]);
+  }, [activePid, connectionMode, serverTurnAt]);
 
-  // Aviso de turno (online): pestaÃ±a oculta o jugador distraÃ­do â†’
-  // notificaciÃ³n del sistema + beep (permiso perezoso).
+  // Aviso de turno (online): pestaña oculta o jugador distraído →
+  // notificación del sistema + beep (permiso perezoso).
   const wasMyTurnRef = useRef(false);
   useEffect(() => {
     if (connectionMode !== 'online' || !onlinePlayerId || !gameState) return;
@@ -382,7 +460,7 @@ function GameScreenInner() {
     [],
   );
 
-  const handleSendChat = useCallback((text: string) => {
+  const handleSendChat = useCallback((text: string, meta?: ChatMessage['meta']) => {
     // D417: en online el remitente es el jugador local, no el activo
     const sender = connectionMode === 'online'
       ? (useGameStore.getState().online.playerId ?? t('gm.playerFallback'))
@@ -394,20 +472,21 @@ function GameScreenInner() {
       type: 'USER',
       timestamp: Date.now(),
       status: connectionMode === 'online' ? 'sending' : 'sent',
-      // Estable entre reintentos: el servidor puede deduplicar por Ã©l
+      // Estable entre reintentos: el servidor puede deduplicar por él
       clientMessageId: `cmid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      ...(meta ? { meta } : {}),
     };
     setChatMessages((prev) => [...prev, msg]);
     setChatDraft('');
-    // En modo online, enviar por WebSocket â€” con estado de entrega visible
+    // En modo online, enviar por WebSocket — con estado de entrega visible
     if (connectionMode === 'online') {
       const socket = useGameStore.getState().online.socket;
       const ok = socket && socket.readyState === WebSocket.OPEN;
       if (ok) {
         try {
-          socket.send(JSON.stringify({ type: 'chat.message', sender, text, timestamp: msg.timestamp, clientMessageId: msg.clientMessageId }));
+          socket.send(JSON.stringify({ type: 'chat.message', sender, text, timestamp: msg.timestamp, clientMessageId: msg.clientMessageId, ...(meta ? { meta } : {}) }));
         } catch {
-          // send() puede lanzar si el socket se cierra entre la comprobaciÃ³n y el envÃ­o
+          // send() puede lanzar si el socket se cierra entre la comprobación y el envío
         }
       }
       const delivered = Boolean(ok && socket.readyState === WebSocket.OPEN);
@@ -428,6 +507,7 @@ function GameScreenInner() {
       socket.send(JSON.stringify({
         type: 'chat.message', sender: failed.sender, text: failed.text,
         timestamp: Date.now(), clientMessageId: failed.clientMessageId,
+        ...(failed.meta ? { meta: failed.meta } : {}),
       }));
       setChatMessages((prev) =>
         prev.map((m) => (m.id === failed.id ? { ...m, status: 'sent' } : m)),
@@ -445,16 +525,20 @@ function GameScreenInner() {
 
   const handleSaveGame = useCallback((name = '') => {
     setSaveState('saving');
-    try {
-      saveGame(name);
-      setLastSavedAt(Date.now());
-      setSaveState('saved');
-    } catch {
-      setSaveState('error');
-    }
+    // La escritura es encolada — el indicador solo marca 'saved'
+    // cuando la persistencia real confirma (antes era un falso
+    // "guardado" ante fallo de almacenamiento).
+    saveGame(name)
+      .then((persisted) => {
+        if (persisted) {
+          setLastSavedAt(Date.now());
+        }
+        setSaveState(persisted ? 'saved' : 'error');
+      })
+      .catch(() => setSaveState('error'));
   }, [saveGame]);
 
-  // Wrapper que decide entre acciÃ³n local o envÃ­o online
+  // Wrapper que decide entre acción local o envío online
   const runAction = useCallback(
     (localFn: () => void, onlineCmd?: () => Parameters<typeof sendOnlineCommand>[0]) => {
       if (connectionMode === 'online' && onlineCmd) {
@@ -487,16 +571,18 @@ function GameScreenInner() {
   const handleSaveAndExit = useCallback(() => {
     handleSaveGame();
     setShowExitDialog(false);
+    // Igual que salir sin guardar: la sesión online no sobrevive a la pantalla
+    useGameStore.getState().disconnectOnline();
     router.push('/');
   }, [handleSaveGame, router]);
 
-  // Foco por fase: cada zona principal se atenÃºa fuera de su momento.
+  // Foco por fase: cada zona principal se atenúa fuera de su momento.
   // La mesa no muestra todo con el mismo peso en todo momento.
-  // NOTA hooks: todo esto estÃ¡ ANTES de los early-returns (!gameState,
-  // privacyScreen, FINISHED) â€” ningÃºn hook puede vivir tras un return.
+  // NOTA hooks: todo esto está ANTES de los early-returns (!gameState,
+  // privacyScreen, FINISHED) — ningún hook puede vivir tras un return.
   const marketActive = gameState?.phase === 'MARKET';
 
-  // Layout estrecho: pestaÃ±a contextual segÃºn la fase
+  // Layout estrecho: pestaña contextual según la fase
   const phaseTab: MobileTab = marketActive ? 'market'
     : gameState?.phase === 'RESTORATION' ||
       gameState?.phase === 'BATTLEFIELD_REPLENISHMENT' ||
@@ -504,9 +590,9 @@ function GameScreenInner() {
     : gameState?.phase === 'GAME_END_CHECK' ? 'status'
     : 'combat';
 
-  // Seguimiento NO intrusivo: el auto-follow cede si el usuario estÃ¡ en
-  // medio de una interacciÃ³n (escribiendo en chat, carta ampliada,
-  // diÃ¡logo abierto) â€” nunca le quita la pestaÃ±a de debajo de los dedos.
+  // Seguimiento NO intrusivo: el auto-follow cede si el usuario está en
+  // medio de una interacción (escribiendo en chat, carta ampliada,
+  // diálogo abierto) — nunca le quita la pestaña de debajo de los dedos.
   const interactionBusy =
     chatDraft.trim().length > 0 || zoomCardId !== null ||
     detailHeroId !== null || showSaveModal || showExitDialog;
@@ -516,7 +602,7 @@ function GameScreenInner() {
   useEffect(() => { lastShownTabRef.current = mobileTab; }, [mobileTab]);
 
   // El override manual dura el turno actual: al empezar el siguiente la
-  // pestaÃ±a vuelve a seguir a la fase (evita quedarse "atascado")
+  // pestaña vuelve a seguir a la fase (evita quedarse "atascado")
   const turnNumber = gameState?.turnNumber ?? 0;
   useEffect(() => { setMobileTabOverride(null); }, [turnNumber]);
 
@@ -542,16 +628,16 @@ function GameScreenInner() {
   const activePlayer = gameState.players[gameState.activePlayerId];
   const canUseAbility = activePlayer && activePlayer.heroUsesRemaining > 0;
   // Ataque previsto de la Horda (spec 3.4/3.6): el desglose lo calcula el
-  // motor (computeHordeAttackBreakdown) â€” la UI solo lo representa, sin
-  // recalcular fortalezas, Anti-Magia, escudos ni prevenciÃ³n.
+  // motor (computeHordeAttackBreakdown) — la UI solo lo representa, sin
+  // recalcular fortalezas, Anti-Magia, escudos ni prevención.
   const hordeBreakdown = catalog
     ? computeHordeAttackBreakdown(gameState, catalog)
     : null;
   const hordeIncoming = hordeBreakdown?.enemyLines
     .reduce((sum, l) => sum + l.finalDamage, 0) ?? 0;
   const hordeAfterDefense = hordeBreakdown?.finalExhaustion ?? 0;
-  // Identidad del asalto: seq del Ãºltimo HORDE_ATTACKED; si la fase aÃºn no
-  // resolviÃ³ (ventana de reacciÃ³n), se usa el turno como clave provisional
+  // Identidad del asalto: seq del último HORDE_ATTACKED; si la fase aún no
+  // resolvió (ventana de reacción), se usa el turno como clave provisional
   let lastHordeSeq: number | null = null;
   for (let i = gameState.eventLog.length - 1; i >= 0; i--) {
     const e = gameState.eventLog[i];
@@ -560,9 +646,9 @@ function GameScreenInner() {
   const hordeResolutionId = lastHordeSeq !== null
     ? `horde-${lastHordeSeq}`
     : `horde-pending-${gameState.turnNumber}`;
-  // Apertura automÃ¡tica segÃºn preferencia: 'always' siempre, 'modifiers'
-  // solo si el cÃ¡lculo no es trivial (Anti-Magia, bonus, anulados, defensas,
-  // anulaciÃ³n o Feldon), 'never' nunca (el banner sigue disponible)
+  // Apertura automática según preferencia: 'always' siempre, 'modifiers'
+  // solo si el cálculo no es trivial (Anti-Magia, bonus, anulados, defensas,
+  // anulación o Feldon), 'never' nunca (el banner sigue disponible)
   const hordeInteresting = !!hordeBreakdown && (
     hordeBreakdown.cancelled || hordeBreakdown.halvedByFeldon ||
     hordeBreakdown.shieldsApplied > 0 || hordeBreakdown.preventionApplied > 0 ||
@@ -594,7 +680,7 @@ function GameScreenInner() {
     };
   });
 
-  // Construir acciones contextuales segÃºn fase (UI-120)
+  // Construir acciones contextuales según fase (UI-120)
   const contextualActions: ContextualAction[] = buildContextualActions(
     gameState.phase,
     {
@@ -607,9 +693,38 @@ function GameScreenInner() {
       evasionTokenUsed: activePlayer?.evasionTokenUsed ?? false,
     },
     t,
-  );
+  ).map((a): ContextualAction => ({
+    // UI-123: estado de la acción — 'offline' con socket caído,
+    // 'pending' en vuelo, 'retrying' tras reconectar con el comando
+    // encolado, 'confirmed'/'rejected' con el veredicto del command_ack.
+    ...a,
+    state: pendingAction === a.id
+      ? (onlineSocket?.readyState !== WebSocket.OPEN
+        ? 'offline'
+        : pendingSocket.current !== null && pendingSocket.current !== onlineSocket
+          ? 'retrying'
+          : 'pending')
+      : actionVerdict?.id === a.id
+        ? (actionVerdict.ok ? 'confirmed' : 'rejected')
+        : connectionMode === 'online' && onlineSocket?.readyState !== WebSocket.OPEN
+          ? 'offline'
+          : undefined,
+    onPress: connectionMode === 'online'
+      ? () => {
+          pendingSocket.current = onlineSocket;
+          setPendingAction(a.id);
+          // Capturar el cid asignado por sendOnlineCommand (diff de
+          // lastCid: si no cambió, el comando quedó encolado o la acción
+          // no envía comando — en ambos casos cualquier ack la resuelve).
+          const cidBefore = useGameStore.getState().online.lastCid;
+          a.onPress();
+          const cidAfter = useGameStore.getState().online.lastCid;
+          pendingCid.current = cidAfter !== cidBefore ? cidAfter : null;
+        }
+      : a.onPress,
+  }));
 
-  // InstrucciÃ³n concreta (UI-073)
+  // Instrucción concreta (UI-073)
   const instruction = buildInstruction(gameState.phase, t);
 
 
@@ -627,6 +742,9 @@ function GameScreenInner() {
         </Text>
       )}
       <MarketView />
+      {/* Apoyos (SOLO): se abren/compran en fase de Ataque, no en Mercado —
+          por eso van bajo el MarketView aunque son un sistema aparte */}
+      <SupportDecksView />
     </View>
   );
 
@@ -636,8 +754,8 @@ function GameScreenInner() {
     </View>
   );
 
-  // Historial, estado y chat como pestaÃ±as separadas (no mezclar log
-  // funcional con conversaciÃ³n social). El badge muestra mensajes no leÃ­dos.
+  // Historial, estado y chat como pestañas separadas (no mezclar log
+  // funcional con conversación social). El badge muestra mensajes no leídos.
   const sidePanel = (
     <View>
       <View style={styles.sideTabs} accessibilityRole="tablist">
@@ -675,6 +793,9 @@ function GameScreenInner() {
             advanced={historyAdvanced}
             onFilterChange={setHistoryFilter}
             onToggleAdvanced={() => setHistoryAdvanced((v) => !v)}
+            onEntryPress={(entry) => {
+              if (entry.linkTo === 'horde') setHordeManualOpen(true);
+            }}
           />
         </ZoneBoundary>
       ) : sideTab === 'status' ? (
@@ -709,7 +830,7 @@ function GameScreenInner() {
 
   return (
     <View style={styles.container}>
-      {/* Cabecera: logo | turno/fase/jugador | conexiÃ³n | salir */}
+      {/* Cabecera: logo | turno/fase/jugador | conexión | salir */}
       <GameHeader
         turnNumber={gameState.turnNumber}
         phaseLabel={PHASE_LABELS[gameState.phase] ?? gameState.phase}
@@ -724,7 +845,11 @@ function GameScreenInner() {
         compact={!wide}
       />
 
-      {/* Zona Ãºnica de avisos: la prioridad decide cuÃ¡l se muestra */}
+      {/* UI-071: progreso Ataque/Mercado/Restablecimiento (el
+          componente solo existia en el showcase dev). */}
+      <PhaseIndicator phase={gameState.phase} />
+
+      {/* Zona única de avisos: la prioridad decide cuál se muestra */}
       <ContextBanner
         horde={
           showHordePreview && hordeIncoming > 0
@@ -758,7 +883,7 @@ function GameScreenInner() {
           accessibilityLabel={t('gm.skipAfk')}
         >
           <Text style={styles.afkSkipText}>
-            {skipPending ? 'â€¦' : t('gm.skipAfk')}
+            {skipPending ? '…' : t('gm.skipAfk')}
           </Text>
         </Pressable>
       )}
@@ -778,7 +903,7 @@ function GameScreenInner() {
               <HordePanel />
             </View>
 
-            {/* NÃºcleo: enemigos en mesa + mercado */}
+            {/* Núcleo: enemigos en mesa + mercado */}
             <View style={styles.boardRow}>
               <View style={[styles.boardMain, marketActive && styles.battlefieldDimmed]}>
                 <Battlefield />
@@ -866,7 +991,7 @@ function GameScreenInner() {
         </View>
       )}
 
-      {/* Pie persistente: recursos (mazo = energÃ­a) + acciÃ³n principal */}
+      {/* Pie persistente: recursos (mazo = energía) + acción principal */}
       <View style={styles.footer}>
         <View style={styles.footerResources}>
           <HeroStatusBar incomingDamage={hordeAfterDefense} />
@@ -904,7 +1029,12 @@ function GameScreenInner() {
         visible={detailHeroId !== null}
         hero={detailHeroId ? (catalog?.byId.get(detailHeroId) ?? null) : null}
         usesRemaining={
-          detailHeroId ? gameState.players[gameState.activePlayerId]?.heroUsesRemaining : undefined
+          // Las pericias restantes del DUEÑO del héroe, no del jugador
+          // activo — antes mostraba las uses equivocadas al inspeccionar
+          // el héroe de otro jugador.
+          detailHeroId
+            ? Object.values(gameState.players).find((p) => p.heroId === detailHeroId)?.heroUsesRemaining
+            : undefined
         }
         onClose={() => setDetailHeroId(null)}
       />
@@ -918,10 +1048,27 @@ function GameScreenInner() {
         onSaveAndExit={handleSaveAndExit}
         onExitWithoutSaving={() => {
           setShowExitDialog(false);
+          // Cerrar la sesión online: antes el socket (heartbeat +
+          // reconexión) quedaba vivo tras salir de la pantalla.
+          useGameStore.getState().disconnectOnline();
           router.push('/');
         }}
         onAbandon={() => {
           setShowExitDialog(false);
+          // "Abandonar" ≠ "Salir": online se llama /leave/ para que el
+          // backend cuente games_abandoned y libere el asiento (broadcast
+          // room.player_left). Salir sin abandonar solo cierra el socket
+          // y la sesión sigue recuperable.
+          const st = useGameStore.getState();
+          const { roomId: rid, playerId: pid, playerToken: tok } = st.online;
+          if (connectionMode === 'online' && rid && pid) {
+            void fetchWithTimeout(`${API_BASE}/rooms/${rid}/leave/`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ playerId: pid, playerToken: tok }),
+            }).catch(() => {});
+          }
+          st.disconnectOnline();
           router.push('/');
         }}
         onCancel={() => setShowExitDialog(false)}
@@ -934,13 +1081,13 @@ function GameScreenInner() {
             ? t('gm.diagRoom', { id: useGameStore.getState().online.roomId }) : null,
           useGameStore.getState().online.lastRevision != null
             ? t('gm.diagRev', { n: useGameStore.getState().online.lastRevision }) : null,
-        ].filter(Boolean).join(' Â· ')}
+        ].filter(Boolean).join(' · ')}
       />
     </View>
   );
 }
 
-/** Construye las acciones contextuales segÃºn la fase (UI-120). */
+/** Construye las acciones contextuales según la fase (UI-120). */
 export default function GameScreen() {
   return (
     <ErrorBoundary

@@ -20,19 +20,7 @@ import { hapticError, hapticPlay, hapticSelect } from './haptics';
 
 type Channel = 'music' | 'effects' | 'ui';
 
-interface SoundSlot {
-  player: unknown;
-  channel: Channel;
-  baseVolume: number;
-}
-
-const slots = new Map<string, SoundSlot>();
 const isNative = Platform.OS !== 'web';
-
-// Carga perezosa del módulo — evita fallos en web/tests donde el nativo
-// no existe.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const expoAudio = () => require('expo-audio') as typeof import('expo-audio');
 
 function channelVolume(channel: Channel): number {
   const s = useSettings.getState();
@@ -44,26 +32,12 @@ function channelVolume(channel: Channel): number {
   }
 }
 
-/**
- * Registra una fuente de audio bajo una clave. El archivo se carga la
- * primera vez que se reproduce (lazy) para no penalizar el arranque.
- * `source` es un require() de asset o { uri }.
- */
-const registry = new Map<string, { source: number | { uri: string }; channel: Channel; baseVolume: number }>();
-
-export function registerSound(
-  key: string,
-  source: number | { uri: string },
-  channel: Channel = 'effects',
-  baseVolume = 1,
-): void {
-  registry.set(key, { source, channel, baseVolume });
-}
+// (registerSound/registry eliminados: no existía ningún asset de audio —
+//  el registry quedaba vacío para siempre y playSound caía a háptica)
 
 // ── Efectos sintetizados (web, sin assets) ───────────────────────────────
 // Fallback de playSound: en web no hay expo-audio ni ficheros de sonido,
 // así que cada clave se traduce a un tono corto generado con WebAudio.
-// En nativo se siguen usando los sonidos registrados con registerSound.
 const WEB_TONES: Record<string, { freq: number; ms: number; type: OscillatorType }> = {
   'card-play': { freq: 620, ms: 90, type: 'triangle' },
   confirm: { freq: 880, ms: 70, type: 'sine' },
@@ -95,7 +69,7 @@ function playWebTone(key: string, channel: Channel): void {
   } catch { /* WebAudio no disponible */ }
 }
 
-/** Reproduce un efecto registrado. No-op si no hay módulo o está muteado. */
+/** Reproduce un efecto. No-op si no hay módulo o está muteado. */
 export function playSound(key: string): void {
   if (!isNative) {
     // Web: tono sintetizado según la clave (canal por prefijo semántico —
@@ -103,31 +77,11 @@ export function playSound(key: string): void {
     playWebTone(key, key === 'error' || key === 'confirm' ? 'ui' : 'effects');
     return;
   }
-  const reg = registry.get(key);
-  if (!reg) {
-    // Sin asset registrado: en nativo la respuesta cae a háptica
-    // (expo-haptics instalado) para que la acción tenga feedback
-    // aunque aún no existan ficheros de sonido reales.
-    if (key === 'error') hapticError();
-    else if (key === 'confirm' || key === 'card-play' || key === 'attack' || key === 'buy') hapticPlay();
-    else hapticSelect();
-    return;
-  }
-  try {
-    const { createAudioPlayer } = expoAudio();
-    const slot = slots.get(key);
-    const player = (slot?.player ?? createAudioPlayer(reg.source)) as {
-      volume: number;
-      seekTo: (s: number) => void;
-      play: () => void;
-    };
-    if (!slot) slots.set(key, { player, channel: reg.channel, baseVolume: reg.baseVolume });
-    player.volume = Math.min(1, channelVolume(reg.channel) * reg.baseVolume);
-    player.seekTo(0);
-    player.play();
-  } catch {
-    // Módulo no disponible o fuente inválida — silenciar el fallo
-  }
+  // Nativo sin assets: la respuesta cae a háptica (expo-haptics instalado)
+  // para que la acción tenga feedback aunque no existan ficheros de sonido.
+  if (key === 'error') hapticError();
+  else if (key === 'confirm' || key === 'card-play' || key === 'attack' || key === 'buy') hapticPlay();
+  else hapticSelect();
 }
 
 /** Atajos semánticos por canal. */

@@ -108,7 +108,7 @@ function makeGameState(overrides: Partial<GameState> = {}): GameState {
     players: { p1: makePlayer() },
     battlefield: [], market: [], scenario: null, scenarioDeck: [], hordeDeck: [],
     rngState: '', pendingChoices: [], ignoreGloryRewards: false,
-    ignoreCoinRewards: false, marketCostModifier: 0, orcFortitudeBonus: 0,
+    ignoreCoinRewards: false, marketCostModifier: 0,
     ...overrides,
   } as GameState;
 }
@@ -456,5 +456,42 @@ describe('Mid-game — APPLY_STATUS (estados en el campo)', () => {
     const { root } = render(<Battlefield />);
     expectText(root, 'Orco');
     expectText(root, /Estados: stun, vulnerable ×2/);
+  });
+});
+
+// ============================================================================
+// turn-start-* — efecto opcional de escenario (ACCEPT_TURN_START_EFFECT)
+// ============================================================================
+
+describe('Mid-game — elección turn-start (efecto opcional de escenario)', () => {
+  it('ofrece Sí/No y envía acceptTurnStartEffect (no RESOLVE_CHOICE)', () => {
+    const acceptTurnStartEffect = vi.fn();
+    const resolvePendingChoice = vi.fn();
+    setMockStore({
+      gameState: makeGameState({
+        pendingChoices: [{
+          choiceId: 'turn-start-1',
+          playerId: 'p1',
+          type: 'CONFIRM',
+          prompt: 'Montañas de Ur: ¿robar 1 carta a cambio de revelar un enemigo?',
+          options: [],
+          minSelections: 0,
+          maxSelections: 1,
+        }],
+      }),
+      catalog: makeCatalog(),
+      viewerId: 'p1',
+      resolvePendingChoice,
+      chooseLeaderCards: vi.fn(),
+      acceptTurnStartEffect,
+    });
+    const { root } = render(<PendingChoiceView />);
+    expectText(root, /Montañas de Ur/);
+    pressByLabel(root, 'Sí');
+    expect(acceptTurnStartEffect).toHaveBeenCalledWith(true);
+    expect(resolvePendingChoice).not.toHaveBeenCalled();
+
+    pressByLabel(root, 'No');
+    expect(acceptTurnStartEffect).toHaveBeenCalledWith(false);
   });
 });

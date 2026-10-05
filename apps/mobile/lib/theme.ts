@@ -17,7 +17,9 @@ export const colors = {
   // Texto (contraste alto → bajo)
   text: '#f0f2f5',
   textMuted: '#a8b0bc',
-  textFaint: '#6b7280',
+  // ~4.5:1 sobre surface — era #6b7280 (3.4:1), insuficiente para el
+  // texto micro (11px) de fechas y metadatos.
+  textFaint: '#8a919c',
 
   // Acento de marca (~10%) — oro del juego
   accent: '#f1c40f',
@@ -286,7 +288,8 @@ const MONOCHROME: Colors = {
 /**
  * Paletas para deficiencias de color: los semánticos se re-mapean a
  * azul/naranja (prot/deuteranopia-safe) o azul/rojo-verdoso (tritanopia).
- * Se complementan con `noColorOnly` (iconos + bordes, no solo color).
+ * Los estados importantes siempre combinan color + icono/borde/texto
+ * (invariante estructural — antes lo documentaba el setting noColorOnly).
  */
 const PROTANOPIA: Colors = {
   ...colors,

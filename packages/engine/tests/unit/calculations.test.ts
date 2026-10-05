@@ -12,13 +12,12 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  applyEntryAuras,
   getEffectiveFortitude,
-  effectiveFortitude,
   effectiveDamage,
   effectiveHordeDamage,
   effectiveEnemyDamage,
   expireModifiers,
-  applyModifiers,
 } from '../../src/modifiers/index.js';
 import { DeterministicRng } from '../../src/rng/index.js';
 import { makeEnemy, makePlayer, makeGameState, makeCard, makeCards, resetTestCounters } from '../fixtures/builders.js';
@@ -68,40 +67,30 @@ describe('Nivel 1 - Calculos de fortaleza efectiva', () => {
     expect(getEffectiveFortitude(enemy, state)).toBe(0);
   });
 
-  it('Roghkiller: orcos reciben +1 fortaleza si orcFortitudeBonus > 0', () => {
-    const enemy = makeEnemy({ baseFortitude: 3, isOrc: true });
-    const state = makeGameState({ battlefield: [enemy], orcFortitudeBonus: 1 });
-    expect(getEffectiveFortitude(enemy, state)).toBe(4);
+  // Roghkiller real: el +1 a orcos llega como Modifier vía
+  // applyEntryAuras (el campo suelto orcFortitudeBonus se eliminó en la
+  // auditoría — ningún productor lo escribía).
+  it('Roghkiller: orcos reciben +1 fortaleza con Roghkiller en el campo', () => {
+    const orc = makeEnemy({ baseFortitude: 3, isOrc: true });
+    const rogh = makeEnemy({ instanceId: 'w1', baseFortitude: 9, isWarlord: true, isOrc: true, definitionId: 'warlord.roghkiller' });
+    const state = makeGameState({ battlefield: [orc, rogh] });
+    const withAura = applyEntryAuras(orc, state);
+    expect(getEffectiveFortitude(withAura, state)).toBe(4);
   });
 
-  it('Roghkiller: orcos no reciben bonus si orcFortitudeBonus = 0', () => {
+  it('Roghkiller: orcos sin bonus sin el warlord en el campo', () => {
     const enemy = makeEnemy({ baseFortitude: 3, isOrc: true });
-    const state = makeGameState({ battlefield: [enemy], orcFortitudeBonus: 0 });
-    expect(getEffectiveFortitude(enemy, state)).toBe(3);
+    const state = makeGameState({ battlefield: [enemy] });
+    expect(getEffectiveFortitude(applyEntryAuras(enemy, state), state)).toBe(3);
   });
 
   it('Roghkiller: enemigos no-orcos no reciben bonus', () => {
-    const enemy = makeEnemy({ baseFortitude: 3, isOrc: false });
-    const state = makeGameState({ battlefield: [enemy], orcFortitudeBonus: 1 });
-    expect(getEffectiveFortitude(enemy, state)).toBe(3);
+    const human = makeEnemy({ baseFortitude: 3, isOrc: false });
+    const rogh = makeEnemy({ instanceId: 'w1', baseFortitude: 9, isWarlord: true, isOrc: true, definitionId: 'warlord.roghkiller' });
+    const state = makeGameState({ battlefield: [human, rogh] });
+    expect(getEffectiveFortitude(applyEntryAuras(human, state), state)).toBe(3);
   });
 
-  it('effectiveFortitude (alias) y getEffectiveFortitude devuelven lo mismo', () => {
-    const mod = makeMod({ layer: 'FORTITUDE_MODIFIERS', amount: 1, duration: 'PERMANENT' });
-    const enemy = makeEnemy({ baseFortitude: 4, modifiers: [mod], isOrc: true });
-    const state = makeGameState({ battlefield: [enemy], orcFortitudeBonus: 2 });
-    expect(effectiveFortitude(enemy, state)).toBe(getEffectiveFortitude(enemy, state));
-  });
-
-  it('applyModifiers calcula effectiveFortitude para todos los enemigos', () => {
-    const mod = makeMod({ layer: 'FORTITUDE_MODIFIERS', amount: 1, duration: 'PERMANENT' });
-    const e1 = makeEnemy({ instanceId: 'e1', baseFortitude: 3, modifiers: [mod] });
-    const e2 = makeEnemy({ instanceId: 'e2', baseFortitude: 5 });
-    const state = makeGameState({ battlefield: [e1, e2] });
-    const result = applyModifiers(state);
-    expect(result.battlefield[0].effectiveFortitude).toBe(4);
-    expect(result.battlefield[1].effectiveFortitude).toBe(5);
-  });
 });
 
 describe('Nivel 1 - Calculos de dano efectivo', () => {

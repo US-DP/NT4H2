@@ -130,6 +130,7 @@ export function CreateGameFlow() {
       <EmptyState
         title={t('create.common.loadingCatalog')}
         description={t('create.common.loadingCatalogDesc')}
+        loading
       />
     );
   }
@@ -258,7 +259,7 @@ export function CreateGameFlow() {
       };
     });
 
-    newGame({
+    const res = newGame({
       mode,
       playerCount: mainPlayers.length,
       seed: `game-${Date.now()}`,
@@ -277,6 +278,13 @@ export function CreateGameFlow() {
         ? { marketCardIds: [...poolSel.market] } : {}),
       ...(mode === 'SOLO' ? { soloSupportHeroIds: supports.map((h) => h.heroId!) } : {}),
     });
+    // setupGame puede rechazar la config (pool custom vacío, mazo
+    // inválido…): mostrar los errores del motor en vez de navegar a una
+    // partida que nunca podrá arrancar.
+    if (!res.ok) {
+      setErrors(res.errors);
+      return;
+    }
     router.push('/(game)');
   };
 

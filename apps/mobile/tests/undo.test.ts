@@ -72,4 +72,26 @@ describe('undo local (rewind)', () => {
     useGameStore.getState().undoLastCommand();
     expect(useGameStore.getState().initialCommands).toHaveLength(cmds);
   });
+
+  it('avisa cuando un comando de la historia se rechaza al re-ejecutar', () => {
+    useGameStore.getState().newGame(config);
+    useGameStore.getState().endAttack();
+    // Simular un log antiguo con un comando que ya no es legal
+    // (p.ej. el catálogo cambió o la carta fue editada en el Taller).
+    // undoLastCommand quita el último y re-ejecuta el resto → el
+    // PLAY_CARD a una carta fantasma se rechaza y debe contarse.
+    const s = useGameStore.getState();
+    useGameStore.setState({
+      initialCommands: [
+        { type: 'PLAY_CARD', cid: 'ghost', cardInstanceId: 'inexistente' } as never,
+        ...s.initialCommands,
+      ],
+    });
+    useGameStore.getState().undoLastCommand();
+    const msg = useGameStore.getState().ui.message;
+    expect(msg).toContain('rechazad'); // gm.undoRejected (es)
+    // El estado sigue rebobinado (sin el último comando), pero el
+    // jugador ya sabe que la partida puede divergir.
+    expect(useGameStore.getState().initialCommands).toHaveLength(1);
+  });
 });

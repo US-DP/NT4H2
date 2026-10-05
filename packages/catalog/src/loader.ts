@@ -38,7 +38,6 @@ const SET_FILES: SetFile[] = [
 export interface CatalogLoadResult {
   cards: CardDefinition[];
   byId: Map<string, CardDefinition>;
-  byName: Map<string, CardDefinition[]>;
   byClass: Map<string, CardDefinition[]>;
   byType: Map<string, CardDefinition[]>;
   errors: { setId: string; cardId: string; error: string }[];
@@ -52,11 +51,31 @@ export function loadCatalog(): CatalogLoadResult {
 
   for (const setFile of SET_FILES) {
     for (const rawCard of setFile.cards) {
+      // Normalizar alias snake_case → camelCase ANTES del safeParse:
+      // Zod hace strip de claves desconocidas, así que un alias
+      // (`on_match`, `new_from`…) en un JSON escrito a mano se perdía
+      // en silencio — la rama quedaba vacía y la carta "validaba".
+      const rawEffects = (rawCard as { effects?: unknown[] }).effects;
+      if (Array.isArray(rawEffects)) normalizeEffects(rawEffects);
       const result = CardDefinitionSchema.safeParse(rawCard as Record<string, unknown>);
       if (result.success) {
-        // Normalizar alias snake_case → camelCase en los efectos
-        const card = result.data;
-        normalizeEffects(card.effects);
+        // Claves desconocidas no-`_`: el schema hace strip en silencio, así
+        // que un typo en un campo real (`printedCots`) pasaría la
+        // validación y perdería el dato. Los campos `_xxx` son notas de
+        // documentación intencionadas; cualquier otra clave es un error.
+        const known = CardDefinitionSchema.shape as Record<string, unknown>;
+        for (const key of Object.keys(rawCard as Record<string, unknown>)) {
+          if (!(key in known) && !key.startsWith('_')) {
+            errors.push({
+              setId: setFile.setId,
+              cardId: result.data.id,
+              error: `unknown field '${key}' (posible typo — el schema lo descarta en silencio)`,
+            });
+          }
+        }
+        // Sellar setId con el del fichero (procedencia real; el default
+        // 'official' del schema borraba el set concreto).
+        const card = { ...result.data, setId: setFile.setId };
         cards.push(card);
       } else {
         errors.push({
@@ -70,7 +89,6 @@ export function loadCatalog(): CatalogLoadResult {
 
   // Construir indices
   const byId = new Map<string, CardDefinition>();
-  const byName = new Map<string, CardDefinition[]>();
   const byClass = new Map<string, CardDefinition[]>();
   const byType = new Map<string, CardDefinition[]>();
 
@@ -89,10 +107,6 @@ export function loadCatalog(): CatalogLoadResult {
     }
     byId.set(card.id, card);
 
-    const nameList = byName.get(card.name) ?? [];
-    nameList.push(card);
-    byName.set(card.name, nameList);
-
     if (card.heroClass) {
       const classList = byClass.get(card.heroClass) ?? [];
       classList.push(card);
@@ -109,7 +123,6 @@ export function loadCatalog(): CatalogLoadResult {
   return {
     cards,
     byId,
-    byName,
     byClass,
     byType,
     errors,
@@ -134,7 +147,7 @@ export function getClassCards(catalog: CatalogLoadResult, heroClass: string): Ca
  * Normalizar alias snake_case → camelCase en los efectos de una carta.
  * Mutación in-place sobre los efectos parseados.
  */
-function normalizeEffects(effects: any[]): void {
+export function normalizeEffects(effects: any[]): void {
   for (const eff of effects) {
     if (!eff || typeof eff !== 'object') continue;
     // Coalescer alias snake_case
@@ -150,8 +163,10 @@ function normalizeEffects(effects: any[]): void {
       if (eff.onMatch) normalizeEffects(eff.onMatch);
       if (eff.onMismatch) normalizeEffects(eff.onMismatch);
     } else if (eff.type === 'SWAP_ENEMY') {
-      if (eff.new_from && !eff.newFrom) eff.newFrom = eff.new_from;
+      // new_from/new_from retirados del schema — si un JSON viejo los
+      // trae, los limpiamos para que no lleguen al motor como ruido.
       delete eff.new_from;
+      delete eff.newFrom;
     } else if (eff.type === 'STEAL_COINS_MULTIPLE') {
       if (eff.max_total && !eff.maxTotal) eff.maxTotal = eff.max_total;
       if (eff.max_per_hero && !eff.maxPerHero) eff.maxPerHero = eff.max_per_hero;
@@ -166,5 +181,15 @@ function normalizeEffects(effects: any[]): void {
     // Recursión en then/else de CONDITIONAL
     if (eff.then && Array.isArray(eff.then)) normalizeEffects(eff.then);
     if (eff.else && Array.isArray(eff.else)) normalizeEffects(eff.else);
+    // TRY_EFFECT.onFailure y CHOOSE_ONE.options[].effects también son
+    // nodos de efectos: sin la recursión, sus alias snake_case llegaban
+    // al motor sin normalizar y se ignoraban en silencio.
+    if (eff.onFailure && Array.isArray(eff.onFailure)) normalizeEffects(eff.onFailure);
+    if (eff.on_failure && Array.isArray(eff.on_failure)) normalizeEffects(eff.on_failure);
+    if (eff.options && Array.isArray(eff.options)) {
+      for (const opt of eff.options) {
+        if (opt && Array.isArray(opt.effects)) normalizeEffects(opt.effects);
+      }
+    }
   }
 }

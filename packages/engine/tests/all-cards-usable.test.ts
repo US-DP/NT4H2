@@ -84,6 +84,10 @@ describe('Usabilidad exhaustiva — TODAS las cartas', () => {
         const { state, rng } = makeGame();
         state.phase = 'PLAYER_ATTACK';
         state.activePlayerId = 'p1';
+        // El test salta directo a PLAYER_ATTACK: las pendingChoices del
+        // setup (puja de líder) no existirían en este punto de una partida
+        // real y bloquean PLAY_CARD desde E-13.
+        state.pendingChoices = [];
         const p1 = state.players.p1;
 
         // Inyectar la carta en la mano y recursos suficientes
@@ -99,7 +103,18 @@ describe('Usabilidad exhaustiva — TODAS las cartas', () => {
         p1.wounds = 1; // HEAL_WOUNDS debe tener efecto
         state.battlefield = [makeEnemy(), makeEnemy('enemy-test-2')];
 
-        // Dar efectos persistentes para cubrir condiciones que los requieren
+        // E-13: cartas con filtro de objetivo (solo orcos, solo Señores,
+        // fortaleza mínima) necesitan un enemigo que cumpla el filtro —
+        // el enemigo genérico las haría ilegales por diseño.
+        for (const eff of card.effects ?? []) {
+          const tgt = 'target' in eff ? eff.target : undefined;
+          if (typeof tgt !== 'object' || tgt === null || tgt.kind !== 'ONE_ENEMY' || !('filter' in tgt) || !tgt.filter) continue;
+          const f = tgt.filter;
+          const en = state.battlefield[0];
+          if (f.isOrc !== undefined) en.isOrc = f.isOrc;
+          if (f.isWarlord !== undefined) en.isWarlord = f.isWarlord;
+          if (f.minFortitude !== undefined) en.baseFortitude = Math.max(en.baseFortitude, f.minFortitude);
+        }
         const result = execute(
           state,
           { type: 'PLAY_CARD', cid: 'test-cid', cardInstanceId: instance.instanceId, targetEnemyId: 'enemy-test-1' },

@@ -81,7 +81,7 @@ export function GuidedSetup() {
       accessibilityState={{ selected: active }}
       accessibilityLabel={accessibilityLabel ?? label}
     >
-      <Text style={{ color: active ? '#1a1a2e' : c.text, fontSize: fs(fontSize.detail), fontWeight: '700' }}>
+      <Text style={{ color: active ? c.textOnAccent : c.text, fontSize: fs(fontSize.detail), fontWeight: '700' }}>
         {label}
       </Text>
     </Pressable>

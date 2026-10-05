@@ -5,6 +5,44 @@ export default {
     cancel: 'Cancelar',
     confirm: 'Confirmar',
 
+    /* Errores devueltos por el backend (llegan en inglés; ver
+       lib/serverErrors.ts) */
+    srvErr: {
+      roomFull: 'La sala está llena',
+      roomNotOpen: 'La sala ya no admite jugadores',
+      roomNotInPlay: 'La partida aún no ha empezado',
+      roomNotFound: 'No existe una sala con ese código',
+      roomAllocFailed: 'No se pudo crear la sala; inténtalo de nuevo',
+      notEnoughPlayers: 'No hay suficientes jugadores para empezar',
+      notAllReady: 'No todos los jugadores están listos',
+      allMustPickHero: 'Todos los jugadores deben elegir héroe',
+      onlySelfLeave: 'Solo el propio jugador puede abandonar en plena partida',
+      playerNotFound: 'Jugador no encontrado en la sala',
+      notMember: 'El jugador no pertenece a esta sala',
+      invalidPlayerToken: 'Sesión de jugador no válida; vuelve a entrar en la sala',
+      playerKicked: 'Has sido expulsado de esta sala',
+      playerNotKicked: 'Ese jugador no está expulsado',
+      targetOffline: 'Ese jugador no está conectado',
+      invalidTarget: 'Objetivo no válido',
+      tooManyRequests: 'Demasiadas peticiones; espera un momento y reintenta',
+      engineUnavailable: 'El motor de juego no está disponible; inténtalo de nuevo',
+      engineError: 'Error del motor de juego',
+      customDeckNotYours: 'Ese mazo personalizado pertenece a otro jugador',
+      tooManyCustomDecks: 'Demasiados mazos personalizados en la sala',
+      invalidCustomDeck: 'Mazo personalizado no válido',
+      invalidGameConfig: 'Configuración de partida no válida',
+      joinFailed: 'No se pudo unir a la sala',
+      nameRegistered:
+        'Ese nombre pertenece a una cuenta registrada; inicia sesión para usarlo',
+      nameRequired: 'Escribe un nombre',
+      noActivePlayer: 'No hay un jugador activo',
+      hostOnly: 'Solo el anfitrión puede hacer eso',
+      invalidData: 'Datos no válidos',
+      payloadTooLarge: 'Los datos enviados son demasiado grandes',
+      tooMany: 'Demasiados elementos',
+      network: 'Sin conexión con el servidor; comprueba tu red',
+    },
+
     /* _layout: títulos de las pantallas del Stack */
     screen: {
       index: 'No Time for Heroes',
@@ -19,6 +57,7 @@ export default {
       room: 'Sala',
       study: 'Taller',
       showcase: 'Catálogo de componentes',
+      replay: 'Repetición',
     },
 
     /* (content): contenido instalado */

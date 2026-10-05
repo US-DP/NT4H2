@@ -1,0 +1,19 @@
+# Propietarios de código — NT4H Digital
+# Los cambios en estas áreas requieren revisión del owner.
+
+# Repo entero (fallback)
+* @US-DP
+
+# Motor de reglas y esquemas (determinismo / event-sourcing)
+/packages/engine/ @US-DP
+/packages/schema/ @US-DP
+/packages/catalog/ @US-DP
+
+# Persistencia, seguridad y contratos online
+/apps/backend/ @US-DP
+/apps/engine-runner/ @US-DP
+
+# Cadena de suministro e infraestructura
+/.github/ @US-DP
+**/Dockerfile @US-DP
+pnpm-lock.yaml @US-DP

@@ -38,7 +38,6 @@ export function createInitialState(config: GameConfig): GameState {
     marketCostModifier: 0,
     ignoreCoinRewards: false,
     ignoreGloryRewards: false,
-    orcFortitudeBonus: 0,
   };
 }
 

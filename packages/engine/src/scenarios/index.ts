@@ -15,10 +15,11 @@ import type {
   ResolutionContext,
   EnemyState,
   PendingChoice,
+  Modifier,
 } from '@nt4h/schema';
 import type { CatalogLoadResult } from '@nt4h/catalog';
 import { evalValue, drawCardsWithReshuffle } from '../effects/registry.js';
-import { applyEntryAuras } from '../modifiers/index.js';
+import { applyEntryAuras, revertScenarioEffects } from '../modifiers/index.js';
 import { applyEvent, checkFortitudeDefeats } from '../events/applyEvent.js';
 import { DeterministicRng } from '../rng/index.js';
 import { nextSeq, resetSeq } from '../seq.js';
@@ -31,111 +32,110 @@ export function resetScenarioSeq(): void {
 /**
  * Aplicar los efectos continuos de un escenario al estado.
  * Se llama cuando un escenario se revela.
+ *
+ * Genérico: traduce los efectos del catálogo en vez de switchear por id —
+ * los escenarios del Taller producen el mismo resultado que los oficiales.
+ * Soportados: IGNORE_COIN_REWARDS / IGNORE_GLORY_REWARDS (flags),
+ * MODIFY_MARKET_COST (delta sobre marketCostModifier, revertido al
+ * descartar) y MODIFY_FORTITUDE con target ALL_ENEMIES (modificador
+ * WHILE_SOURCE_ACTIVE sobre los enemigos actuales + aura para los que
+ * entren después, almacenada en state.scenario.auraModifiers).
+ * CUSTOM_SCENARIO y ON_ENEMY_DEFEATED se manejan aparte.
  */
 export function applyScenarioEffects(
   state: GameState,
   scenarioDefId: string,
-  _catalog: CatalogLoadResult,
+  catalog: CatalogLoadResult,
 ): { state: GameState; events: GameEvent[] } {
   const events: GameEvent[] = [];
-  let newState = state;
+  const def = catalog?.byId.get(scenarioDefId);
+  // Definición ausente del catálogo: no-op puro (sin evento, mismo state).
+  if (!def) return { state, events };
+  const instanceId = state.scenario?.instanceId ?? 'scenario';
+  const ctx: ResolutionContext = {
+    activePlayerId: state.activePlayerId,
+    currentCardId: scenarioDefId,
+    currentCardName: def?.name ?? scenarioDefId,
+    currentCardInstanceId: instanceId,
+    selectedEnemyId: null,
+    cardsPlayedThisTurn: {},
+    cardsPlayedAgainstEnemy: {},
+    drawnCardInstanceId: null,
+    sourceZone: 'SCENARIO_ACTIVE',
+    enemiesDefeatedThisResolution: [],
+    depth: 0,
+  };
 
-  switch (scenarioDefId) {
-    case 'scenario.brunmar-ruins':
-      // Ruinas de Brunmar: -1 fortaleza a todos los enemigos (via modificador), ignora Gloria
-      newState = {
-        ...newState,
-        ignoreGloryRewards: true,
-        battlefield: newState.battlefield.map(e => ({
-          ...e,
-          // NO mutar baseFortitude; el modificador se aplica via getEffectiveFortitude
-          modifiers: [
-            ...e.modifiers,
-            {
-              id: `scenario-brunmar-${nextSeq()}`,
-              sourceId: newState.scenario?.instanceId ?? 'scenario',
-              layer: 'FORTITUDE_MODIFIERS',
-              timestamp: nextSeq(),
-              duration: 'WHILE_SOURCE_ACTIVE',
-              amount: -1,
-            },
-          ],
-        })),
-      };
-      // D434 (spec §6.9 nota Brunmar): la reduccion de Fortaleza puede
-      // derrotar inmediatamente a enemigos ya heridos
-      for (const ev of checkFortitudeDefeats(newState, newState.activePlayerId, nextSeq)) {
-        events.push(ev);
-        newState = applyEvent(newState, ev);
-      }
-      break;
+  // Resolver los deltas AQUÍ (evalValue necesita catálogo/contexto) y
+  // materializarlos en un evento: el reducer reproduce la misma
+  // transformación durante el fold del eventLog (§51.12) — antes los
+  // flags/modificadores solo se mutaban en el camino directo y el
+  // replay divergía del estado vivo.
+  let ignoreCoinRewards = false;
+  let ignoreGloryRewards = false;
+  let marketCostDelta = 0;
+  const auraModifiers: Modifier[] = [];
+  for (const eff of def?.effects ?? []) {
+    if (eff.type === 'IGNORE_COIN_REWARDS') {
+      ignoreCoinRewards = true;
+    } else if (eff.type === 'IGNORE_GLORY_REWARDS') {
+      ignoreGloryRewards = true;
+    } else if (eff.type === 'MODIFY_MARKET_COST') {
+      marketCostDelta += evalValue(eff.modifier, ctx, state);
+    } else if (eff.type === 'MODIFY_FORTITUDE' && eff.target?.kind === 'ALL_ENEMIES') {
+      const amount = evalValue(eff.modifier, ctx, state);
+      auraModifiers.push({
+        id: `scenario-mod-${instanceId}-${auraModifiers.length}`,
+        sourceId: instanceId,
+        layer: 'FORTITUDE_MODIFIERS',
+        timestamp: nextSeq(),
+        duration: 'WHILE_SOURCE_ACTIVE',
+        amount,
+      });
+    }
+  }
 
-    case 'scenario.lotharion-market':
-      // Mercado de Lotharion: -1 al coste de mercado
-      newState = {
-        ...newState,
-        marketCostModifier: newState.marketCostModifier - 1,
-      };
-      break;
+  const applied: GameEvent = {
+    type: 'SCENARIO_EFFECTS_APPLIED',
+    scenarioInstanceId: instanceId,
+    definitionId: scenarioDefId,
+    ignoreCoinRewards,
+    ignoreGloryRewards,
+    marketCostDelta,
+    ...(auraModifiers.length > 0 ? { auraModifiers } : {}),
+    seq: nextSeq(),
+  };
+  events.push(applied);
+  let newState = applyEvent(state, applied);
 
-    case 'scenario.skaarg-plains':
-      // Planicie de Skaarg: ignora recompensas de monedas
-      newState = {
-        ...newState,
-        ignoreCoinRewards: true,
-      };
-      break;
-
-    default:
-      // Escenarios con efectos disparados no modifican el estado continuamente
-      break;
+  if (auraModifiers.length > 0) {
+    // D434 (spec §6.9 nota Brunmar): la reduccion de Fortaleza puede
+    // derrotar inmediatamente a enemigos ya heridos
+    for (const ev of checkFortitudeDefeats(newState, newState.activePlayerId, nextSeq)) {
+      events.push(ev);
+      newState = applyEvent(newState, ev);
+    }
   }
 
   return { state: newState, events };
 }
 
 /**
- * Limpiar los efectos de un escenario al descartarlo.
+ * Limpiar los efectos de un escenario al descartarlo (inverso de
+ * applyScenarioEffects).
+ *
+ * Ya no lee el catálogo: la reversión se deriva del estado
+ * (``marketCostSources``, ``sourceId`` de modificadores/aura) vía el
+ * helper compartido ``revertScenarioEffects`` — el MISMO que ejecuta el
+ * reducer de SCENARIO_DISCARDED durante el fold del eventLog.
  */
 export function clearScenarioEffects(
   state: GameState,
-  scenarioDefId: string,
+  _scenarioDefId: string,
+  _catalog?: CatalogLoadResult,
 ): { state: GameState; events: GameEvent[] } {
-  const events: GameEvent[] = [];
-  let newState = state;
-
-  switch (scenarioDefId) {
-    case 'scenario.brunmar-ruins':
-      newState = {
-        ...newState,
-        ignoreGloryRewards: false,
-        // Solo quitar modificadores del escenario (baseFortitude no fue mutado)
-        battlefield: newState.battlefield.map(e => ({
-          ...e,
-          modifiers: e.modifiers.filter(m => !m.id.startsWith('scenario-brunmar')),
-        })),
-      };
-      break;
-
-    case 'scenario.lotharion-market':
-      newState = {
-        ...newState,
-        marketCostModifier: newState.marketCostModifier + 1,
-      };
-      break;
-
-    case 'scenario.skaarg-plains':
-      newState = {
-        ...newState,
-        ignoreCoinRewards: false,
-      };
-      break;
-
-    default:
-      break;
-  }
-
-  return { state: newState, events };
+  const instanceId = state.scenario?.instanceId ?? 'scenario';
+  return { state: revertScenarioEffects(state, instanceId), events: [] };
 }
 
 /**
@@ -386,24 +386,29 @@ export function executeTurnStartEffect(
           // Si el enemigo revelado es el Señor de la Guerra, emitir WARLORD_REVEALED
           // y descartar el escenario (spec: termina al revelar Warlord)
           if (newEnemy.isWarlord) {
-            events.push({
+            const warlordEv: GameEvent = {
               type: 'WARLORD_REVEALED',
               warlordInstanceId: enemyCard.instanceId,
               definitionId: enemyCard.definitionId,
               seq: nextSeq(),
-            });
+            };
+            events.push(warlordEv);
+            // Aplicar el evento: el discard reducer consulta
+            // warlordRevealed y el fold lo lleva a true aquí.
+            newState = applyEvent(newState, warlordEv);
             // D434 (spec §4.2): la moneda del ULTIMO escenario se recoge al
             // finalizar la partida — scenarioCoins se conserva para el
             // recuento (applyEvent la preserva porque warlordRevealed=true)
-            events.push({
+            const discardEv: GameEvent = {
               type: 'SCENARIO_DISCARDED',
               scenarioInstanceId: newState.scenario!.instanceId,
               seq: nextSeq(),
-            });
-            newState = {
-              ...newState,
-              scenario: null,
             };
+            events.push(discardEv);
+            // El reducer revierte flags/aura/ledger del escenario —
+            // mismo resultado que en el fold (antes se mutaba solo
+            // scenario:null y los efectos quedaban activos en vivo).
+            newState = applyEvent(newState, discardEv);
           }
           // D434 (spec §6.9 nota Brunmar): el enemigo recien puesto puede
           // quedar derrotado si su Fortaleza efectiva es 0
@@ -535,7 +540,7 @@ export function executeTurnStartEffect(
       } else if (canPayGlory) {
         events.push({ type: 'GLORY_LOST', playerId, amount: 1, seq: nextSeq() });
       } else if (canPayCoins) {
-        events.push({ type: 'COINS_GAINED', playerId, amount: -2, seq: nextSeq() });
+        events.push({ type: 'COINS_LOST', playerId, amount: 2, seq: nextSeq() });
       } else {
         return { state: newState, events };
       }

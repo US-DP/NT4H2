@@ -83,18 +83,19 @@ export function executeResolveChoice(
   // D434: Feldon — Pericia opt-in ante el ataque de la Horda (spec §6.8,
   // 1 uso). Registrar la decision; processHordeAttack la aplica.
   if (choice.type === 'CONFIRM' && choice.choiceId.startsWith('feldon-reduce-')) {
-    const wants = command.selectedIds[0] === 'yes';
-    const feldonEvents: GameEvent[] = [];
-    let resolvedState = {
-      ...state,
-      players: {
-        ...state.players,
-        [playerId]: {
-          ...state.players[playerId],
-          feldonDecision: (wants ? 'HALVE' : 'DECLINE') as 'HALVE' | 'DECLINE',
-        },
-      },
-    };
+    // Re-verificar usos al resolver: una elección restaurada/encolada tras
+    // gastar el último uso no debe conceder el efecto gratis.
+    const wants = command.selectedIds[0] === 'yes'
+      && (state.players[playerId]?.heroUsesRemaining ?? 0) > 0;
+    // FELDON_DECISION documenta la decisión en el log — antes era una
+    // mutación silenciosa que el fold del eventLog no reproducía.
+    const feldonEvents: GameEvent[] = [{
+      type: 'FELDON_DECISION',
+      playerId,
+      decision: wants ? 'HALVE' : 'DECLINE',
+      seq: reg.nextSeq(),
+    }];
+    let resolvedState = applyEvent(state, feldonEvents[0]);
     if (wants) {
       feldonEvents.push({
         type: 'HERO_ABILITY_USED',
@@ -116,7 +117,7 @@ export function executeResolveChoice(
     const wants = command.selectedIds[0] === 'yes';
     const failedCardId = choice.relatedCardIds?.[0];
     const belethEvents: GameEvent[] = [];
-    if (wants && failedCardId) {
+    if (wants && failedCardId && (state.players[playerId]?.heroUsesRemaining ?? 0) > 0) {
       belethEvents.push({
         type: 'HERO_ABILITY_USED',
         playerId,
@@ -148,7 +149,7 @@ export function executeResolveChoice(
   if (choice.type === 'CONFIRM' && choice.choiceId.startsWith('taheral-evasion-')) {
     const wants = command.selectedIds[0] === 'yes';
     state = { ...state, pendingChoices: state.pendingChoices.filter(c => c.choiceId !== command.choiceId) };
-    if (wants) {
+    if (wants && (state.players[playerId]?.heroUsesRemaining ?? 0) > 0) {
       const discarded = state.evasionDiscardedCount ?? 0;
       const p = state.players[playerId];
       const taheralEvents: GameEvent[] = [
@@ -395,6 +396,38 @@ export function executeResolveChoice(
       newOrder: [...top, ...reorderedCards].map(c => c.instanceId),
       seq: reg.nextSeq(),
     });
+    // LOOK_AT_CARDS del Taller: continuar los efectos restantes de la
+    // carta tras reordenar y aplicar su destino (igual que fx-discard).
+    const rctx = choice.resolutionContext;
+    if (rctx?.pendingEffects?.length && catalog) {
+      const { events: chainEvents } = executeEffectChain(
+        rctx.pendingEffects, rctx, state, rng, reg, catalog, 0,
+      );
+      const dest = rctx.destinationAfterUse
+        ?? catalog.byId.get(rctx.currentCardId)?.destinationAfterUse;
+      const recovered = chainEvents.some(
+        e => e.type === 'CARDS_RECOVERED' && e.cardInstanceIds.includes(rctx.currentCardInstanceId)
+      );
+      const tailEvents: GameEvent[] = [];
+      if (dest && !recovered) {
+        if (dest === 'WEAR_PILE') {
+          tailEvents.push({
+            type: 'CARD_MOVED', cardInstanceId: rctx.currentCardInstanceId,
+            from: 'HAND', to: 'WEAR_PILE', playerId: rctx.activePlayerId, seq: reg.nextSeq(),
+          });
+        } else if (dest === 'REMOVED_FROM_GAME') {
+          tailEvents.push({
+            type: 'CARD_REMOVED_FROM_GAME', cardInstanceId: rctx.currentCardInstanceId,
+            seq: reg.nextSeq(),
+          });
+        }
+      }
+      for (const ev of [...chainEvents, ...tailEvents]) {
+        state = applyEvent(state, ev);
+      }
+      events.push(...chainEvents, ...tailEvents);
+      state = { ...state, pendingChoices: state.pendingChoices.filter(c => c.choiceId !== command.choiceId) };
+    }
     return { state, events };
   }
 
@@ -483,7 +516,7 @@ export function executeResolveChoice(
     if (payment === 'glory' && player.glory >= 1) {
       newEvents.push({ type: 'GLORY_LOST', playerId, amount: 1, seq: reg.nextSeq() });
     } else if (payment === 'coins' && player.coins >= 2) {
-      newEvents.push({ type: 'COINS_GAINED', playerId, amount: -2, seq: reg.nextSeq() });
+      newEvents.push({ type: 'COINS_LOST', playerId, amount: 2, seq: reg.nextSeq() });
     } else {
       return { accepted: false, reason: 'Cannot afford selected payment', events, newState: state, rng };
     }
@@ -861,7 +894,9 @@ export function executeResolveChoice(
     return { accepted: true, events, newState: { ...resolvedState, rngState: rng.serialize() }, rng };
   }
 
-  // Recuperar la carta original del contexto
+  // Recuperar la carta original del contexto. Las elecciones con comando
+  // dedicado (puja de líder, turn-start) no llegan aquí: isLegal las
+  // rechaza — borrarlas sin procesar era un soft-lock.
   const card = state.players[playerId].hand.find(c => c.instanceId === choice.resolutionContext?.currentCardInstanceId)
     ?? state.players[playerId].wearPile.find(c => c.instanceId === choice.resolutionContext?.currentCardInstanceId);
   if (!card || !choice.resolutionContext) {

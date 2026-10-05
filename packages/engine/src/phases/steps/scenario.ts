@@ -39,7 +39,7 @@ export function processScenarioTransition(
         seq: nextSeq(),
       });
       // Limpiar efectos continuos del escenario descartado
-      const clearResult = clearScenarioEffects(state, state.scenario.definitionId);
+      const clearResult = clearScenarioEffects(state, state.scenario.definitionId, catalog);
       state = clearResult.state;
       events.push(...clearResult.events);
     }

@@ -17,6 +17,7 @@
  * aquí — nunca se juega por accidente al tocar un enemigo.
  */
 
+import { memo } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import '../lib/i18n';
@@ -25,12 +26,15 @@ import Animated, { useSharedValue, useAnimatedStyle, withSpring, runOnJS } from 
 import { CardView } from './CardView';
 import { CardZoom } from './CardZoom';
 import { useGameStore } from '../store/gameStore';
-import { useSettingsSafe } from '../lib/useTheme';
+import { useSettingsSafe, useColors, useFs } from '../lib/useTheme';
+import { touchTarget } from '../lib/theme';
+import type { Colors } from '../lib/theme';
 import { getCardTargeting, isValidEnemyTarget } from '../lib/targeting';
+import { engineReasonText } from '../lib/engineReasons';
 import { hapticSelect, hapticPlay, hapticError } from '../lib/haptics';
 import { announceA11y } from '../lib/a11y';
 import { playEffect, playUi } from '../lib/audio';
-import type { CardInstance } from '@nt4h/schema';
+import type { CardDefinition, CardInstance, GameState, PlayerState } from '@nt4h/schema';
 
 /**
  * Carta arrastrable: arrastrar hacia arriba = intención de jugar.
@@ -83,6 +87,84 @@ interface HandViewProps {
   onZoomCard?: (cardInstanceId: string | null) => void;
 }
 
+/** Modo de selección de la mano (afecta a la semántica del tap). */
+type HandMode = 'normal' | 'evasion' | 'swap';
+
+/** Cambio de cartas iniciales (SOLO, una vez, spec §4.1). */
+function isSetupSwapAvailable(gameState: GameState | null, player: PlayerState | undefined): boolean {
+  return !!gameState && !!player &&
+    gameState.mode === 'SOLO' &&
+    (gameState.phase === 'SETUP' || gameState.phase === 'INITIAL_PLAYER_SELECTION') &&
+    !player.startingSwapUsed;
+}
+
+interface HandCardProps {
+  cardDef: CardDefinition;
+  instance: CardInstance;
+  mode: HandMode;
+  selected: boolean;
+  blocked: boolean;
+  blockedReason?: string;
+  positionLabel?: string;
+  /** La carta siguiente la cubre por la derecha (abanico): el texto
+   *  del motivo queda ilegible; solo el candado (el motivo completo
+   *  sigue en accessibilityHint y en el mensaje al pulsar) */
+  covered: boolean;
+  fanOverlap: boolean;
+  onCardPress: (c: CardInstance, isPlayable: boolean, reason?: string) => void;
+  onCardLongPress: (c: CardInstance) => void;
+  onCardDragPlay: (c: CardInstance, isPlayable: boolean) => void;
+}
+
+/**
+ * Una carta de la mano. memo: cualquier evento del motor re-renderiza
+ * HandView pero solo cambian las cartas afectadas — el resto se salta
+ * el render (M-3). El comparador ignora los tres handlers: una
+ * closure obsoleta sigue siendo correcta porque TODA variable que
+ * cambia su comportamiento está cubierta por una prop comparada
+ * (mode cubre swapActive/evasionMode; selected cubre la rama de
+ * deselección por selectedCard; blocked/blockedReason cubren la
+ * jugabilidad; las acciones del store son estables).
+ */
+// Solapado tipo abanico (TCG): la mano ocupa menos y se lee mejor.
+// Estilo estático fuera de createStyles: HandCard es de módulo y no
+// ve el `styles` por-render de HandView.
+const FAN_OVERLAP = { marginLeft: -34 } as const;
+
+const HandCard = memo(function HandCard({
+  cardDef, instance, selected, blocked, blockedReason, covered,
+  positionLabel, fanOverlap, onCardPress, onCardLongPress, onCardDragPlay,
+}: HandCardProps) {
+  const isPlayable = !blocked;
+  return (
+    <DraggableCard
+      onDragPlay={() => onCardDragPlay(instance, isPlayable)}
+      style={fanOverlap ? FAN_OVERLAP : undefined}
+    >
+      <CardView
+        card={cardDef}
+        selected={selected}
+        blocked={blocked}
+        blockedReason={blockedReason}
+        blockedIconOnly={covered}
+        positionLabel={positionLabel}
+        onPress={() => onCardPress(instance, isPlayable, blockedReason)}
+        onLongPress={() => onCardLongPress(instance)}
+      />
+    </DraggableCard>
+  );
+}, (a, b) =>
+  a.cardDef === b.cardDef &&
+  a.instance === b.instance &&
+  a.mode === b.mode &&
+  a.selected === b.selected &&
+  a.blocked === b.blocked &&
+  a.blockedReason === b.blockedReason &&
+  a.covered === b.covered &&
+  a.positionLabel === b.positionLabel &&
+  a.fanOverlap === b.fanOverlap
+);
+
 export function HandView({
   zoomedCardId,
   onZoomCard,
@@ -102,8 +184,20 @@ export function HandView({
   const cancelEvasion = useGameStore((s) => s.cancelEvasion);
   const evasion = useGameStore((s) => s.evasion);
   const evasionMode = Array.isArray(evasionSelection);
+  const swapStartingCards = useGameStore((s) => s.swapStartingCards);
+  const toggleSwapMode = useGameStore((s) => s.toggleSwapMode);
+  const toggleSwapCard = useGameStore((s) => s.toggleSwapCard);
+  // Cambio de cartas iniciales (SOLO, una vez, spec §4.1): modo propio —
+  // no reutilizamos evasionSelection (distinto límite). El estado vive en
+  // el store: el renderer ligero de tests no soporta hooks extra.
+  const swapSel = useGameStore((s) => s.ui.swapSelection);
+  const swapMode = swapSel !== null;
   // srListPositions: "Carta 2 de 7" al navegar la mano con lector
   const srPositions = useSettingsSafe((s) => s.srListPositions);
+  // Hooks de tema: seguros fuera de render (try/catch interno)
+  const c = useColors();
+  const fs = useFs();
+  const styles = createStyles(c, fs);
 
   if (!gameState || !catalog) return null;
 
@@ -137,10 +231,20 @@ export function HandView({
   const needsEnemy = targeting.mode === 'enemy';
   const canConfirm = needsEnemy ? enemyTarget.ok : true;
 
+  // Cambio de cartas iniciales: SOLO + fase de preparación + una sola vez
+  const setupSwapAvailable = isSetupSwapAvailable(gameState, player);
+  const swapActive = swapMode && setupSwapAvailable;
+
   const zoomedInstance = zoomedCardId ? player.hand.find((c) => c.instanceId === zoomedCardId) : undefined;
   const zoomedCard = zoomedInstance ? catalog.byId.get(zoomedInstance.definitionId) : null;
 
   const handleCardPress = (cardInstance: CardInstance, isPlayable: boolean, reason?: string) => {
+    // En modo cambio inicial cualquier carta de la mano es elegible (máx 2)
+    if (swapActive) {
+      hapticSelect();
+      toggleSwapCard(cardInstance.instanceId);
+      return;
+    }
     // En modo evasión cualquier carta de la mano es elegible para descartar
     if (evasionMode) {
       hapticSelect();
@@ -177,7 +281,7 @@ export function HandView({
   // Arrastrar hacia arriba: si no necesita objetivo se juega directa;
   // si lo necesita queda seleccionada para elegir enemigo en el campo.
   const handleDragPlay = (cardInstance: CardInstance, isPlayable: boolean) => {
-    if (evasionMode) return;
+    if (evasionMode || swapActive) return;
     if (!isPlayable) {
       hapticError();
       playUi('error');
@@ -207,8 +311,22 @@ export function HandView({
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>
-          {evasionMode ? t('hud.evasionTitle') : t('hud.handTitle', { count: player.hand.length })}
+          {swapActive ? t('hud.swapTitle')
+            : evasionMode ? t('hud.evasionTitle')
+            : t('hud.handTitle', { count: player.hand.length })}
         </Text>
+        {setupSwapAvailable && !evasionMode && (
+          <Pressable
+            style={styles.zoomButton}
+            onPress={() => toggleSwapMode()}
+            accessibilityRole="button"
+            accessibilityLabel={t('hud.swapToggleA11y')}
+          >
+            <Text style={styles.buttonText}>
+              {swapActive ? t('hud.cancel') : t('hud.swapToggle')}
+            </Text>
+          </Pressable>
+        )}
         {selectedCard && selectedDef && !evasionMode && (
           <View style={styles.selectionInfo}>
             <Text style={styles.selectionText}>{selectedDef.name}</Text>
@@ -222,29 +340,31 @@ export function HandView({
           if (!cardDef) return null;
 
           const playable = checkCardPlayable?.(cardInstance.instanceId) ?? { ok: true };
-          const isPlayable = evasionMode ? true : playable.ok;
-          const reason = !playable.ok ? playable.reason : undefined;
+          const isPlayable = evasionMode || swapActive ? true : playable.ok;
+          const reason = !playable.ok
+            ? engineReasonText(t, playable.reasonCode, playable.reason, playable.costs)
+            : undefined;
           const evasionChosen = evasionSelection?.includes(cardInstance.instanceId) ?? false;
+          const swapChosen = swapSel?.includes(cardInstance.instanceId) ?? false;
 
           return (
-            <DraggableCard
+            <HandCard
               key={cardInstance.instanceId}
-              onDragPlay={() => handleDragPlay(cardInstance, isPlayable)}
-              // Solapado tipo abanico (TCG): la mano ocupa menos y se lee mejor
-              style={index > 0 ? styles.fanOverlap : undefined}
-            >
-              <CardView
-                card={cardDef}
-                selected={evasionMode ? evasionChosen : selectedCard === cardInstance.instanceId}
-                blocked={!isPlayable}
-                blockedReason={reason}
-                positionLabel={srPositions ? t('cardui.a11y.posOf', {
-                  i: index + 1, n: player.hand.length,
-                }) : undefined}
-                onPress={() => handleCardPress(cardInstance, isPlayable, reason)}
-                onLongPress={() => handleCardLongPress(cardInstance)}
-              />
-            </DraggableCard>
+              cardDef={cardDef}
+              instance={cardInstance}
+              mode={swapActive ? 'swap' : evasionMode ? 'evasion' : 'normal'}
+              selected={swapActive ? swapChosen : evasionMode ? evasionChosen : selectedCard === cardInstance.instanceId}
+              blocked={!isPlayable}
+              blockedReason={reason}
+              positionLabel={srPositions ? t('cardui.a11y.posOf', {
+                i: index + 1, n: player.hand.length,
+              }) : undefined}
+              covered={index < player.hand.length - 1}
+              fanOverlap={index > 0}
+              onCardPress={handleCardPress}
+              onCardLongPress={handleCardLongPress}
+              onCardDragPlay={handleDragPlay}
+            />
           );
         })}
       </ScrollView>
@@ -257,6 +377,46 @@ export function HandView({
           <Text style={styles.targetHint}>
             {t('hud.evasionHint')}
           </Text>
+        </View>
+      )}
+
+      {swapActive && (
+        <View style={styles.targetBar} accessibilityLiveRegion="polite">
+          <Text style={styles.targetDesc}>
+            {t('hud.swapProgress', { count: swapSel?.length ?? 0 })}
+          </Text>
+          <Text style={styles.targetHint}>
+            {t('hud.swapHint')}
+          </Text>
+        </View>
+      )}
+
+      {swapActive && (
+        <View style={styles.actions}>
+          <Pressable
+            style={styles.cancelButton}
+            onPress={() => toggleSwapMode()}
+            accessibilityRole="button"
+            accessibilityLabel={t('hud.cancelSelectionA11y')}
+          >
+            <Text style={styles.buttonText}>{t('hud.cancel')}</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.playButton, (swapSel?.length ?? 0) === 0 && styles.playButtonDisabled]}
+            onPress={() => {
+              if (!swapSel || swapSel.length === 0) return;
+              hapticPlay();
+              swapStartingCards(swapSel);
+            }}
+            disabled={!swapSel || swapSel.length === 0}
+            accessibilityRole="button"
+            accessibilityLabel={t('hud.swapConfirmA11y', { count: swapSel?.length ?? 0 })}
+            accessibilityState={{ disabled: !swapSel || swapSel.length === 0 }}
+          >
+            <Text style={[styles.buttonText, styles.playButtonText]}>
+              {t('hud.swapConfirm')}
+            </Text>
+          </Pressable>
         </View>
       )}
 
@@ -278,7 +438,7 @@ export function HandView({
             accessibilityLabel={t('hud.evasionConfirmA11y', { count: evasionSelection?.length ?? 0 })}
             accessibilityState={{ disabled: (evasionSelection?.length ?? 0) < 2 }}
           >
-            <Text style={styles.buttonText}>
+            <Text style={[styles.buttonText, styles.playButtonText]}>
               {t('hud.evade')}{evasionSelection && evasionSelection.length >= 2 ? ` (${evasionSelection.length})` : ''}
             </Text>
           </Pressable>
@@ -338,7 +498,7 @@ export function HandView({
             accessibilityLabel={needsEnemy ? t('hud.playVsTargetA11y') : t('hud.playCardA11y')}
             accessibilityState={{ disabled: !canConfirm }}
           >
-            <Text style={styles.buttonText}>
+            <Text style={[styles.buttonText, styles.playButtonText]}>
               {needsEnemy ? t('hud.playVsTarget') : t('hud.playCard')}
             </Text>
           </Pressable>
@@ -350,12 +510,12 @@ export function HandView({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   container: {
     padding: 8,
-    backgroundColor: '#0f0f23',
+    backgroundColor: c.background,
     borderTopWidth: 1,
-    borderTopColor: '#333',
+    borderTopColor: c.border,
   },
   header: {
     flexDirection: 'row',
@@ -364,51 +524,49 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   title: {
-    color: '#ecf0f1',
-    fontSize: 14,
+    color: c.text,
+    fontSize: fs(14),
     fontWeight: 'bold',
   },
   selectionInfo: {
     alignItems: 'flex-end',
   },
   selectionText: {
-    color: '#f1c40f',
-    fontSize: 13,
+    color: c.accent,
+    fontSize: fs(13),
     fontWeight: 'bold',
   },
   hand: {
     flexDirection: 'row',
     paddingVertical: 10,
   },
-  fanOverlap: {
-    marginLeft: -34,
-  },
+  fanOverlap: FAN_OVERLAP,
   targetBar: {
     marginTop: 6,
     padding: 8,
     borderRadius: 6,
-    backgroundColor: '#16213e',
+    backgroundColor: c.surfaceRaised,
   },
   targetDesc: {
-    color: '#ecf0f1',
-    fontSize: 12,
+    color: c.text,
+    fontSize: fs(12),
     fontWeight: 'bold',
   },
   targetHint: {
-    color: '#bdc3c7',
-    fontSize: 11,
+    color: c.textMuted,
+    fontSize: fs(11),
     marginTop: 3,
     fontStyle: 'italic',
   },
   targetOk: {
-    color: '#27ae60',
-    fontSize: 11,
+    color: c.success,
+    fontSize: fs(11),
     marginTop: 3,
     fontWeight: 'bold',
   },
   targetError: {
-    color: '#e74c3c',
-    fontSize: 11,
+    color: c.danger,
+    fontSize: fs(11),
     marginTop: 3,
   },
   actions: {
@@ -418,33 +576,41 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   playButton: {
-    backgroundColor: '#27ae60',
+    backgroundColor: c.accent,
     padding: 12,
     borderRadius: 8,
     minWidth: 120,
+    minHeight: touchTarget,
+    justifyContent: 'center',
     alignItems: 'center',
   },
   playButtonDisabled: {
-    backgroundColor: '#3a5a47',
-    opacity: 0.6,
+    opacity: 0.45,
   },
   cancelButton: {
-    backgroundColor: '#555',
+    backgroundColor: c.surfaceRaised,
     padding: 12,
     borderRadius: 8,
     minWidth: 100,
+    minHeight: touchTarget,
+    justifyContent: 'center',
     alignItems: 'center',
   },
   zoomButton: {
-    backgroundColor: '#2c3e50',
+    backgroundColor: c.surfaceRaised,
     padding: 12,
     borderRadius: 8,
     minWidth: 100,
+    minHeight: touchTarget,
+    justifyContent: 'center',
     alignItems: 'center',
   },
   buttonText: {
-    color: '#fff',
-    fontSize: 13,
+    color: c.text,
+    fontSize: fs(13),
     fontWeight: 'bold',
+  },
+  playButtonText: {
+    color: c.textOnAccent,
   },
 });

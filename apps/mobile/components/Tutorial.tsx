@@ -8,6 +8,8 @@
 
 import { View, Text, Pressable, StyleSheet, Modal } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { useColors, useFs } from '../lib/useTheme';
+import type { Colors } from '../lib/theme';
 
 interface TutorialStep {
   title: string;
@@ -27,6 +29,11 @@ interface TutorialProps {
 
 export function Tutorial({ steps, visible, currentStep = 0, onStepChange, onClose }: TutorialProps) {
   const { t } = useTranslation();
+  const c = useColors();
+  const fs = useFs();
+  // Sin useMemo: el renderer ligero de tests invoca los componentes
+  // directamente y los hooks de React lanzan fuera de un render real.
+  const styles = createStyles(c, fs);
   const index = currentStep;
   const setIndex = onStepChange ?? (() => {});
 
@@ -51,19 +58,22 @@ export function Tutorial({ steps, visible, currentStep = 0, onStepChange, onClos
             <Pressable
               onPress={() => setIndex(Math.max(0, index - 1))}
               disabled={isFirst}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: isFirst }}
               style={[styles.controlButton, isFirst && styles.disabledButton]}
             >
               <Text style={styles.controlText}>{t('panels.tutorialPrev')}</Text>
             </Pressable>
             <Pressable
               onPress={() => (isLast ? onClose() : setIndex(Math.min(steps.length - 1, index + 1)))}
+              accessibilityRole="button"
               style={styles.controlButton}
             >
               <Text style={styles.controlText}>{isLast ? t('panels.tutorialFinish') : t('panels.tutorialNext')}</Text>
             </Pressable>
           </View>
 
-          <Pressable onPress={onClose} style={styles.closeLink}>
+          <Pressable onPress={onClose} style={styles.closeLink} accessibilityRole="button">
             <Text style={styles.closeText}>{t('panels.tutorialClose')}</Text>
           </Pressable>
         </View>
@@ -72,41 +82,41 @@ export function Tutorial({ steps, visible, currentStep = 0, onStepChange, onClos
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.85)',
+    backgroundColor: c.overlayStrong,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 16,
   },
   dialog: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: c.surface,
     borderRadius: 12,
     padding: 20,
     width: '100%',
     maxWidth: 450,
   },
   stepCounter: {
-    color: '#7f8c8d',
-    fontSize: 11,
+    color: c.textFaint,
+    fontSize: fs(11),
     marginBottom: 4,
   },
   title: {
-    color: '#f1c40f',
-    fontSize: 18,
+    color: c.accent,
+    fontSize: fs(18),
     fontWeight: 'bold',
     marginBottom: 8,
   },
   context: {
-    color: '#3498db',
-    fontSize: 12,
+    color: c.info,
+    fontSize: fs(12),
     fontStyle: 'italic',
     marginBottom: 8,
   },
   body: {
-    color: '#ecf0f1',
-    fontSize: 14,
+    color: c.text,
+    fontSize: fs(14),
     lineHeight: 20,
     marginBottom: 16,
   },
@@ -116,26 +126,31 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   controlButton: {
-    backgroundColor: '#2980b9',
+    backgroundColor: c.accent,
     padding: 10,
+    minHeight: 44,
+    justifyContent: 'center',
     borderRadius: 6,
     flex: 1,
     alignItems: 'center',
   },
   disabledButton: {
-    backgroundColor: '#555',
+    backgroundColor: c.surfaceDisabled,
   },
   controlText: {
-    color: '#fff',
-    fontSize: 13,
+    color: c.textOnAccent,
+    fontSize: fs(13),
     fontWeight: 'bold',
   },
   closeLink: {
     alignSelf: 'center',
     marginTop: 12,
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 8,
   },
   closeText: {
-    color: '#bdc3c7',
-    fontSize: 12,
+    color: c.textMuted,
+    fontSize: fs(12),
   },
 });

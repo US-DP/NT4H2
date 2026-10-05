@@ -28,6 +28,15 @@ export type CommandReasonCode =
   | 'CARD_DEF_NOT_FOUND'
   | 'MISSING_CAPABILITIES'
   | 'CHOICE_NOT_FOUND'
+  | 'TARGET_REQUIRED'
+  | 'TARGET_INVALID'
+  | 'HERO_ELIMINATED'
+  | 'GAME_FINISHED'
+  | 'NO_ABILITY_USES'
+  | 'PENDING_CHOICE'
+  | 'INVALID_SELECTION'
+  | 'SOLO_ONLY'
+  | 'SWAP_USED'
   | 'UNKNOWN';
 
 export interface CommandCostPreview {
@@ -48,7 +57,7 @@ export interface CommandEvaluation {
 }
 
 /** Mapea los motivos libres de isLegal a códigos estables. */
-function reasonToCode(reason: string | undefined): CommandReasonCode | undefined {
+export function reasonToCode(reason: string | undefined): CommandReasonCode | undefined {
   if (!reason) return undefined;
   if (/not in (attack|market|restoration|attack choice)/i.test(reason)) return 'WRONG_PHASE';
   if (reason === 'Not your turn') return 'NOT_YOUR_TURN';
@@ -64,6 +73,41 @@ function reasonToCode(reason: string | undefined): CommandReasonCode | undefined
   if (reason === 'Catalog required to validate purchase') return 'MISSING_CATALOG';
   if (reason === 'Card definition not found') return 'CARD_DEF_NOT_FOUND';
   if (reason === 'Hero lacks required capabilities') return 'MISSING_CAPABILITIES';
+  // Motivos de RESOLVE_CHOICE/PASS: 'Choice not found' y sus variantes
+  // (el código CHOICE_NOT_FOUND ya estaba declarado pero nunca se emitía).
+  if (reason === 'Choice not found' || reason === 'Invalid choice') return 'CHOICE_NOT_FOUND';
+  // Resto de motivos visibles en UI (antes caían a UNKNOWN y se pintaban
+  // en inglés crudo — auditoría visual de capturas)
+  if (reason === 'Card requires a target enemy') return 'TARGET_REQUIRED';
+  if (reason === 'Target does not meet card requirements' ||
+      reason === 'Selected enemy is not among the tied options') return 'TARGET_INVALID';
+  if (reason === 'Hero is eliminated') return 'HERO_ELIMINATED';
+  if (reason === 'Game is finished') return 'GAME_FINISHED';
+  if (reason === 'No hero ability uses remaining') return 'NO_ABILITY_USES';
+  if (reason === 'Resolve pending choices first' ||
+      reason === 'Choice must be resolved with its dedicated command' ||
+      reason === 'Player has no pending leader bid' ||
+      reason === 'No pending turn-start effect for you') return 'PENDING_CHOICE';
+  if (reason === 'Must choose 1 or 2 cards' ||
+      reason === 'Invalid number of selections' ||
+      reason === 'Invalid selection: not among available options' ||
+      reason === 'Invalid card order selection' ||
+      reason === 'Duplicate selections' ||
+      reason === 'Duplicate card ids' ||
+      reason === 'Can only swap up to 2 cards' ||
+      reason === 'Invalid targetId') return 'INVALID_SELECTION';
+  if (reason === 'Only available in solo mode') return 'SOLO_ONLY';
+  if (reason === 'Starting card swap already used') return 'SWAP_USED';
+  if (reason === 'Cannot use hero ability in this phase' ||
+      reason === 'Support decks can only be opened during the Attack phase' ||
+      reason === 'Support cards can only be bought during the Attack phase' ||
+      reason === 'This hero ability can only be used during Horde Attack' ||
+      reason === 'Reactive ability cannot be used on your own turn' ||
+      reason === 'Only during initial player selection' ||
+      reason === 'Only during setup or initial selection' ||
+      reason === 'No active scenario' ||
+      reason === 'Cannot afford selected payment') return 'WRONG_PHASE';
+  if (reason === 'Not your choice') return 'NOT_YOUR_TURN';
   return 'UNKNOWN';
 }
 

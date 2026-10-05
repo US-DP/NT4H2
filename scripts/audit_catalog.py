@@ -34,18 +34,35 @@ def card_effects(card):
     def walk(effects):
         for e in effects or []:
             types.append(e.get('type', '?'))
-            for k in ('effects', 'then', 'else', 'onMatch', 'onMismatch', 'on_match', 'on_mismatch'):
+            for k in ('effects', 'then', 'else', 'onMatch', 'onMismatch',
+                      'on_match', 'on_mismatch', 'fallback'):
                 if isinstance(e.get(k), list):
                     walk(e[k])
+            # CHOOSE_ONE: los efectos viven dentro de cada opción
+            for opt in e.get('options') or []:
+                if isinstance(opt, dict):
+                    walk(opt.get('effects'))
     walk(card.get('effects'))
+    # heroAbility y peritia ejecutan efectos por otros caminos — sin
+    # recorrerlos, un tipo no registrado ahí no aparecía en la cobertura.
     if card.get('heroAbility'):
         walk(card['heroAbility'].get('effects'))
+    if card.get('peritia'):
+        walk(card['peritia'].get('effects'))
     return types
 
 def main():
-    # Tipos de efecto soportados por el motor (registry.ts)
-    reg_src = open(os.path.join(ROOT, 'packages/engine/src/effects/registry.ts'), encoding='utf-8').read()
-    registered = set(re.findall(r"registry\.register\('([A-Z_]+)'", reg_src))
+    # Tipos de efecto soportados por el motor: los register() viven en
+    # effects/handlers/*.ts tras el refactor por dominios (antes se leia
+    # solo registry.ts, que ya no contiene ninguno y marcaba todo
+    # MISSING_IMPLEMENTATION).
+    registered = set()
+    for src_file in glob.glob(
+        os.path.join(ROOT, 'packages', 'engine', 'src', 'effects', '**', '*.ts'),
+        recursive=True,
+    ):
+        src = open(src_file, encoding='utf-8').read()
+        registered.update(re.findall(r"\.register\('([A-Z_]+)'", src))
 
     images = json.load(open(os.path.join(DATA, 'images.json'), encoding='utf-8'))
     img_map = images.get('cards', images) if isinstance(images, dict) else {}
@@ -147,7 +164,7 @@ def main():
     out.append('')
 
     out.append('## E. Contenido personalizado (Taller)\n')
-    out.append('Cubierto por `packages/engine/tests/custom-content.test.ts` (12 tests): '
+    out.append('Cubierto por `packages/engine/tests/custom-content.test.ts` (14 tests): '
                'conjunto validado con carta multi-efecto, heroe, escenario, hueste, '
                'senor y mazo de 15 jugado en partida real + determinismo por hash; '
                'nodos REPEAT (repeticion acotada), CHOOSE_ONE (eleccion via pendingChoice) '

@@ -18,7 +18,7 @@ import type { DeterministicRng } from '../rng/index.js';
 import type { EffectRegistry } from './registry.js';
 import { MAX_RESOLUTION_OPS, ResolutionBudgetError } from './registry.js';
 import { EventBus } from '../triggers/index.js';
-import { applyEvent } from '../events/applyEvent.js';
+import { applyEvent, checkFortitudeDefeats } from '../events/applyEvent.js';
 import { onSeqReset } from '../seq.js';
 
 export interface ListenerDeps {
@@ -34,9 +34,26 @@ const MAX_LISTENERS_PER_EVENT = 16;
  *  oyentes). Los seqs son monotónicos globales por partida (seq.ts), así
  *  que el despacho es idempotente: el resolver/fases ya disparan oyentes
  *  por evento de efecto, y execute() completa la cobertura para eventos
- *  emitidos por comandos sin dispararlos dos veces. */
+ *  emitidos por comandos sin dispararlos dos veces.
+ *  FIFO acotado: el Set es a nivel de MÓDULO y en el runner multi-sala
+ *  crecía con cada evento de cualquier partida durante toda la vida del
+ *  proceso — misma solución que BoundedCidSet. La dedup solo importa para
+ *  eventos recientes (monotonía), 4096 de ventana sobra. */
+const MAX_DISPATCHED_SEQS = 4096;
 const dispatchedSeqs = new Set<number>();
-onSeqReset(() => dispatchedSeqs.clear());
+const dispatchedQueue: number[] = [];
+function markDispatched(seq: number): void {
+  dispatchedSeqs.add(seq);
+  dispatchedQueue.push(seq);
+  if (dispatchedQueue.length > MAX_DISPATCHED_SEQS) {
+    const oldest = dispatchedQueue.shift()!;
+    dispatchedSeqs.delete(oldest);
+  }
+}
+onSeqReset(() => {
+  dispatchedSeqs.clear();
+  dispatchedQueue.length = 0;
+});
 
 /** Deriva el contexto de resolución de un oyente desde el evento. */
 function listenerCtx(listener: CardListener, event: GameEvent): ResolutionContext {
@@ -78,7 +95,7 @@ export function dispatchListeners(
 ): { events: GameEvent[]; state: GameState } {
   // Idempotente por evento: un mismo seq nunca despacha oyentes dos veces.
   if (dispatchedSeqs.has(event.seq)) return { events: [], state };
-  dispatchedSeqs.add(event.seq);
+  markDispatched(event.seq);
   const listeners = (state.listeners ?? [])
     .filter(l => l.trigger === event.type)
     .slice(0, MAX_LISTENERS_PER_EVENT);
@@ -108,9 +125,18 @@ export function dispatchListeners(
           // Sin cascada: los eventos emitidos por oyentes no re-disparan
           // oyentes aunque vuelvan a pasar por dispatchListeners (p.ej. en
           // el pase de cobertura de execute()).
-          dispatchedSeqs.add(iev.seq);
+          markDispatched(iev.seq);
           current = applyEvent(current, iev);
         }
+      }
+      // Un oyente que hace daño puede dejar al enemigo con
+      // wounds ≥ fortitud sin ENEMY_DEFEATED (zombi: sin trofeo, sin
+      // recompensa, sin retirada). El post-chequeo de resolver.ts no
+      // cubre este camino (comandos/fases), así que se comprueba aquí.
+      for (const dev of checkFortitudeDefeats(current, listener.playerId, deps.nextSeq)) {
+        events.push(dev);
+        dispatchedSeqs.add(dev.seq);
+        current = applyEvent(current, dev);
       }
     } catch (err) {
       if (err instanceof ResolutionBudgetError || err instanceof Error) {

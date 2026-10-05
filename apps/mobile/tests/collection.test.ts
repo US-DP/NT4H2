@@ -38,7 +38,10 @@ beforeEach(async () => {
 });
 
 describe('collectionStore', () => {
+  // Los mutadores se difieren hasta que hydrate() termina (M-5): los tests
+  // de escritura hidratan primero — el contrato real de producción.
   it('toggleFavorite añade y quita, persistiendo cada vez', async () => {
+    await useCollection.getState().hydrate();
     useCollection.getState().toggleFavorite('card.a');
     expect(useCollection.getState().favorites).toEqual(['card.a']);
 
@@ -51,6 +54,7 @@ describe('collectionStore', () => {
   });
 
   it('markDiscovered deduplica y solo persiste con cambios', async () => {
+    await useCollection.getState().hydrate();
     useCollection.getState().markDiscovered(['a', 'b']);
     expect(useCollection.getState().discovered.sort()).toEqual(['a', 'b']);
 
@@ -65,6 +69,7 @@ describe('collectionStore', () => {
   });
 
   it('hydrate restaura un snapshot válido', async () => {
+    resetStore();
     await storageSet(KEY, JSON.stringify({
       favorites: ['x'], discovered: ['y', 'z'],
       sort: 'cost', spoilerMode: 'show', originFilter: 'custom',
@@ -82,6 +87,7 @@ describe('collectionStore', () => {
   });
 
   it('hydrate con JSON corrupto → defaults sin lanzar', async () => {
+    resetStore();
     await storageSet(KEY, '{{{not-json');
     useCollection.getState().hydrate();
     await flush();
@@ -94,6 +100,7 @@ describe('collectionStore', () => {
   });
 
   it('hydrate con snapshot parcial rellena defaults por campo', async () => {
+    resetStore();
     await storageSet(KEY, JSON.stringify({ favorites: ['only-fav'] }));
     useCollection.getState().hydrate();
     await flush();
@@ -107,6 +114,7 @@ describe('collectionStore', () => {
   });
 
   it('hydrate sin datos → hydrated=true con defaults', async () => {
+    resetStore();
     useCollection.getState().hydrate();
     await flush();
     expect(useCollection.getState().hydrated).toBe(true);
@@ -114,6 +122,7 @@ describe('collectionStore', () => {
   });
 
   it('setters de vista persisten', async () => {
+    await useCollection.getState().hydrate();
     useCollection.getState().setSort('damage');
     useCollection.getState().setSpoilerMode('hide');
     useCollection.getState().setOriginFilter('official');

@@ -1,6 +1,8 @@
 ﻿/** Textos ES de «common» — componentes compartidos y utilidades de lib. */
 export default {
   common: {
+    /** Estado loading de botones/controles (ui/Button) */
+    loading: 'Cargando…',
     // Fases de la partida (lib/phaseLabels.ts)
     phases: {
       SETUP: 'Preparación',
@@ -68,6 +70,8 @@ export default {
       netRetrying: 'Sin conexión — reintentando.',
       stateStale: 'Estado desactualizado — resincronizando.',
       cmdRejected: 'Comando rechazado: {{reason}}',
+      rateLimited: 'Demasiados mensajes — espera un momento.',
+      chatRateLimited: 'Chat muy rápido — espera un momento.',
       netWait: 'Sin conexión a internet — esperando red.',
       netError: 'Error de conexión con el servidor',
       netLost: 'Conexión perdida — reintentando.',
@@ -76,6 +80,8 @@ export default {
       choiceRejected: 'Elección rechazada: {{reason}}',
       bidRejected: 'Puja rechazada: {{reason}}',
       reasonUnknown: 'desconocido',
+      newGameFailed: 'No se pudo crear la partida: revisa la configuración',
+      customNotLoaded: 'El contenido del Taller aún se está cargando — inténtalo en unos segundos',
       saveOnlineNo: 'No se puede guardar una partida online',
       savedOk: 'Partida guardada: {{name}}',
       saveFailed: 'No se pudo guardar la partida',

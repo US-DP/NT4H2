@@ -852,17 +852,17 @@ describe('§4 Solitario', () => {
 
     const r1 = openSupportDeck(s, 'p1', 0);
     expect(r1.error).toBeUndefined();
-    expect(r1.events.find(e => e.type === 'COINS_GAINED' && e.amount === -3)).toBeDefined();
+    expect(r1.events.find(e => e.type === 'COINS_LOST' && e.amount === 3)).toBeDefined();
 
     s = { ...s, players: { ...s.players, p1: { ...s.players.p1, supportDecksOpened: 1 } } };
     const r2 = openSupportDeck(s, 'p1', 1);
     expect(r2.error).toBeUndefined();
-    expect(r2.events.find(e => e.type === 'COINS_GAINED' && e.amount === -5)).toBeDefined();
+    expect(r2.events.find(e => e.type === 'COINS_LOST' && e.amount === 5)).toBeDefined();
 
     s = { ...s, players: { ...s.players, p1: { ...s.players.p1, supportDecksOpened: 2 } } };
     const r3 = openSupportDeck(s, 'p1', 2);
     expect(r3.error).toBeUndefined();
-    expect(r3.events.find(e => e.type === 'COINS_GAINED' && e.amount === -6)).toBeDefined();
+    expect(r3.events.find(e => e.type === 'COINS_LOST' && e.amount === 6)).toBeDefined();
   });
 
   it('negativo: no se puede abrir el segundo mazo de Apoyo sin abrir el primero', () => {

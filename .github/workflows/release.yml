@@ -1,0 +1,98 @@
+name: Release
+
+# Publicar: git tag v0.1.0 && git push origin v0.1.0
+# El tag debe existir como sección en CHANGELOG.md ([v0.1.0]).
+on:
+  push:
+    tags: ['v*.*.*']
+
+jobs:
+  verify:
+    name: 'Gate pre-release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nt4h/engine typecheck
+      - run: pnpm --filter @nt4h/engine test
+      - run: pnpm --filter @nt4h/engine-runner typecheck
+      - run: pnpm --filter @nt4h/engine-runner test
+      - name: El tag debe tener sección en CHANGELOG.md
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          grep -q "\[$TAG\]" CHANGELOG.md || \
+            { echo "Falta [$TAG] en CHANGELOG.md"; exit 1; }
+
+  docker:
+    name: 'Build imagen runner'
+    runs-on: ubuntu-latest
+    needs: verify
+    permissions:
+      attestations: write
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f apps/engine-runner/Dockerfile -t nt4h-engine-runner:${GITHUB_REF_NAME#v} .
+      - run: docker save nt4h-engine-runner:${GITHUB_REF_NAME#v} -o runner-image.tar
+      - name: Checksum del artefacto
+        run: sha256sum runner-image.tar > runner-image.tar.sha256
+      - name: SBOM (CycloneDX) de la imagen
+        uses: anchore/sbom-action@v0.17.3
+        with:
+          image: nt4h-engine-runner:${{ github.ref_name }}
+          format: cyclonedx-json
+          output-file: sbom-runner.cdx.json
+      - name: Attestation SLSA del tarball
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: runner-image.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-runner-image
+          path: |
+            runner-image.tar
+            runner-image.tar.sha256
+            sbom-runner.cdx.json
+          retention-days: 14
+
+  release:
+    name: 'GitHub Release'
+    runs-on: ubuntu-latest
+    needs: [verify, docker]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extraer sección del changelog
+        id: notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PYEOF' >> "$GITHUB_OUTPUT"
+          import os, re
+          tag = os.environ["TAG"]
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          m = re.search(rf"## \[{re.escape(tag)}\](.*?)(?=\n## \[|\Z)", text, re.S)
+          body = m.group(1).strip() if m else "(sin notas)"
+          print("notes<<EOF")
+          print(body)
+          print("EOF")
+          PYEOF
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-runner-image
+      - uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.notes.outputs.notes }}
+          files: |
+            runner-image.tar
+            runner-image.tar.sha256
+            sbom-runner.cdx.json
+            # (el artefacto docker queda en artifacts; se podría subir
+            #  a GHCR cuando existan credenciales)

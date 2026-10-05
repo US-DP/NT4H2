@@ -26,7 +26,7 @@ import type {
 import type { DeterministicRng } from '../rng/index.js';
 import type { EffectRegistry} from '../effects/registry.js';
 import { ResolutionBudgetError } from '../effects/registry.js';
-import { evalValue, resolveTarget, applyHeroDamage, drawCardsWithReshuffle } from '../effects/registry.js';
+import { evalValue, resolveTarget, applyHeroDamage, drawCardsWithReshuffle, heroStatValue } from '../effects/registry.js';
 import { EventBus, MAX_EFFECT_RECURSION } from '../triggers/index.js';
 import { applyEvent, checkFortitudeDefeats } from '../events/applyEvent.js';
 import { getEffectiveFortitude } from '../modifiers/index.js';
@@ -112,29 +112,115 @@ export function emitEnemyDefeated(
   return currentState;
 }
 
+/** Wrappers cuyos `effects` NO se ejecutan al resolver la carta sino en
+ *  un disparador posterior (PLACE_PERSISTENT, listeners, ON_*): un empate
+ *  dentro no debe generar elección al jugar la carta. */
+const DEFERRED_EFFECT_WRAPPERS = new Set([
+  'PLACE_PERSISTENT',
+  'REGISTER_LISTENER',
+  'ON_DEFEAT',
+  'ON_ENEMY_DEFEATED',
+  'ON_HORDE_ATTACK',
+]);
+
+/** Itera los efectos que se ejecutan SINCRÓNICAMENTE al resolver una
+ *  lista: el nivel raíz y las ramas internas de CONDITIONAL (then/else),
+ *  REPEAT/FOR_EACH/TRY_EFFECT (effects/onFailure) y DRAW_AND_CHECK
+ *  (onMatch/onMismatch). Las ramas diferidas (persistentes, listeners,
+ *  CHOOSE_ONE.options — que ya genera su propia elección) se ignoran. */
+function* walkEffects(effects: readonly unknown[]): Generator<CardEffect> {
+  for (const raw of effects) {
+    if (!raw || typeof raw !== 'object') continue;
+    const eff = raw as CardEffect & Record<string, unknown>;
+    yield eff;
+    for (const key of ['then', 'else', 'onMatch', 'onMismatch', 'onFailure'] as const) {
+      const nested = eff[key];
+      if (Array.isArray(nested)) yield* walkEffects(nested);
+    }
+    const nested = eff.effects;
+    if (!DEFERRED_EFFECT_WRAPPERS.has(eff.type) && Array.isArray(nested)) {
+      yield* walkEffects(nested);
+    }
+  }
+}
+
 /**
  * Detectar empates en selectores que requieren eleccion del jugador.
  * Si hay empate, devuelve un PendingChoice para que el jugador decida.
  */
+/** Selectores de héroe cuyo empate requiere decisión del jugador (E-7):
+ *  antes solo DEAL_DAMAGE_TO_HERO+HERO_WITH_FEWEST_WOUNDS creaba una
+ *  pendingChoice; GAIN_COINS/STEAL_COINS/INTERCEPT_DAMAGE/TAKE_WOUNDS
+ *  con los mismos selectores caían al fallback determinista silencioso. */
+const HERO_TIE_STATS = {
+  HERO_WITH_FEWEST_WOUNDS: 'WOUNDS',
+  HERO_WITH_MOST_WOUNDS: 'WOUNDS',
+  HERO_WITH_MOST_GLORY: 'GLORY',
+  HERO_WITH_MOST_COINS: 'COINS',
+} as const;
+
+function heroTieCandidates(
+  kind: keyof typeof HERO_TIE_STATS,
+  state: GameState,
+  ctx: Pick<ResolutionContext, 'activePlayerId' | 'cardsPlayedThisTurn'>,
+): string[] {
+  const all = state.playerOrder;
+  if (all.length === 0) return [];
+  const stat = HERO_TIE_STATS[kind];
+  const statCtx = { ...ctx, cardsPlayedThisTurn: ctx.cardsPlayedThisTurn } as ResolutionContext;
+  const values = all.map(id => heroStatValue(stat, state.players[id], statCtx));
+  const extreme = kind === 'HERO_WITH_FEWEST_WOUNDS'
+    ? Math.min(...values)
+    : Math.max(...values);
+  return all.filter((_, i) => values[i] === extreme);
+}
+
 function detectTieForChoice(
   state: GameState,
   cardDef: CardDefinition,
   player: PlayerState,
 ): PendingChoice | null {
   const effects = cardDef.effects ?? [];
-  for (const eff of effects) {
-    // HERO_WITH_FEWEST_WOUNDS: empate en menos heridas
-    if (eff.type === 'DEAL_DAMAGE_TO_HERO' && 'target' in eff && eff.target?.kind === 'HERO_WITH_FEWEST_WOUNDS') {
-      const all = state.playerOrder;
-      if (all.length === 0) continue;
-      const minWounds = Math.min(...all.map(id => state.players[id].wounds));
-      const candidates = all.filter(id => state.players[id].wounds === minWounds);
+  const tieCtx = {
+    activePlayerId: player.playerId,
+    cardsPlayedThisTurn: player.cardsPlayedThisTurn,
+  };
+  for (const eff of walkEffects(effects)) {
+    // E-7: cualquier campo hero-typed (target/from/hero) con selector
+    // estadístico en empate → SELECT_HERO, sea cual sea el tipo de efecto.
+    for (const field of ['target', 'from', 'hero'] as const) {
+      const sel = field in eff ? (eff as Record<string, unknown>)[field] : undefined;
+      if (typeof sel !== 'object' || sel === null || !('kind' in sel)) continue;
+      const kind = (sel as { kind: string }).kind;
+      // INTERCEPT_DAMAGE from:OTHER_HERO consume UN solo héroe (el handler
+      // toma el primero) — es una elección libre, no un empate: ofrecerla
+      // al jugador en vez de interceptar al primero de playerOrder.
+      if (eff.type === 'INTERCEPT_DAMAGE' && field === 'from' && kind === 'OTHER_HERO') {
+        const options = state.playerOrder.filter(id => id !== player.playerId);
+        if (options.length > 1) {
+          return {
+            choiceId: `intercept-hero-${cardDef.id}-${nextSeq()}`,
+            playerId: player.playerId,
+            type: 'SELECT_HERO',
+            prompt: `${cardDef.name}: Elige el héroe cuyo daño interceptas`,
+            options,
+            minSelections: 1,
+            maxSelections: 1,
+          };
+        }
+        continue;
+      }
+      if (!(kind in HERO_TIE_STATS)) continue;
+      const candidates = heroTieCandidates(kind as keyof typeof HERO_TIE_STATS, state, tieCtx);
       if (candidates.length > 1) {
+        const statLabel = kind === 'HERO_WITH_FEWEST_WOUNDS' ? 'menos Heridas'
+          : kind === 'HERO_WITH_MOST_WOUNDS' ? 'más Heridas'
+          : kind === 'HERO_WITH_MOST_GLORY' ? 'más Gloria' : 'más Monedas';
         return {
           choiceId: `tie-hero-${cardDef.id}-${nextSeq()}`,
           playerId: player.playerId,
           type: 'SELECT_HERO',
-          prompt: `${cardDef.name}: Elige el héroe con menos Heridas (empate)`,
+          prompt: `${cardDef.name}: Elige el héroe con ${statLabel} (empate)`,
           options: candidates,
           minSelections: 1,
           maxSelections: 1,
@@ -305,6 +391,21 @@ export function resolveCard(
     // Aplicar modificadores de dano del turno (Piedra de Amolar)
     damage = applyDamageModifiers(damage, cardDef.name, player);
 
+    // scope NEXT_CARD: el bonus se consume tras beneficiar a la primera
+    // carta que casa el filtro — MODIFIER_EXPIRED hace el consumo visible
+    // en el eventLog (replay fiel: el fold lo reproduce igual).
+    for (const mod of player.modifiers) {
+      if (mod.layer !== 'DAMAGE_BONUS' || mod.scope !== 'NEXT_CARD') continue;
+      if (mod.filter?.name && mod.filter.name !== cardDef.name) continue;
+      const expiry: GameEvent = {
+        type: 'MODIFIER_EXPIRED',
+        modifierId: mod.id,
+        seq: nextSeq(),
+      };
+      allEvents.push(expiry);
+      currentState = applyEventInline(currentState, expiry);
+    }
+
     // Aplicar penalizacion de capacidad (especificacion 3.5)
     // Si el heroe tiene un icono con penalizacion, restar del dano
     // Ej: Picaro con armas a distancia resta 1
@@ -443,6 +544,98 @@ export function resolveCard(
       };
     }
 
+    if (effect.type === 'PLAY_RANDOM_CARD_FROM_OTHER_HERO') {
+      // La carta robada se JUEGA de verdad (misma mecánica que la ruta
+      // tears-hero-* de resolveChoice): antes el handler solo la movía a
+      // la mano del lanzador y la dejaba allí sin resolver sus efectos.
+      // Ahora se resuelve recursivamente como si la hubiera jugado el
+      // jugador activo, y el destino (Desgaste del propietario real,
+      // REMOVED_FROM_GAME, etc.) lo decide el resolveCard anidado.
+      const costGlory = evalValue(
+        effect.costGlory ?? effect.cost_glory ?? { kind: 'CONSTANT', value: 0 },
+        ctx, currentState);
+      const actor = currentState.players[player.playerId];
+      if (!actor || actor.glory < costGlory) continue;
+      const others = currentState.playerOrder
+        .filter(pid => pid !== player.playerId)
+        .map(pid => currentState.players[pid])
+        .filter(p => p && p.hand.length > 0);
+      if (others.length === 0) continue;
+      // Solo se paga la Gloria si realmente hay una carta que tomar.
+      if (costGlory > 0) {
+        const costEvent: GameEvent = {
+          type: 'GLORY_LOST',
+          playerId: player.playerId,
+          amount: costGlory,
+          seq: nextSeq(),
+        };
+        allEvents.push(costEvent);
+        currentState = applyEventInline(currentState, costEvent);
+      }
+      const owner = rng.pick(others);
+      const stolen = rng.pick(owner.hand);
+      const stolenDef = catalog.byId.get(stolen.definitionId);
+      if (!stolenDef) continue;
+      // La carta NO sale de la mano del propietario: resolveCard la
+      // "juega" en su sitio y el CARD_MOVED de destino la retira de la
+      // mano del dueño a SU Desgaste (moveCard busca la zona real).
+      const sub = resolveCard(
+        currentState,
+        stolen,
+        stolenDef,
+        null,
+        currentState.players[player.playerId],
+        rng, registry, catalog,
+      );
+      allEvents.push(...sub.events);
+      currentState = sub.newState;
+      enemiesDefeated.push(...sub.enemiesDefeated);
+      additionalCardsPlayed.push(...sub.additionalCardsPlayed);
+      if (sub.pendingChoice) {
+        return {
+          events: allEvents,
+          newState: currentState,
+          enemiesDefeated,
+          additionalCardsPlayed,
+          pendingChoice: sub.pendingChoice,
+        };
+      }
+      continue;
+    }
+
+    if (effect.type === 'LOOK_AT_CARDS' && effect.action === 'REORDER') {
+      // Mira y reordena la Horda (Taller): el handler del registry solo
+      // revelaba las cartas y el reorden nunca se pedía — sin el
+      // pendingChoice el jugador las veía pero no podía ordenarlas.
+      const count = Math.max(0, evalValue(effect.amount, ctx, currentState));
+      const bottom = currentState.hordeDeck.slice(-count);
+      if (bottom.length === 0) continue;
+      allEvents.push({
+        type: 'CARDS_REVEALED_TO_PLAYER',
+        playerId: player.playerId,
+        cardInstanceIds: bottom.map(c => c.instanceId),
+        deck: 'HORDE',
+        seq: nextSeq(),
+      });
+      ctx.pendingEffects = cardDef.effects.slice(ei + 1);
+      return {
+        events: allEvents,
+        newState: currentState,
+        enemiesDefeated,
+        additionalCardsPlayed,
+        pendingChoice: {
+          choiceId: `look-${card.instanceId}-${nextSeq()}`,
+          playerId: player.playerId,
+          type: 'SELECT_ORDER',
+          prompt: `${cardDef.name}: reordena las ${bottom.length} cartas inferiores de la Horda`,
+          options: bottom.map(c => c.instanceId),
+          minSelections: bottom.length,
+          maxSelections: bottom.length,
+          resolutionContext: ctx,
+        },
+      };
+    }
+
     if (effect.type === 'DRAW_AND_ADD_ATTACK') {
       // Todo o Nada: robar 1 carta, sumar su dano al ataque, recuperar al fondo
       // D434: si el mazo se agota, Herida + reciclaje de Desgaste (spec §3.10)
@@ -574,8 +767,10 @@ export function resolveCard(
         newEnemyInstanceId: newEnemyCard.instanceId,
         newEnemyDefinitionId: newEnemyCard.definitionId,
         newEnemyFortitude: newEnemyDef.printedFortitude ?? 1,
-        // El botín es secreto: se revela en ENEMY_DEFEATED, no al entrar.
-        newEnemyReward: null,
+        // La recompensa impresa se persiste como en ENEMY_SPAWNED —
+        // la proyección la redacta en el campo de batalla; con null el
+        // sustituto pagaba {0,0} al ser derrotado.
+        newEnemyReward: newEnemyDef.reward ?? null,
         newEnemyIsOrc: newEnemyDef.isOrc ?? false,
         newEnemyIsWarlord: newEnemyDef.type === 'WARLORD',
         newEnemySpecialIcons: newEnemyDef.specialIcons ?? [],
@@ -857,12 +1052,17 @@ export function resolveCard(
     }
     const sourceDefId = playedDefIds.get(dmgEv.sourceCardInstanceId) ?? cardDef.id;
     const sourceDef = catalog.byId.get(sourceDefId);
-    // Condición 'printedAttack == N' sobre la carta origen
+    // Condición 'printedAttack == N' sobre la carta origen. Si la
+    // condición existe pero no casa la gramática soportada, se falla
+    // cerrado (condición NO cumplida): antes `condAttack` quedaba
+    // undefined y la pericia disparaba siempre, sin aviso.
     const condAttack = peritia?.condition
       ? /^printedAttack\s*==\s*(\d+)$/.exec(peritia.condition)?.[1]
       : undefined;
-    const condOk = condAttack === undefined
-      || (sourceDef?.printedAttack ?? 0) === Number(condAttack);
+    const condOk = peritia?.condition
+      ? condAttack !== undefined
+        && (sourceDef?.printedAttack ?? 0) === Number(condAttack)
+      : true;
 
     if (peritia?.trigger === 'DAMAGE_DEALT' && condOk) {
       for (const eff of peritia.effects) {

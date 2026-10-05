@@ -18,7 +18,7 @@ import {
   applyDamageDealt, applyWoundPlaced, applyWoundHealed, applyEnemyDefeated,
   applyHordeAttacked, applyEnemySwapped, applyEnemyReturnedToHorde,
   applyDamageIntercepted, applyPreventionApplied, applyShieldPlaced,
-  applyShieldTransferred, applyCancellationActivated, applyEnemyDamageDisabled,
+  applyCancellationActivated, applyEnemyDamageDisabled,
   applyVulnerabilityApplied, applyArmorGranted, applyBlockGranted,
   applyBlockConsumed, applyHeroWounded, applyEnemySpawned, applyEnemyRevealed,
   applyWarlordRevealed, applyTrophyRemoved,
@@ -31,17 +31,19 @@ import {
   applyPersistentCardPlaced, applyPersistentCardRemoved,
 } from './reducers/cards.js';
 import {
-  applyGloryGained, applyGloryLost, applyCoinsGained, applyCoinsStolen,
+  applyGloryGained, applyGloryLost, applyCoinsGained, applyCoinsLost, applyCoinsStolen,
   applyMarketPurchased, applyMarketReplenished,
 } from './reducers/economy.js';
 import {
   applyPhaseChanged, applyTurnStarted, applyTurnEnded, applySupportDeckOpened,
-  applyScenarioRevealed, applyScenarioDiscarded, applyHeroAbilityUsed,
+  applyScenarioRevealed, applyScenarioDiscarded, applyScenarioEffectsApplied, applyHeroAbilityUsed,
+  applyLeaderBidCards, applyFeldonDecision,
   applyModifierAdded, applyModifierExpired, applyEvasionPerformed,
   applyGameEnded, applyLeaderDetermined, applyLeaderTieBreak,
   applyResolutionHalted, applyStatusApplied, applyStatusRemoved,
   applyVariableSet, applyListenerRegistered, applyListenerRemoved,
-  applyEffectsExpired, applyPendingChoicesRemoved,
+  applyEffectsExpired, applyPendingChoicesRemoved, applyPendingChoiceCreated,
+  applyStartingCardsSwapped,
 } from './reducers/flow.js';
 
 export function applyEvent(state: GameState, event: GameEvent): GameState {
@@ -70,6 +72,7 @@ function applyEventInternal(state: GameState, event: GameEvent): GameState {
     case 'GLORY_GAINED': return applyGloryGained(state, event);
     case 'GLORY_LOST': return applyGloryLost(state, event);
     case 'COINS_GAINED': return applyCoinsGained(state, event);
+    case 'COINS_LOST': return applyCoinsLost(state, event);
     case 'COINS_STOLEN': return applyCoinsStolen(state, event);
     case 'WOUND_HEALED': return applyWoundHealed(state, event);
     case 'CARD_MOVED': return applyCardMoved(state, event);
@@ -82,10 +85,10 @@ function applyEventInternal(state: GameState, event: GameEvent): GameState {
     case 'MARKET_REPLENISHED': return applyMarketReplenished(state, event);
     case 'SCENARIO_REVEALED': return applyScenarioRevealed(state, event);
     case 'SCENARIO_DISCARDED': return applyScenarioDiscarded(state, event);
+    case 'SCENARIO_EFFECTS_APPLIED': return applyScenarioEffectsApplied(state, event);
     case 'HERO_ABILITY_USED': return applyHeroAbilityUsed(state, event);
     case 'PREVENTION_APPLIED': return applyPreventionApplied(state, event);
     case 'SHIELD_PLACED': return applyShieldPlaced(state, event);
-    case 'SHIELD_TRANSFERRED': return applyShieldTransferred(state, event);
     case 'CANCELLATION_ACTIVATED': return applyCancellationActivated(state, event);
     case 'ENEMY_DAMAGE_DISABLED': return applyEnemyDamageDisabled(state, event);
     case 'VULNERABILITY_APPLIED': return applyVulnerabilityApplied(state, event);
@@ -118,7 +121,11 @@ function applyEventInternal(state: GameState, event: GameEvent): GameState {
     case 'LISTENER_REMOVED': return applyListenerRemoved(state, event);
     case 'EFFECTS_EXPIRED': return applyEffectsExpired(state, event);
     case 'PENDING_CHOICES_REMOVED': return applyPendingChoicesRemoved(state, event);
+    case 'PENDING_CHOICE_CREATED': return applyPendingChoiceCreated(state, event);
     case 'TROPHY_REMOVED': return applyTrophyRemoved(state, event);
+    case 'STARTING_CARDS_SWAPPED': return applyStartingCardsSwapped(state, event);
+    case 'LEADER_BID_CARDS': return applyLeaderBidCards(state, event);
+    case 'FELDON_DECISION': return applyFeldonDecision(state, event);
     default: {
       // Exhaustive check
       const _exhaustive: never = event;
@@ -191,7 +198,7 @@ export function checkFortitudeDefeats(
   return events;
 }
 
-export function moveCard(state: GameState, cardInstanceId: string, to: Zone, toPlayerId?: string, eventPlayerId?: string): GameState {
+export function moveCard(state: GameState, cardInstanceId: string, to: Zone, toPlayerId?: string, eventPlayerId?: string, supportDeckIndex?: number): GameState {
   const newPlayers = { ...state.players };
 
   // Transferencia entre jugadores (toPlayerId ≠ propietario actual):
@@ -231,7 +238,10 @@ export function moveCard(state: GameState, cardInstanceId: string, to: Zone, toP
         newPlayers[toPlayerId] = { ...target, abilityDeck: [...target.abilityDeck, movedCard] };
       } else if (sourceZoneKey) {
         // Zona no-jugador (MARKET, etc.): restaurar a la zona de origen
-        // para no destruir la carta.
+        // para no destruir la carta. WARN: el restore silencioso ocultaba
+        // efectos que emitan CARD_MOVED con `to` inesperado — se deja
+        // traza para poder auditarlos.
+        console.warn(`moveCard: zona destino no soportada '${to}' para ${cardInstanceId} — restaurada a ${sourceZoneKey} de ${sourcePlayerId}`);
         const src = newPlayers[sourcePlayerId];
         newPlayers[sourcePlayerId] = {
           ...src,
@@ -284,6 +294,17 @@ export function moveCard(state: GameState, cardInstanceId: string, to: Zone, toP
           } else {
             newPlayers[playerId].wearPile = [...newPlayers[playerId].wearPile, movedCard];
           }
+        } else if (to === 'SUPPORT_DECK' && supportDeckIndex !== undefined) {
+          // Destino explícito: mazo de Apoyo concreto (Disparo Rápido con
+          // carta prestada emite la zona real en vez de ABILITY_DECK).
+          newPlayers[playerId] = {
+            ...newPlayers[playerId],
+            supportDecks: (newPlayers[playerId].supportDecks ?? []).map(
+              (d, j) => j === supportDeckIndex ? [...d, movedCard] : d,
+            ),
+            borrowedSupportCardIds: (newPlayers[playerId].borrowedSupportCardIds ?? [])
+              .filter(id => id !== cardInstanceId),
+          };
         } else if (to === 'ABILITY_DECK') {
           // D434: una carta prestada que "vuelve al fondo de su mazo" retorna
           // a su mazo de Apoyo de origen (spec §4.4), no al mazo de Habilidad
@@ -333,6 +354,14 @@ export function moveCard(state: GameState, cardInstanceId: string, to: Zone, toP
             } else {
               newPlayers[playerId].wearPile = [...newPlayers[playerId].wearPile, movedCard];
             }
+          } else if (to === 'SUPPORT_DECK' && supportDeckIndex !== undefined) {
+            // Destino explícito al mazo de Apoyo indicado en el evento.
+            newDecks = newDecks.map((d, j) => j === supportDeckIndex ? [...d, movedCard] : d);
+            newPlayers[playerId] = {
+              ...newPlayers[playerId],
+              supportDecks: newDecks,
+              borrowedSupportCardIds: (player.borrowedSupportCardIds ?? []).filter(id => id !== cardInstanceId),
+            };
           } else if (to === 'ABILITY_DECK') {
             // "El fondo de su mazo" para una carta prestada = su mazo de
             // Apoyo de origen, no el mazo de Habilidad del jugador (spec §4.4)

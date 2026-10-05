@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { API_BASE, fetchWithTimeout } from '../../lib/config';
@@ -14,8 +14,10 @@ import { checkCompatibility } from '../../lib/compat';
 import { useCustomContent } from '../../lib/customContent';
 import { toast } from '../../lib/toast';
 import type { ContentSet } from '@nt4h/schema';
+import { NtButton } from '../../components/ui/NtButton';
+import { AppNav, useNavSidebarWidth } from '../../components/AppNav';
 import { useColors, useFs } from '../../lib/useTheme';
-import { fontSize } from '../../lib/theme';
+import { fontSize, type Colors } from '../../lib/theme';
 
 interface InviteRoom {
   roomId: string;
@@ -39,6 +41,8 @@ export default function RoomInviteScreen() {
   const router = useRouter();
   const colors = useColors();
   const fs = useFs();
+  const styles = createStyles(colors, fs);
+  const navWidth = useNavSidebarWidth();
   const { t } = useTranslation();
   const [room, setRoom] = useState<InviteRoom | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -83,7 +87,8 @@ export default function RoomInviteScreen() {
   const joinable = room?.status === 'WAITING' && (room?.players.length ?? 0) < (room?.maxPlayers ?? 0) && (compat?.compatible ?? false);
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
+    <View style={{ flex: 1 }}>
+      <View style={[styles.container, { backgroundColor: colors.background, marginLeft: navWidth }]}>
       <Text style={[styles.title, { color: colors.text, fontSize: fs(fontSize.title) }]}>
         {t('invite.title')}
       </Text>
@@ -91,7 +96,7 @@ export default function RoomInviteScreen() {
       {loading && <ActivityIndicator color={colors.primary} />}
 
       {error === 'not-found' && (
-        <Text style={[styles.detail, { color: colors.warning ?? '#f39c12' }]} accessibilityRole="alert">
+        <Text style={[styles.detail, { color: colors.warning }]} accessibilityRole="alert">
           {t('invite.notFound')}
         </Text>
       )}
@@ -100,7 +105,11 @@ export default function RoomInviteScreen() {
         <>
           <Text style={[styles.detail, { color: colors.text, fontSize: fs(fontSize.body) }]}>
             {t('invite.summary', {
-              code: room.roomId, mode: room.mode,
+              code: room.roomId,
+              // el modo llega como enum crudo (STANDARD…) — room.mode.*
+              // lo traduce con fallback al valor original
+              mode: t(`room.mode.${room.mode}`) !== `room.mode.${room.mode}`
+                ? t(`room.mode.${room.mode}`) : room.mode,
               n: room.players.length, max: room.maxPlayers,
             })}
           </Text>
@@ -125,7 +134,7 @@ export default function RoomInviteScreen() {
             {t('invite.players', { names: room.players.map((p) => p.name).join(', ') })}
           </Text>
           {room.createdAt && (
-            <Text style={[styles.detail, { color: colors.textFaint ?? colors.textMuted, fontSize: fs(fontSize.micro) }]}>
+            <Text style={[styles.detail, { color: colors.textFaint, fontSize: fs(fontSize.micro) }]}>
               {t('invite.created', { date: new Date(room.createdAt).toLocaleString() })}
             </Text>
           )}
@@ -139,59 +148,59 @@ export default function RoomInviteScreen() {
           )}
           {missingSets.length > 0 && (
             <>
-              <Text style={[styles.detail, { color: colors.warning ?? '#f39c12' }]} accessibilityRole="alert">
+              <Text style={[styles.detail, { color: colors.warning }]} accessibilityRole="alert">
                 {t('room.missingSets', { sets: missingSets.map((s) => `${s.name} v${s.version}`).join(', ') })}
               </Text>
               {missingSets.map((s) => (
-                <Pressable
+                <NtButton
                   key={s.id}
-                  style={[styles.button, styles.secondary]}
+                  label={t('invite.importSet', { name: s.name })}
+                  variant="secondary"
                   onPress={() => importSet(s.id)}
-                  accessibilityRole="button"
                   accessibilityLabel={t('invite.importSet', { name: s.name })}
-                >
-                  <Text style={styles.buttonText}>{t('invite.importSet', { name: s.name })}</Text>
-                </Pressable>
+                />
               ))}
             </>
           )}
           {room.status !== 'WAITING' && (
-            <Text style={[styles.detail, { color: colors.warning ?? '#f39c12' }]}>
+            <Text style={[styles.detail, { color: colors.warning }]}>
               {room.status === 'PLAYING' ? t('invite.started') : t('invite.closed')}
             </Text>
           )}
           {(room.players.length >= room.maxPlayers) && room.status === 'WAITING' && (
-            <Text style={[styles.detail, { color: colors.warning ?? '#f39c12' }]}>{t('invite.full')}</Text>
+            <Text style={[styles.detail, { color: colors.warning }]}>{t('invite.full')}</Text>
           )}
-          <Pressable
-            style={[styles.button, !joinable && styles.buttonDisabled]}
+          <NtButton
+            label={t('invite.join')}
+            variant="primary"
             disabled={!joinable}
             onPress={() => router.push({ pathname: '/(room)', params: { roomId: room.roomId } })}
-            accessibilityRole="button"
             accessibilityLabel={t('invite.join')}
-          >
-            <Text style={styles.buttonText}>{t('invite.join')}</Text>
-          </Pressable>
+            accessibilityState={{ disabled: !joinable }}
+          />
         </>
       )}
 
-      <Pressable
-        style={[styles.button, styles.secondary]}
+      <NtButton
+        label={t('invite.back')}
+        variant="secondary"
         onPress={() => router.push('/')}
-        accessibilityRole="button"
-      >
-        <Text style={styles.buttonText}>{t('invite.back')}</Text>
-      </Pressable>
+      />
+      </View>
+      <AppNav />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 },
+const createStyles = (_c: Colors, fs: (n: number) => number) => StyleSheet.create({
+  container: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    gap: 12,
+    paddingBottom: 84, // barra inferior de AppNav en móvil
+  },
   title: { fontWeight: 'bold', marginBottom: 8 },
-  detail: { textAlign: 'center', marginVertical: 4 },
-  button: { paddingHorizontal: 28, paddingVertical: 12, borderRadius: 8, backgroundColor: '#c9a227', marginTop: 8 },
-  buttonDisabled: { opacity: 0.4 },
-  secondary: { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#555' },
-  buttonText: { color: '#1a1a2e', fontWeight: 'bold' },
+  detail: { textAlign: 'center', marginVertical: 4, fontSize: fs(fontSize.detail) },
 });

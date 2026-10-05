@@ -20,10 +20,9 @@ vi.mock('../store/gameStore', () => ({
   useGameStore: (selector: any) => selector(mockStoreState),
 }));
 
-// Importar useProjectedState para verificar proyección
-vi.mock('../store/useProjectedState', () => ({
-  useProjectedState: () => mockStoreState.projectedState ?? null,
-}));
+// (useProjectedState se eliminó en la auditoría — ningún componente lo
+// usaba; la privacidad real viene de viewerId + PrivacyScreen + la
+// proyección del backend en online.)
 
 import { HandView } from '../components/HandView';
 import { Battlefield } from '../components/Battlefield';
@@ -56,7 +55,7 @@ function makeGameState(overrides: Partial<GameState> = {}): GameState {
       p1: { heroId: 'hero.aranel', heroFace: 'FEMALE', wounds: 0, maxWounds: 3, glory: 5, coins: 10, shields: 0, hand: [makeCardInstance()], abilityDeck: [], wearPile: [], trophies: [], capabilities: ['RANGED'], heroUsesRemaining: 2, heroMaxUses: 2, modifiers: [], prevention: 0, damageCancellation: false, connected: true },
       p2: { heroId: 'hero.feldon', heroFace: 'MALE', wounds: 1, maxWounds: 3, glory: 3, coins: 5, shields: 0, hand: [makeCardInstance({ instanceId: 'p2-card', definitionId: 'secret-card' })], abilityDeck: [], wearPile: [], trophies: [], capabilities: ['MELEE'], heroUsesRemaining: 1, heroMaxUses: 2, modifiers: [], prevention: 0, damageCancellation: false, connected: true },
     },
-    battlefield: [makeEnemy()], market: [], scenario: null, scenarioDeck: [], hordeDeck: [], rngState: '', ignoreGloryRewards: false, ignoreCoinRewards: false, marketCostModifier: 0, orcFortitudeBonus: 0, ...overrides,
+    battlefield: [makeEnemy()], market: [], scenario: null, scenarioDeck: [], hordeDeck: [], rngState: '', ignoreGloryRewards: false, ignoreCoinRewards: false, marketCostModifier: 0, ...overrides,
   } as GameState;
 }
 

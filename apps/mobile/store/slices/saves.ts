@@ -27,6 +27,8 @@ import {
   resetInstanceCounter,
   resetPhaseSeq,
   resetResolveSeq,
+  resetSeq,
+  setSeq,
   stateHash,
 } from '@nt4h/engine';
 import type { GameConfig } from '@nt4h/schema';
@@ -153,29 +155,43 @@ async function purgeExpiredTrash(): Promise<TrashedGame[]> {
   return kept;
 }
 
-type Actions = Pick<GameStore, 'saveGame'|'loadGame'|'loadSavedGames'|'deleteSavedGame'|'restoreSavedGame'|'exportSavedGame'|'importSavedGame'|'renameSavedGame'|'loadTrashedGames'|'restoreTrashedGame'|'deleteTrashedGame'|'emptyTrash'>;
+type Actions = Pick<GameStore, 'saveGame'|'loadGame'|'loadSavedGames'|'deleteSavedGame'|'exportSavedGame'|'importSavedGame'|'renameSavedGame'|'loadTrashedGames'|'restoreTrashedGame'|'deleteTrashedGame'|'emptyTrash'>;
 
 export const createSavesSlice: StateCreator<GameStore, [['zustand/immer', never]], [], Actions> = (set, get) => ({
-  saveGame: (name: string) => {
-    const { gameState, rng, initialConfig, initialCommands, connectionMode } = get();
+  saveGame: (name: string): Promise<boolean> => {
+    const { gameState, rng, initialConfig, initialCommands, connectionMode, undoBase } = get();
     // En online el gameState es la proyección sanitizada (manos ocultas,
     // RNG zeroed, sin comandos): guardar eso corrompería la partida.
     if (connectionMode === 'online') {
       set((state) => {
         state.ui.message = i18n.t('common.msg.saveOnlineNo');
       });
-      return;
+      return Promise.resolve(false);
     }
-    if (!gameState || !rng || !initialConfig) return;
+    // undoBase es el snapshot INICIAL (post-setup): el envelope debe
+    // contener ese estado — pasar gameState aquí serializaba el estado
+    // FINAL como "inicial" y loadGame re-ejecutaba los comandos sobre el
+    // estado ya resuelto (rechazos masivos o comandos doble-aplicados).
+    if (!gameState || !rng || !initialConfig || !undoBase) return Promise.resolve(false);
 
+    const initialRng = DeterministicRng.deserialize({
+      seed: undoBase.seed,
+      state: undoBase.rngState,
+    });
     const envelope = createReplay(
       initialConfig.mode,
-      initialConfig.seed,
-      gameState,
+      undoBase.seed,
+      structuredClone(undoBase.state),
       initialCommands,
       { catalog: CATALOG_VERSION },
-      rng,
+      initialRng,
     );
+    // createReplay estampa currentSeq() (momento del guardado); el
+    // snapshot debe llevar el seq del instante de la base para que el
+    // replay/reload emita los mismos identificadores de evento.
+    if (typeof undoBase.seq === 'number') {
+      envelope.initialState.seq = undoBase.seq;
+    }
 
     const saved: SavedGame = {
       // 'Autosave' es un slot reservado: id determinista y dedupe por
@@ -197,10 +213,16 @@ export const createSavesSlice: StateCreator<GameStore, [['zustand/immer', never]
       },
     };
 
-    void enqueueSaveOp(async () => {
+    // La promesa resuelve cuando la escritura REAL termina — la UI
+    // mostraba "saved" síncrono aunque la escritura encolada fallara.
+    return enqueueSaveOp(async () => {
       const prev = await readSavedGames();
+      // El autosave solo se deduplica cuando lo que se guarda ES el
+      // autosave — un guardado manual nunca debe borrarlo (era pérdida
+      // de datos: saveGame("Mi partida") eliminaba la copia automática).
+      const dropAutosave = saved.id === 'save-autosave' || saved.name === 'Autosave';
       const games = [
-        ...prev.filter(g => g.id !== saved.id && g.name !== 'Autosave'),
+        ...prev.filter(g => g.id !== saved.id && (!dropAutosave || g.name !== 'Autosave')),
         saved,
       ];
       const persisted = await writeSavedGames(games);
@@ -213,10 +235,14 @@ export const createSavesSlice: StateCreator<GameStore, [['zustand/immer', never]
           state.ui.message = i18n.t('common.msg.saveFailed');
         }
       });
+      return persisted;
     });
   },
 
   loadGame: (id: string) => {
+    // Una sesión online viva seguiría pisando gameState con cada
+    // broadcast command_result — cortar antes de cargar la partida local.
+    if (get().connectionMode === 'online') get().disconnectOnline();
     void (async () => {
       const games = await readSavedGames();
       const saved = games.find(g => g.id === id);
@@ -247,6 +273,12 @@ export const createSavesSlice: StateCreator<GameStore, [['zustand/immer', never]
       resetInstanceCounter();
       resetPhaseSeq();
       resetResolveSeq();
+      // El seq global también debe rebobinarse al del snapshot: sin esto
+      // los eventos re-generados llevarían seqs distintos del run original
+      // (misma semántica que replayInit del motor).
+      const snapSeq = saved.envelope.initialState.seq;
+      if (typeof snapSeq === 'number' && Number.isFinite(snapSeq)) setSeq(snapSeq);
+      else resetSeq();
 
       const registry = new EffectRegistry();
       registerCoreEffects(registry);
@@ -264,7 +296,10 @@ export const createSavesSlice: StateCreator<GameStore, [['zustand/immer', never]
           seed: saved.envelope.seed,
           state: saved.envelope.initialState.rngState,
         });
-        restoredState = saved.envelope.initialState.state;
+        // structuredClone: rompe el alias con savedGames[i].envelope —
+        // el snapshot guardado no debe compartir identidad con el estado
+        // vivo ni con la base de undo.
+        restoredState = structuredClone(saved.envelope.initialState.state);
         for (const cmd of saved.envelope.commands) {
           // actorId preserva al actor real en comandos de jugadores no
           // activos (reacciones) — igual que replay() del motor.
@@ -327,9 +362,10 @@ export const createSavesSlice: StateCreator<GameStore, [['zustand/immer', never]
         // El undo de una partida cargada usa el mismo replay que el
         // propio loadGame: snapshot del envelope + comandos (§51.12).
         state.undoBase = {
-          state: saved.envelope.initialState.state,
+          state: structuredClone(saved.envelope.initialState.state),
           rngState: saved.envelope.initialState.rngState,
           seed: saved.envelope.seed,
+          seq: saved.envelope.initialState.seq,
         };
         state.viewerId = restoredState.activePlayerId;
         state.ui.message = rejectedCount > 0
@@ -340,12 +376,22 @@ export const createSavesSlice: StateCreator<GameStore, [['zustand/immer', never]
               ? i18n.t('common.msg.loadedMismatch', { name: saved.name, ver: saved.meta?.engineVersion ?? saved.envelope?.engineVersion })
               : i18n.t('common.msg.loadedOk', { name: saved.name });
         state.ui.privacyScreen = false;
+        // Igual que newGame: ninguna selección de la partida anterior
+        // sobrevive a un loadGame (los instanceIds pueden reciclarse).
+        state.ui.evasionSelection = null;
+        state.ui.swapSelection = null;
+        state.ui.selectedCardInstanceId = null;
+        state.ui.selectedEnemyInstanceId = null;
       });
     })();
   },
 
   loadSavedGames: () => {
-    void readSavedGames().then((games) => {
+    // Por la cola de escritura: una lectura concurrente con un save/
+    // delete encolado devolvía la lista vieja (o un JSON a medio
+    // escribir en backends sin atomicidad).
+    void enqueueSaveOp(async () => {
+      const games = await readSavedGames();
       set((state) => {
         state.savedGames = games;
       });
@@ -371,18 +417,9 @@ export const createSavesSlice: StateCreator<GameStore, [['zustand/immer', never]
     });
   },
 
-  restoreSavedGame: (saved: SavedGame) => {
-    void enqueueSaveOp(async () => {
-      const current = await readSavedGames();
-      if (current.some(g => g.id === saved.id)) return;
-      const games = [...current, saved];
-      await writeSavedGames(games);
-      set((state) => {
-        state.savedGames = games;
-      });
-    });
-  },
-
+  // (restoreSavedGame eliminada: era un duplicado obsoleto de
+  //  restoreTrashedGame que añadía la partida sin quitarla de la
+  //  papelera ni limpiar deletedAt — nunca tuvo consumidores)
   exportSavedGame: (id: string) => {
     void (async () => {
       // Busca en guardadas y en papelera (exportar antes de eliminar)
@@ -399,6 +436,10 @@ export const createSavesSlice: StateCreator<GameStore, [['zustand/immer', never]
         name: saved.name,
         meta: saved.meta ?? null,
         config: saved.config ?? null,
+        // customSets: la partida con contenido del Taller debe ser
+        // autocontenida — sin ellos, importar en otro dispositivo cargaba
+        // el replay contra el catálogo oficial y los comandos se rechazaban.
+        customSets: saved.customSets ?? null,
         envelope: saved.envelope,
       };
       const ok = await exportTextFile(
@@ -429,7 +470,7 @@ export const createSavesSlice: StateCreator<GameStore, [['zustand/immer', never]
       // Acepta tanto el envelope directo como el contenedor .nt4hsave
       const container = raw as {
         format?: string; envelope?: unknown; name?: string; config?: unknown;
-        meta?: SavedGame['meta'];
+        meta?: SavedGame['meta']; customSets?: unknown;
       };
       const env = (container?.format === 'nt4hsave' ? container.envelope : raw) as
         (SavedGame['envelope'] & { meta?: SavedGame['meta'] }) | undefined;
@@ -473,6 +514,18 @@ export const createSavesSlice: StateCreator<GameStore, [['zustand/immer', never]
         // En el contenedor .nt4hsave, meta/config viven al nivel raíz;
         // en un envelope desnudo pueden viajar dentro del propio envelope.
         meta: container?.format === 'nt4hsave' ? container.meta : env.meta,
+        // customSets (autocontención del Taller): viajan en el contenedor
+        // desde formatVersion 1; un envelope desnudo puede traerlos dentro.
+        // Solo se aceptan si son un array — la validación real la hace
+        // validateContentSet al cargar la partida.
+        customSets: (() => {
+          const rawSets = container?.format === 'nt4hsave'
+            ? container.customSets
+            : (env as { customSets?: unknown }).customSets;
+          return Array.isArray(rawSets)
+            ? rawSets as SavedGame['customSets']
+            : undefined;
+        })(),
       };
       const compat = classifySavedGame(saved);
       if (compat === 'incompatible') {
@@ -544,11 +597,14 @@ export const createSavesSlice: StateCreator<GameStore, [['zustand/immer', never]
   },
 
   emptyTrash: () => {
-    void (async () => {
+    // Serializado como el resto de mutaciones de papelera — sin la cola
+    // un delete/restore en vuelo podía escribir una lista antigua
+    // encima y resucitar entradas ya purgadas.
+    void enqueueSaveOp(async () => {
       await writeTrashedGames([]);
       set((state) => {
         state.trashedGames = [];
       });
-    })();
+    });
   },
 });

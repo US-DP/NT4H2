@@ -13,7 +13,6 @@ import time
 import httpx  # noqa: ASYNC127 - httpx sigue mantenido; la sugerencia httpx2 es errónea
 from django.db import transaction
 from django.http import JsonResponse
-from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 
 from accounts.authentication import get_auth_user
@@ -22,12 +21,16 @@ from ..engine_client import EngineRunnerClient
 from ..models import GameSession, Player
 from ._common import (
     _MAX_SEED_LEN,
+    MAX_KICKED_IDS,
     _broadcast_room,
+    _bump_player_stat,
     _bump_revision,
+    _check_engine_id,
     _check_ids,
     _check_str,
     _for_update,
     _get_player_token,
+    _get_session,
     _guard_post,
     _rate_limited,
     _require_host,
@@ -36,11 +39,11 @@ from ._common import (
     reap_stale_rooms,
     security_logger,
 )
+from .engine import _revoke_ws_tickets, mark_finished
 
 logger = logging.getLogger(__name__)
 
 
-@csrf_exempt
 def _validate_create_config(config):
     """Límites de presupuesto para la config de sala.
 
@@ -56,13 +59,28 @@ def _validate_create_config(config):
     if config_bytes > 256 * 1024:
         return JsonResponse({"error": "config too large"}, status=413)
     custom_sets = config.get("customSets")
-    if custom_sets is None:
-        return None
-    if not isinstance(custom_sets, list) or len(custom_sets) > 8:
-        return JsonResponse({"error": "too many customSets"}, status=400)
-    entity_count = sum(len(s.get("cards", [])) + len(s.get("decks", [])) for s in custom_sets if isinstance(s, dict))
-    if entity_count > 500:
-        return JsonResponse({"error": "customSets too large"}, status=400)
+    if custom_sets is not None:
+        if not isinstance(custom_sets, list) or len(custom_sets) > 8:
+            return JsonResponse({"error": "too many customSets"}, status=400)
+        entity_count = sum(
+            len(s.get("cards", [])) + len(s.get("decks", [])) for s in custom_sets if isinstance(s, dict)
+        )
+        if entity_count > 500:
+            return JsonResponse({"error": "customSets too large"}, status=400)
+    # customDecks viaja al runner y se indexa en join: validar la forma
+    # aquí (un no-dict provocaba AttributeError→500 en _register_custom_deck)
+    # y quitar ownerPlayerId — el ownership lo estampa el backend al unirse;
+    # un owner ajeno pre-registrado impedía al legítimo redefinir su mazo.
+    decks = config.get("customDecks")
+    if decks is not None:
+        if not isinstance(decks, list) or len(decks) > _MAX_CUSTOM_DECKS:
+            return JsonResponse({"error": "too many customDecks"}, status=400)
+        clean = []
+        for d in decks:
+            if not _is_valid_custom_deck(d):
+                return JsonResponse({"error": "Invalid customDecks entry"}, status=400)
+            clean.append({k: v for k, v in d.items() if k != "ownerPlayerId"})
+        config["customDecks"] = clean
     return None
 
 
@@ -105,6 +123,26 @@ def _parse_heroes(data: dict):
         for key in ("heroId", "deckId"):
             if (err := _check_str(h.get(key, ""), key, allow_empty=False)) is not None:
                 return err
+        # Misma forma que CreateRoomSchema del runner (D432): playerId y
+        # heroFace son obligatorios allí — sin validarlos aquí, el runner
+        # respondía 400 después de crear la sala Django (desync).
+        # playerId/heroId además por idSchema (sin '__*'/unsafe ids).
+        if (err := _check_engine_id(h.get("playerId", ""), "playerId")) is not None:
+            return err
+        if (err := _check_engine_id(h.get("heroId", ""), "heroId")) is not None:
+            return err
+        if h.get("heroFace") not in ("FEMALE", "MALE"):
+            return JsonResponse({"error": "Invalid heroFace"}, status=400)
+        # Multiclase: mismos campos opcionales que CreateRoomSchema del
+        # runner (secondDeckId ≤128 chars, playerAge entero ≥0). Sin
+        # validarlos aquí se persistían y el roster del motor era un
+        # desync silencioso.
+        if (err := _check_str(h.get("secondDeckId", ""), "secondDeckId", 128)) is not None:
+            return err
+        if "playerAge" in h:
+            age = h.get("playerAge")
+            if not isinstance(age, int) or isinstance(age, bool) or not 0 <= age <= 200:
+                return JsonResponse({"error": "Invalid playerAge"}, status=400)
     return heroes
 
 
@@ -180,6 +218,15 @@ def _create_session_with_host(parsed: dict, user=None):
                     hero_id=str(host_hero.get("heroId", ""))[:100],
                     deck_id=str(host_hero.get("deckId", ""))[:100],
                     hero_face=str(host_hero.get("heroFace", ""))[:10],
+                    # Multiclase: la segunda baraja y la edad del host
+                    # también sobreviven al recreate de start_room.
+                    second_deck_id=str(host_hero.get("secondDeckId", ""))[:100],
+                    player_age=(
+                        host_hero.get("playerAge")
+                        if isinstance(host_hero.get("playerAge"), int)
+                        and not isinstance(host_hero.get("playerAge"), bool)
+                        else None
+                    ),
                     user=user,
                 )
             return session, host
@@ -224,6 +271,7 @@ def _create_engine_room(session, parsed):
     return None
 
 
+@csrf_exempt
 def create_room(request):
     """Create a new game room."""
     data, guard_error = _guard_post(request, "create")
@@ -279,7 +327,12 @@ def list_rooms(request):
         except Exception:  # noqa: PIE786  # pylint: disable=broad-exception-caught
             logger.warning("reap_stale_rooms failed", exc_info=True)
 
-    rooms = GameSession.objects.filter(status__in=["WAITING", "PLAYING"]).order_by("-created_at")[:50]
+    rooms = (
+        GameSession.objects.filter(status__in=["WAITING", "PLAYING"])
+        # players__user__profile: to_dict() lee user.profile por jugador —
+        # sin el prefetch eran ~2 queries extra por jugador por sala (N+1).
+        .prefetch_related("players__user__profile").order_by("-created_at")[:50]
+    )
     # Sin config privada: el listado público no sirve los customSets del
     # host ni los pools del motor a cualquiera (ver _PUBLIC_CONFIG_KEYS).
     return JsonResponse({"rooms": [r.to_dict(include_private_config=False) for r in rooms]})
@@ -293,7 +346,7 @@ def room_state(request, room_id):
     if _rate_limited(request, "read"):
         return JsonResponse({"error": "Too many requests"}, status=429)
 
-    session = get_object_or_404(GameSession, room_id=room_id)
+    session = _get_session(room_id)
     # Config privada (customSets del host, pools del motor) solo para
     # miembros autenticados: el código de sala es público en list_rooms,
     # así que sin credenciales se sirve la vista pública. Es el canal por
@@ -321,15 +374,34 @@ def _parse_join_fields(data: dict):
         "deck_id": data.get("deckId", ""),
         "hero_face": data.get("heroFace", ""),
         "custom_deck_id": data.get("customDeckId", ""),
+        "second_deck_id": data.get("secondDeckId", ""),
+        "player_age": data.get("playerAge"),
         # Ausencia vs cadena vacía: un rejoin sin el campo no debe borrar
         # la selección anterior; "" informado sí la limpia.
         "custom_deck_present": "customDeckId" in data,
+        "second_deck_present": "secondDeckId" in data,
+        "player_age_present": "playerAge" in data,
     }
-    invalid = _check_ids(data, "playerId", "name", "heroId", "deckId", "heroFace", "customDeckId", allow_empty=True)
+    invalid = _check_ids(
+        data, "playerId", "name", "heroId", "deckId", "heroFace", "customDeckId", "secondDeckId", allow_empty=True
+    )
     if invalid is not None:
         return invalid
+    # playerId/heroId viajan al runner con idSchema (sin '__*'/unsafe):
+    # en join son opcionales (rejoin), así que solo se validan si vienen.
+    for key, field in (("playerId", "player_id"), ("heroId", "hero_id")):
+        if fields[field] and (err := _check_engine_id(fields[field], key)) is not None:
+            return err
     if fields["hero_face"] and fields["hero_face"] not in ("FEMALE", "MALE"):
         return JsonResponse({"error": "Invalid heroFace"}, status=400)
+    # Multiclase: la edad declarada usa el mismo contrato que el runner
+    # (entero ≥0); tope 200 para que quepa en PositiveSmallIntegerField.
+    if fields["player_age"] is not None and (
+        not isinstance(fields["player_age"], int)
+        or isinstance(fields["player_age"], bool)
+        or not 0 <= fields["player_age"] <= 200
+    ):
+        return JsonResponse({"error": "Invalid playerAge"}, status=400)
     if not fields["player_id"]:
         return JsonResponse({"error": "playerId is required"}, status=400)
     # Snapshot del mazo del Taller: el invitado trae su definición y se
@@ -338,6 +410,11 @@ def _parse_join_fields(data: dict):
     if custom_deck is not None:
         if not _is_valid_custom_deck(custom_deck):
             return JsonResponse({"error": "Invalid customDeck"}, status=400)
+        # El snapshot subido debe ser el mazo que el jugador dice usar:
+        # sin esta igualdad cualquiera podía reescribir la definición del
+        # customDeckId de otro miembro antes del start.
+        if custom_deck["id"] != fields["custom_deck_id"]:
+            return JsonResponse({"error": "customDeck.id must match customDeckId"}, status=400)
         fields["custom_deck"] = {
             "id": custom_deck["id"],
             "cardDefinitionIds": [str(cid) for cid in custom_deck["cardDefinitionIds"]],
@@ -366,7 +443,6 @@ def _rejoin_player(request, player, fields: dict, data: dict):
     token = _get_player_token(request, data)
     if not token or not hmac.compare_digest(player.auth_token, token):
         return JsonResponse({"error": "Invalid player token"}, status=403)
-    player.is_connected = True
     player.name = fields["name"]
     # La elección solo se sobrescribe cuando viene informada —
     # un rejoin sin heroId no borra la selección anterior.
@@ -377,6 +453,12 @@ def _rejoin_player(request, player, fields: dict, data: dict):
     # "" informado la limpia a propósito.
     if fields.get("custom_deck_present"):
         player.custom_deck_id = fields["custom_deck_id"]
+    # Multiclase: mismo criterio — rejoin sin el campo conserva la
+    # segunda baraja y la edad anteriores.
+    if fields.get("second_deck_present"):
+        player.second_deck_id = fields["second_deck_id"]
+    if fields.get("player_age_present"):
+        player.player_age = fields["player_age"]
     player.save()
     return None
 
@@ -400,6 +482,16 @@ def _apply_join(request, session_pk: int, fields: dict, data: dict):
                 {"error": "Has sido expulsado de esta sala", "kicked": True},
                 status=403,
             )
+        # Y con cuenta vinculada el veto es por USUARIO: re-entrar con un
+        # playerId nuevo pero el mismo JWT seguía funcionando (el veto
+        # solo miraba player_id). Invitados sin cuenta solo pueden vetarse
+        # por asiento — es lo máximo identificable que tienen.
+        kicked_users = (session.config or {}).get("_kickedUserIds") or {}
+        if user is not None and str(user.pk) in kicked_users.values():
+            return None, JsonResponse(
+                {"error": "Has sido expulsado de esta sala", "kicked": True},
+                status=403,
+            )
         existing = Player.objects.filter(session=session, player_id=fields["player_id"]).first()
         if existing is None:
             if session.players.count() >= session.max_players:
@@ -412,38 +504,59 @@ def _apply_join(request, session_pk: int, fields: dict, data: dict):
                 deck_id=fields["deck_id"],
                 hero_face=fields["hero_face"],
                 custom_deck_id=fields.get("custom_deck_id", ""),
+                second_deck_id=fields.get("second_deck_id", ""),
+                player_age=fields.get("player_age"),
                 user=user,
             )
         else:
-            # Si el rejoin viene autenticado y la fila no tenía cuenta,
-            # la vinculamos (equivalente a claim-guest implícito).
-            if user is not None and existing.user_id is None:
-                existing.user = user
-                existing.save(update_fields=["user"])
             rejoin_error = _rejoin_player(request, existing, fields, data)
             if rejoin_error is not None:
                 return None, rejoin_error
+            # Claim-guest implícito SOLO tras autenticar el rejoin: si se
+            # vinculaba antes de validar el playerToken, cualquier cuenta
+            # con JWT podía apropiarse la fila de un invitado mandando un
+            # join con su playerId y un token incorrecto (el 403 devuelto
+            # no deshacía el save dentro del atomic).
+            if user is not None and existing.user_id is None:
+                existing.user = user
+                existing.save(update_fields=["user"])
             player = existing
         # Registrar el snapshot del mazo custom en la config de la sala:
         # el runner lo resuelve por customDeckId al construir la baraja.
         if fields.get("custom_deck"):
-            _register_custom_deck(session, fields["custom_deck"])
+            deck_error = _register_custom_deck(session, fields["custom_deck"], fields["player_id"])
+            if deck_error is not None:
+                return None, deck_error
         _bump_revision(session)
     return player, session
 
 
-def _register_custom_deck(session, custom_deck: dict) -> None:
+# El CreateRoomSchema del runner limita customDecks a 8 (server.ts) — un
+# tope mayor aquí permitía registrar mazos con los que la sala nunca
+# podía arrancar (400 del runner enmascarado como 503).
+_MAX_CUSTOM_DECKS = 8
+
+
+def _register_custom_deck(session, custom_deck: dict, owner_player_id: str) -> JsonResponse | None:
     """Registra/actualiza el snapshot del mazo del Taller en session.config.
 
     ``customDecks`` se indexa por id: un rejoin con el mismo mazo sustituye
-    la definición anterior en vez de duplicarla.
+    la definición anterior en vez de duplicarla. El mazo queda ligado al
+    owner que lo subió — otro jugador no puede redefinir un deckId ajeno.
     """
     cfg = dict(session.config or {})
-    decks = [d for d in cfg.get("customDecks", []) if d.get("id") != custom_deck["id"]]
-    decks.append(custom_deck)
+    existing = cfg.get("customDecks", [])
+    other = next((d for d in existing if d.get("id") == custom_deck["id"]), None)
+    if other is not None and other.get("ownerPlayerId") not in (None, owner_player_id):
+        return JsonResponse({"error": "customDeck id belongs to another player"}, status=409)
+    decks = [d for d in existing if d.get("id") != custom_deck["id"]]
+    if len(decks) >= _MAX_CUSTOM_DECKS:
+        return JsonResponse({"error": "Too many custom decks in room"}, status=400)
+    decks.append({**custom_deck, "ownerPlayerId": owner_player_id})
     cfg["customDecks"] = decks
     session.config = cfg
     session.save(update_fields=["config"])
+    return None
 
 
 @csrf_exempt
@@ -452,7 +565,7 @@ def join_room(request, room_id):
     data, guard_error = _guard_post(request, "join")
     if guard_error is not None:
         return guard_error
-    session = get_object_or_404(GameSession, room_id=room_id)
+    session = _get_session(room_id)
 
     if session.status != "WAITING":
         return JsonResponse({"error": "Room is not open"}, status=403)
@@ -485,7 +598,7 @@ def leave_room(request, room_id):
     data, guard_error = _guard_post(request, "leave")
     if guard_error is not None:
         return guard_error
-    session = get_object_or_404(GameSession, room_id=room_id)
+    session = _get_session(room_id)
 
     player_id = data.get("playerId", "")
     invalid = _check_str(player_id, "playerId", allow_empty=False)
@@ -499,13 +612,88 @@ def leave_room(request, room_id):
 
     # select_for_update: un join/start concurrente no debe quedar a medio
     # camino con una sala borrada bajo sus pies (M7).
+    new_host_id = None
+    room_finished = False
+    token = _get_player_token(request, data)
     with transaction.atomic():
         session = _for_update(session)
-        Player.objects.filter(session=session, player_id=player_id).update(is_connected=False)
+        player = Player.objects.filter(session=session, player_id=player_id).first()
+        if player is not None:
+            # Abandono explícito en plena partida: cuenta en las
+            # estadísticas de la cuenta vinculada (played/won/lost los
+            # cierra mark_finished). En PLAYING solo abandona el propio
+            # jugador — kick está vetado en PLAYING y el token de host era
+            # un bypass que borraba filas ajenas en plena partida.
+            if session.status == "PLAYING":
+                if not token or not hmac.compare_digest(player.auth_token, token):
+                    return JsonResponse({"error": "Only the player can leave mid-game"}, status=403)
+                _bump_player_stat(player.user_id, games_abandoned=1)
+            # Si se va el host, promocionar al conectado más antiguo (o al
+            # último que quede) — en PLAYING sin esto skip_turn/close
+            # quedaban inalcanzables hasta el reaper.
+            if session.host_id == player_id:
+                nxt = (
+                    session.players.filter(is_connected=True).exclude(player_id=player_id).order_by("id").first()
+                ) or session.players.exclude(player_id=player_id).order_by("id").first()
+                if nxt is not None:
+                    nxt.is_host = True
+                    nxt.save(update_fields=["is_host"])
+                    session.host_id = nxt.player_id
+                    session.save(update_fields=["host_id"])
+                    new_host_id = nxt.player_id
+            # El abandono borra la fila (como kick): libera el hueco en
+            # WAITING e impide reconectar en PLAYING — _verify_player ya no
+            # lo reconoce, así que no puede pedir tickets ni mandar
+            # comandos. El motor conserva su asiento en el roster.
+            player.delete()
+            # Veto solo cuando es el HOST quien retira a otro: el token
+            # del requester debe ser el del host (un jugador que abandona
+            # por su propio token en WAITING no queda vetado — era un
+            # leave voluntario, no una expulsión).
+            host_row = (
+                session.players.filter(player_id=session.host_id).only("auth_token").first()
+                if session.host_id != player_id
+                else None
+            )
+            host_removal = (
+                host_row is not None
+                and session.status == "WAITING"
+                and bool(token)
+                and hmac.compare_digest(host_row.auth_token, token)
+            )
+            if host_removal:
+                kicked = list(session.kicked_ids or [])
+                if player_id not in kicked:
+                    kicked.append(player_id)
+                session.kicked_ids = kicked[-MAX_KICKED_IDS:]
+                update_fields = ["kicked_ids"]
+                if player.user_id:
+                    cfg = dict(session.config or {})
+                    kicked_users = dict(cfg.get("_kickedUserIds") or {})
+                    kicked_users[player_id] = str(player.user_id)
+                    kicked_users = {k: v for k, v in kicked_users.items() if k in kicked}
+                    cfg["_kickedUserIds"] = kicked_users
+                    session.config = cfg
+                    update_fields.append("config")
+                session.save(update_fields=update_fields)
         revision = _bump_revision(session)
 
-        # Cleanup: sala WAITING abandonada por todos → borrar en runner y Django
-        room_closed = session.status == "WAITING" and not session.players.filter(is_connected=True).exists()
+        # Cleanup: sala WAITING abandonada por todos → borrar en runner y
+        # Django. "Todos" = sin filas Player: is_connected ahora refleja
+        # presencia WS real (un miembro que aún no abrió el socket no
+        # cuenta como conectado pero tampoco abandona la sala).
+        room_closed = session.status == "WAITING" and not session.players.exists()
+        # Sala PLAYING que se queda sin ningún Player: la partida queda
+        # abortada — sin esto host_id apuntaba a una fila borrada y la
+        # sala era ingobernable hasta el reaper (48h).
+        room_finished = session.status == "PLAYING" and not session.players.exists()
+
+    if room_finished:
+        mark_finished(session, None)
+
+    # Revocar tickets WS emitidos pero sin consumir: un ticket pendiente
+    # (~60 s) permitía reconectar y deshacer el abandono en silencio.
+    _revoke_ws_tickets(room_id, player_id)
 
     # Avisar a las conexiones WS del jugador para que se cierren — sin
     # esto seguían recibiendo broadcasts y podían enviar comandos en
@@ -518,6 +706,15 @@ def leave_room(request, room_id):
             "roomRevision": revision,
         },
     )
+    if new_host_id is not None:
+        _broadcast_room(
+            room_id,
+            {
+                "type": "room.host_changed",
+                "playerId": new_host_id,
+                "roomRevision": revision,
+            },
+        )
 
     if room_closed:
         return _close_dead_room(session, room_id)
@@ -542,7 +739,7 @@ def set_ready(request, room_id):
     data, guard_error = _guard_post(request, "ready")
     if guard_error is not None:
         return guard_error
-    session = get_object_or_404(GameSession, room_id=room_id)
+    session = _get_session(room_id)
 
     player_id = data.get("playerId", "")
     player, error = _verify_player(session, player_id, _get_player_token(request, data))
@@ -554,12 +751,21 @@ def set_ready(request, room_id):
     if player is None:
         return JsonResponse({"error": "Player not found"}, status=403)
 
-    ready = bool(data.get("ready", True))
+    # bool() sobre "false" da True — exigir bool real si el campo viene.
+    ready = data.get("ready", True)
+    if not isinstance(ready, bool):
+        return JsonResponse({"error": "ready must be a boolean"}, status=400)
     # Lock de sesión: serializa con kick/start — un ready tardío no puede
     # resucitar a un jugador expulsado (su fila ya no existe: 403 arriba)
     # ni colarse entre la comprobación de "todos listos" y el start.
     with transaction.atomic():
         _for_update(session)
+        # B-3: TOCTOU — el kick pudo comprometerse entre _verify_player y
+        # este lock; re-comprobar la fila dentro del atomic (un save() sobre
+        # una fila borrada no da error: actualiza 0 filas y aún así se
+        # emitía room.player_ready a un jugador expulsado).
+        if not session.players.filter(pk=player.pk).exists():
+            return JsonResponse({"error": "Player not found"}, status=403)
         player.is_ready = ready
         player.save(update_fields=["is_ready"])
         revision = _bump_revision(session)
@@ -590,6 +796,10 @@ def _recreate_engine_room(session, room_id: str, players: list) -> bool:
             "heroFace": p.hero_face or "FEMALE",
             "deckId": p.deck_id,
             **({"customDeckId": p.custom_deck_id} if p.custom_deck_id else {}),
+            # Multiclase: sin estos campos el roster recreado perdía la
+            # segunda baraja y la edad del desempate de líder.
+            **({"secondDeckId": p.second_deck_id} if p.second_deck_id else {}),
+            **({"playerAge": p.player_age} if p.player_age is not None else {}),
         }
         for p in players
     ]
@@ -613,73 +823,57 @@ def _recreate_engine_room(session, room_id: str, players: list) -> bool:
     return True
 
 
-def _start_prechecks(session, player_id: str) -> tuple[list, JsonResponse | None]:
-    """Bajo lock: host vigente + WAITING + roster completo y preparado.
-
-    Devuelve (players, None) o ([], JsonResponse de error). El host se
-    re-verifica DENTRO del lock: un transfer_host concurrente no puede
-    dejar al viejo host autorizado por una lectura stale de host_id.
-    """
-    with transaction.atomic():
-        session = _for_update(session)
-        if session.host_id != player_id:
-            return [], JsonResponse({"error": "Only the host can start"}, status=403)
-        if session.status != "WAITING":
-            return [], JsonResponse({"error": "Room is not open"}, status=403)
-        players = list(session.players.order_by("joined_at"))
-        if not players:
-            return [], JsonResponse({"error": "Not enough players"}, status=403)
-        # Todos los invitados deben estar preparados; el host lo está
-        # implícitamente al pulsar Iniciar.
-        if any(not p.is_host and not p.is_ready for p in players):
-            return [], JsonResponse({"error": "Not all players are ready"}, status=409)
-        # Cada miembro debe tener héroe y mazo declarados — el roster del
-        # motor se construye con todos los jugadores unidos; un invitado
-        # sin héroe quedaría dentro de la sala pero incapaz de actuar.
-        if any(not p.hero_id or not p.deck_id for p in players):
-            return [], JsonResponse({"error": "All players must choose a hero"}, status=409)
-    return players, None
-
-
-def _mark_playing(session) -> tuple[GameSession, JsonResponse | None]:
-    """Marca PLAYING bajo lock. Devuelve (session, None) o (session, error)."""
-    with transaction.atomic():
-        session = _for_update(session)
-        if session.status != "WAITING":
-            return session, JsonResponse({"error": "Room is not open"}, status=403)
-        session.status = "PLAYING"
-        session.save()
-        _bump_revision(session)
-    return session, None
-
-
 @csrf_exempt
 def start_room(request, room_id):
-    """Start the game in a room (host only)."""
+    """Start the game in a room (host only).
+
+    Un solo lock de sesión cubre prechecks + recreate del runner +
+    PLAYING: con dos transacciones separadas, un segundo start
+    concurrente pasaba los prechecks, recreaba la sala del motor (delete
+    + create) sobre una sala YA en PLAYING — borrando la partida que el
+    primer start acababa de arrancar — y solo entonces chocaba con el
+    chequeo de estado. La llamada HTTP al runner dentro del lock es
+    deliberada: serializa los starts de la misma sala.
+    """
     data, guard_error = _guard_post(request, "start")
     if guard_error is not None:
         return guard_error
-    session = get_object_or_404(GameSession, room_id=room_id)
+    session = _get_session(room_id)
 
     # D431: verificar que quien arranca es realmente el host (token)
     player_id, error = _require_host(request, data, session, "start")
     if error is not None:
         return error
 
-    players, error = _start_prechecks(session, player_id)
-    if error is not None:
-        return error
+    with transaction.atomic():
+        session = _for_update(session)
+        if session.host_id != player_id:
+            return JsonResponse({"error": "Only the host can start"}, status=403)
+        if session.status != "WAITING":
+            return JsonResponse({"error": "Room is not open"}, status=403)
+        players = list(session.players.order_by("joined_at"))
+        if not players:
+            return JsonResponse({"error": "Not enough players"}, status=403)
+        # Todos los invitados deben estar preparados; el host lo está
+        # implícitamente al pulsar Iniciar.
+        if any(not p.is_host and not p.is_ready for p in players):
+            return JsonResponse({"error": "Not all players are ready"}, status=409)
+        # Cada miembro debe tener héroe y mazo declarados — el roster del
+        # motor se construye con todos los jugadores unidos; un invitado
+        # sin héroe quedaría dentro de la sala pero incapaz de actuar.
+        if any(not p.hero_id or not p.deck_id for p in players):
+            return JsonResponse({"error": "All players must choose a hero"}, status=409)
 
-    # Reconstruir la sala del motor con el roster completo: en create solo
-    # viajaban los héroes del host; los invitados eligen al entrar. Se
-    # hace ANTES de marcar PLAYING — si el runner falla, la sala sigue en
-    # espera en vez de arrancar con un roster incompleto.
-    if not _recreate_engine_room(session, room_id, players):
-        return JsonResponse({"error": "Engine runner unavailable"}, status=503)
+        # Reconstruir la sala del motor con el roster completo: en create
+        # solo viajaban los héroes del host; los invitados eligen al
+        # entrar. Si el runner falla, la sala sigue en WAITING en vez de
+        # arrancar con un roster incompleto.
+        if not _recreate_engine_room(session, room_id, players):
+            return JsonResponse({"error": "Engine runner unavailable"}, status=503)
 
-    session, error = _mark_playing(session)
-    if error is not None:
-        return error
+        session.status = "PLAYING"
+        session.save(update_fields=["status", "updated_at"])
+        _bump_revision(session)
 
     return JsonResponse({"started": True, "room": session.to_dict()})
 
@@ -694,9 +888,9 @@ def close_room(request, room_id):
     data, guard_error = _guard_post(request, "close")
     if guard_error is not None:
         return guard_error
-    session = get_object_or_404(GameSession, room_id=room_id)
+    session = _get_session(room_id)
 
-    _, error = _require_host(request, data, session, "close the room")
+    player_id, error = _require_host(request, data, session, "close the room")
     if error is not None:
         return error
 
@@ -704,6 +898,18 @@ def close_room(request, room_id):
     # colisionaba con el siguiente bump real.
     with transaction.atomic():
         session = _for_update(session)
+        # Re-check del host bajo lock ANTES de mark_finished: un
+        # transfer_host concurrente no debe dejar al antiguo host abortar
+        # la partida con su lectura stale (mark_finished es irreversible:
+        # stats contabilizadas + broadcast room.finished).
+        if session.host_id != player_id:
+            return JsonResponse({"error": "Only the host can close the room"}, status=403)
+        # Cerrar una sala PLAYING es abortar la partida: registrar el fin
+        # (GAME_ENDED sin ganador + estadísticas + snapshot) antes de borrar.
+        # Sin esto, el host podía destruir la partida a mitad y las
+        # estadísticas nunca se contabilizaban.
+        if session.status == "PLAYING":
+            mark_finished(session, None)
         revision = _bump_revision(session)
     _broadcast_room(
         room_id,

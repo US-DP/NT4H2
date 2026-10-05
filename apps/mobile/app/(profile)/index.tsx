@@ -6,7 +6,7 @@
  * y efecto inmediato de cada ajuste (persistido en settingsStore).
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, Switch, useWindowDimensions } from 'react-native';
 import { AppSlider } from '../../components/ui/AppSlider';
 import { useRouter } from 'expo-router';
@@ -14,7 +14,8 @@ import { useTranslation } from 'react-i18next';
 import { useGameStore } from '../../store/gameStore';
 import { useCustomContent } from '../../lib/customContent';
 import { storageGet } from '../../lib/storage';
-import { useSettings, type Density, type ColorMode, type ControlSize, type DragSensitivity, type HapticIntensity, type GameOrientation, type HordeSummaryMode } from '../../store/settingsStore';
+import { clearHistory, loadHistory } from '../../lib/gameHistory';
+import { useSettings, type Settings, type Density, type ColorMode, type ControlSize, type DragSensitivity, type HapticIntensity, type GameOrientation, type HordeSummaryMode } from '../../store/settingsStore';
 import { NtDialog } from '../../components/ui/NtDialog';
 import { pickTextFile } from '../../lib/pickFile';
 import { exportTextFile } from '../../lib/exportSave';
@@ -28,12 +29,18 @@ import { Platform } from 'react-native';
 // Metro/Expo define __DEV__ en runtime; los tipos de RN no lo declaran.
 declare const __DEV__: boolean;
 import { useColors, useFontScale, useFontFamily, useFontWeight } from '../../lib/useTheme';
+import { type Colors } from '../../lib/theme';
+import { AppNav, useNavSidebarWidth } from '../../components/AppNav';
 import { hapticPlay } from '../../lib/haptics';
+import { useAuth } from '../../store/authStore';
+import { authApi } from '../../lib/auth';
 
 /* ---------- Controles reutilizables ---------- */
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   const c = useColors();
+  const fs = useFontScale();
+  const s = createStyles(c, fs);
   const { width } = useWindowDimensions();
   // Acordeón: en estrecho las secciones nacen plegadas (el Perfil es una
   // columna larga); en ancho permanecen abiertas pero siguen siendo plegables.
@@ -64,6 +71,7 @@ function ToggleRow({ label, hint, value, onChange }: {
 }) {
   const c = useColors();
   const fs = useFontScale();
+  const s = createStyles(c, fs);
   return (
     <View style={[s.row, { borderBottomColor: c.divider }]}>
       <View style={s.rowText}>
@@ -90,6 +98,7 @@ function OptionGroup<T extends string | number>({ label, hint, options, value, o
 }) {
   const c = useColors();
   const fs = useFontScale();
+  const s = createStyles(c, fs);
   return (
     <View style={[s.optionGroup, { borderBottomColor: c.divider }]}>
       <Text style={[s.optionLabel, { color: c.text, fontSize: 14 * fs }]}>{label}</Text>
@@ -113,7 +122,7 @@ function OptionGroup<T extends string | number>({ label, hint, options, value, o
               <Text style={[
                 s.optionButtonText,
                 { color: c.textMuted, fontSize: 12 * fs },
-                active && { color: '#1a1a2e' },
+                active && { color: c.textOnAccent },
               ]}>
                 {o.label}
               </Text>
@@ -130,6 +139,7 @@ function SliderRow({ label, value, onChange }: {
 }) {
   const c = useColors();
   const fs = useFontScale();
+  const s = createStyles(c, fs);
   const { t } = useTranslation();
   return (
     <View style={[s.row, { borderBottomColor: c.divider }]}>
@@ -155,6 +165,7 @@ function SliderRow({ label, value, onChange }: {
 function Preview() {
   const c = useColors();
   const fs = useFontScale();
+  const s = createStyles(c, fs);
   const { t } = useTranslation();
   const density = useSettings((s) => s.density);
   const bold = useSettings((s) => s.boldText);
@@ -168,7 +179,7 @@ function Preview() {
         {t('profile.previewCardBody')}
       </Text>
       <View style={[s.previewButton, { backgroundColor: c.primary }]}>
-        <Text style={{ color: '#fff', fontWeight: bold ? 'bold' : '600', fontSize: 13 * fs, fontFamily }}>
+        <Text style={{ color: c.text, fontWeight: bold ? 'bold' : '600', fontSize: 13 * fs, fontFamily }}>
           {t('profile.previewButton')}
         </Text>
       </View>
@@ -187,10 +198,18 @@ export default function ProfileScreen() {
   const set = settings.set;
   const c = useColors();
   const fs = useFontScale();
+  const s = createStyles(c, fs);
+  const navWidth = useNavSidebarWidth();
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmEmptyTrash, setConfirmEmptyTrash] = useState(false);
   const [confirmClearSaves, setConfirmClearSaves] = useState(false);
-  const [importPreview, setImportPreview] = useState<{ values: Partial<import('../../store/settingsStore').Settings>; changes: string[] } | null>(null);
+  const [confirmClearHistory, setConfirmClearHistory] = useState(false);
+  // Nº de partidas en el historial local (para el hint del botón).
+  const [historyCount, setHistoryCount] = useState(0);
+  useEffect(() => {
+    void loadHistory().then((h) => setHistoryCount(h.length)).catch(() => undefined);
+  }, [confirmClearHistory]);
+  const [importPreview, setImportPreview] = useState<{ values: Partial<Settings>; changes: string[] } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
 
   const exportSettings = async () => {
@@ -244,13 +263,31 @@ export default function ProfileScreen() {
   };
   const change = (partial: Parameters<typeof set>[0]) => { set(partial); markSaved(); };
 
+  // Sincronización de cuenta: displayName/local se persiste en settings,
+  // pero con sesión iniciada también alimenta display_name de /api/v1/me
+  // (leaderboard y perfiles la muestran). Debounce — no un PATCH por tecla.
+  const authUser = useAuth((st) => st.user);
+  const nameSyncRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const changeDisplayName = (v: string) => {
+    change({ displayName: v });
+    if (!authUser) return;
+    if (nameSyncRef.current) clearTimeout(nameSyncRef.current);
+    nameSyncRef.current = setTimeout(() => {
+      void authApi.updateMe({ display_name: v }).catch(() => undefined);
+    }, 800);
+  };
+
   const setLanguage = (lang: 'system' | 'es' | 'en') => {
     change({ language: lang });
     void i18n.changeLanguage(lang === 'system' ? undefined : lang);
   };
 
   return (
-    <ScrollView style={[s.container, { backgroundColor: c.background }]}>
+    <View style={{ flex: 1 }}>
+    <ScrollView
+      style={[s.container, { backgroundColor: c.background, marginLeft: navWidth }]}
+      contentContainerStyle={{ paddingBottom: 80 }}
+    >
       <Text style={[s.title, { color: c.accent, fontSize: 24 * fs }]}>{t('profile.title')}</Text>
       {saved && (
         <Text style={[s.savedMsg, { color: c.success }]} accessibilityLiveRegion="polite">
@@ -270,7 +307,7 @@ export default function ProfileScreen() {
           <TextInput
             style={[s.input, { color: c.text, borderColor: c.border, backgroundColor: c.surfaceRaised, fontSize: 14 * fs }]}
             value={settings.displayName}
-            onChangeText={(v) => change({ displayName: v })}
+            onChangeText={changeDisplayName}
             placeholder={t('profile.namePlaceholder')}
             placeholderTextColor={c.textFaint}
             accessibilityLabel={t('profile.displayName')}
@@ -286,6 +323,12 @@ export default function ProfileScreen() {
           ]}
           value={settings.language}
           onChange={setLanguage}
+        />
+        <ToggleRow
+          label={t('stats.shareStats')}
+          hint={t('stats.shareStatsHint')}
+          value={settings.shareStats}
+          onChange={(v) => change({ shareStats: v })}
         />
       </Section>
 
@@ -593,26 +636,33 @@ export default function ProfileScreen() {
       <Section title={t('storage.title')}>
         <Text style={[s.actionHint, { color: c.textMuted }]}>
           {t('storage.summary', { saved: savedGames.length, trashed: trashedGames.length, sets: customSets.length })}
-            {storageSizes.length > 0 && (
-              <View style={{ marginTop: 6 }}>
-                {storageSizes.map((row) => (
-                  <View key={row.label} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                    <Text style={[s.actionHint, { color: c.textMuted }]}>{row.label}</Text>
-                    <Text style={[s.actionHint, { color: c.textFaint ?? c.textMuted }]}>
-                      {row.bytes < 1024 ? `${row.bytes} B`
-                        : row.bytes < 1048576 ? `${(row.bytes / 1024).toFixed(1)} KB`
-                        : `${(row.bytes / 1048576).toFixed(1)} MB`}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            )}
         </Text>
+        {/* El detalle por clave va FUERA del Text: un View anidado en Text
+            es inválido y puede soltar la línea entera en algunos motores. */}
+        {storageSizes.length > 0 && (
+          <View style={{ marginTop: 6 }}>
+            {storageSizes.map((row) => (
+              <View key={row.label} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={[s.actionHint, { color: c.textMuted }]}>{row.label}</Text>
+                <Text style={[s.actionHint, { color: c.textFaint }]}>
+                  {row.bytes < 1024 ? `${row.bytes} B`
+                    : row.bytes < 1048576 ? `${(row.bytes / 1024).toFixed(1)} KB`
+                    : `${(row.bytes / 1048576).toFixed(1)} MB`}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
         <Pressable
-          style={[s.actionButton, { backgroundColor: c.surfaceRaised, borderColor: c.border }]}
+          style={[
+            s.actionButton,
+            { backgroundColor: c.surfaceRaised, borderColor: c.border },
+            trashedGames.length === 0 && { opacity: 0.45 },
+          ]}
           onPress={() => setConfirmEmptyTrash(true)}
           disabled={trashedGames.length === 0}
           accessibilityRole="button"
+          accessibilityState={{ disabled: trashedGames.length === 0 }}
           accessibilityLabel={t('profile.trashCountA11y', { n: trashedGames.length })}
         >
           <Text style={s.actionButtonText}>{t('storage.emptyTrash')}</Text>
@@ -621,15 +671,37 @@ export default function ProfileScreen() {
           </Text>
         </Pressable>
         <Pressable
-          style={[s.actionButton, { backgroundColor: c.surfaceRaised, borderColor: c.border }]}
+          style={[
+            s.actionButton,
+            { backgroundColor: c.surfaceRaised, borderColor: c.border },
+            savedGames.length === 0 && { opacity: 0.45 },
+          ]}
           onPress={() => setConfirmClearSaves(true)}
           disabled={savedGames.length === 0}
           accessibilityRole="button"
+          accessibilityState={{ disabled: savedGames.length === 0 }}
           accessibilityLabel={t('profile.clearSavesA11y', { n: savedGames.length })}
         >
-          <Text style={[s.actionButtonText, { color: c.danger ?? '#e74c3c' }]}>{t('storage.clearSaves')}</Text>
+          <Text style={[s.actionButtonText, { color: c.danger }]}>{t('storage.clearSaves')}</Text>
           <Text style={[s.actionHint, { color: c.textMuted }]}>
             {t('storage.clearSavesDesc', { n: savedGames.length })}
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[
+            s.actionButton,
+            { backgroundColor: c.surfaceRaised, borderColor: c.border },
+            historyCount === 0 && { opacity: 0.45 },
+          ]}
+          onPress={() => setConfirmClearHistory(true)}
+          disabled={historyCount === 0}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: historyCount === 0 }}
+          accessibilityLabel={t('storage.clearHistory')}
+        >
+          <Text style={[s.actionButtonText, { color: c.danger }]}>{t('storage.clearHistory')}</Text>
+          <Text style={[s.actionHint, { color: c.textMuted }]}>
+            {t('storage.clearHistoryDesc', { n: historyCount })}
           </Text>
         </Pressable>
       </Section>
@@ -717,6 +789,23 @@ export default function ProfileScreen() {
         ]}
       />
       <NtDialog
+        visible={confirmClearHistory}
+        title={t('storage.confirmHistoryTitle')}
+        description={t('storage.confirmHistoryDesc', { n: historyCount })}
+        onDismiss={() => setConfirmClearHistory(false)}
+        actions={[
+          { label: t('profile.cancel'), variant: 'ghost', onPress: () => setConfirmClearHistory(false) },
+          {
+            label: t('storage.confirmHistory'),
+            variant: 'danger',
+            onPress: () => {
+              setConfirmClearHistory(false);
+              void clearHistory().then(() => setHistoryCount(0));
+            },
+          },
+        ]}
+      />
+      <NtDialog
         visible={confirmReset}
         title={t('profile.resetA11y')}
         description={t('profile.resetDesc')}
@@ -763,16 +852,18 @@ export default function ProfileScreen() {
         ]}
       />
     </ScrollView>
+    <AppNav />
+    </View>
   );
 }
 
-const s = StyleSheet.create({
+const createStyles = (c: Colors, fs: number) => StyleSheet.create({
   container: { flex: 1, padding: 16 },
   title: { fontWeight: 'bold', marginBottom: 8 },
-  savedMsg: { fontSize: 13, fontWeight: '600', marginBottom: 8 },
+  savedMsg: { fontSize: 13 * fs, fontWeight: '600', marginBottom: 8 },
   section: { borderRadius: 10, borderWidth: 1, padding: 14, marginBottom: 14 },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 32 },
-  sectionTitle: { fontSize: 13, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 44 },
+  sectionTitle: { fontSize: 13 * fs, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -794,19 +885,26 @@ const s = StyleSheet.create({
   hint: { marginTop: 3, lineHeight: 15 },
   optionGroup: { paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
   optionButtons: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-  optionButton: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1 },
+  optionButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
   optionButtonText: { fontWeight: '600' },
-  input: { borderWidth: 1, borderRadius: 8, padding: 10, minWidth: 160 },
+  input: { borderWidth: 1, borderRadius: 8, padding: 10, minWidth: 160, minHeight: 44 },
   slider: { flex: 1, maxWidth: 220, height: 36 },
   sliderValue: { width: 46, textAlign: 'right' },
   previewLabel: { marginTop: 12, marginBottom: 6, fontWeight: '600' },
   preview: { borderRadius: 10, borderWidth: 1, gap: 8 },
   previewTitle: { fontWeight: 'bold' },
   previewButton: { alignSelf: 'flex-start', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8 },
-  testButton: { marginTop: 10, padding: 12, borderRadius: 8, borderWidth: 1, alignItems: 'center' },
-  actionButton: { padding: 12, borderRadius: 8, borderWidth: 1, marginBottom: 10 },
-  actionButtonText: { color: '#fff', fontWeight: 'bold', fontSize: 14 },
-  actionHint: { fontSize: 11, marginTop: 4 },
-  backButton: { padding: 12, borderRadius: 8, alignItems: 'center', marginBottom: 32 },
-  backText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+  testButton: { marginTop: 10, padding: 12, borderRadius: 8, borderWidth: 1, alignItems: 'center', justifyContent: 'center', minHeight: 44 },
+  actionButton: { padding: 12, borderRadius: 8, borderWidth: 1, marginBottom: 10, justifyContent: 'center', minHeight: 44 },
+  actionButtonText: { color: c.text, fontWeight: 'bold', fontSize: 14 * fs },
+  actionHint: { fontSize: 11 * fs, marginTop: 4 },
+  backButton: { padding: 12, borderRadius: 8, alignItems: 'center', justifyContent: 'center', minHeight: 44, marginBottom: 32 },
+  backText: { color: c.text, fontSize: 14 * fs, fontWeight: 'bold' },
 });

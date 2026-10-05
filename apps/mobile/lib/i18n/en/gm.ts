@@ -13,6 +13,7 @@ export default {
     undoA11y: 'Undo the last game action',
     undoDone: 'Last action undone',
     undoNone: 'Nothing to undo',
+    undoRejected: 'Action undone ({{count}} command(s) rejected on replay — the game may diverge)',
     // Tabs (mobile bar and side panel)
     tabCombat: 'Fight',
     tabHand: 'Hand',
@@ -28,6 +29,19 @@ export default {
     tabFollowPhaseHint: 'Tap again to follow the phase automatically',
     // Market
     marketInactive: 'Market — available during the Market phase',
+    // Support decks (SOLO mode, spec §4.1-4.2)
+    supportsTitle: 'Supports',
+    supportsA11y: 'Available Support decks',
+    supportDeckLabel: 'Deck {{n}} · {{count}} cards',
+    supportOpenLabel: 'Open ({{cost}} coins)',
+    supportOpenLabelA11y: 'Open Support deck {{n}} for {{cost}} coins',
+    supportOpenA11y: 'Support deck {{n}} opened',
+    supportPayGlory: '{{cost}} Glory',
+    supportPayGloryA11y: 'Draw a card from Support deck {{n}} for {{cost}} Glory',
+    supportPayCoins: '{{cost}} coins',
+    supportPayCoinsA11y: 'Draw a card from Support deck {{n}} for {{cost}} coins',
+    supportBuyA11y: 'Support card drawn from deck {{n}}',
+    supportLocked: 'Open the previous one first',
     // Secondary actions
     save: 'Save',
     // Horde breakdown modifiers
@@ -50,7 +64,7 @@ export default {
     instrAttackChoice:
       'Decide: play cards and face the Horde, or evade by discarding at least 2 cards from your hand.',
     instrHordeAttack: 'The Horde attacks. Review the damage summary.',
-    instrLeaderChoice: 'Choose cards for the Leader bid.',
+
     // Finished screen (UI-210..212)
     finishedTitle: 'Game Over',
     finishedTie: 'Tie at {{total}} Glory between {{players}}.',
@@ -98,6 +112,7 @@ export default {
     histGloryGained: 'Glory gained',
     histGloryLost: 'Glory lost',
     histCoins: 'Coins',
+    histCoinsLost: 'Coins lost',
     histCoinsStolen: 'Coin theft',
     histHealing: 'Healing',
     histMarketPurchase: 'Market purchase',
@@ -140,7 +155,7 @@ export default {
   histHordeReordered: 'Horde reordered',
   histSupportDeck: 'Support deck opened',
   histWoundPlaced: 'Wound placed',
-  histShieldTransferred: 'Shield transferred',
+
   histBlock: 'Block',
   histBlockNext: '+{{n}} to next damage',
   histBlockConsumed: 'Consumed',

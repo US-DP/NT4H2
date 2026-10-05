@@ -12,6 +12,8 @@
  */
 
 import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { touchTarget, type Colors } from '../lib/theme';
+import { useColors, useFs } from '../lib/useTheme';
 
 export type ActionState = 'idle' | 'pending' | 'confirmed' | 'rejected' | 'retrying' | 'offline';
 
@@ -42,16 +44,22 @@ const STATE_LABELS: Record<ActionState, string> = {
   offline: '⚠',
 };
 
-const STATE_COLORS: Record<ActionState, string> = {
-  idle: '#fff',
-  pending: '#f39c12',
-  confirmed: '#27ae60',
-  rejected: '#e74c3c',
-  retrying: '#3498db',
-  offline: '#e74c3c',
-};
+const stateColors = (c: Colors): Record<ActionState, string> => ({
+  idle: c.text,
+  pending: c.warning,
+  confirmed: c.success,
+  rejected: c.danger,
+  retrying: c.info,
+  offline: c.danger,
+});
 
 export function ContextualActions({ actions }: ContextualActionsProps) {
+  const c = useColors();
+  const fs = useFs();
+  // Sin useMemo: el renderer ligero de tests invoca el componente
+  // directamente y los hooks de React lanzan fuera de un render real.
+  const styles = createStyles(c, fs);
+  const STATE_COLORS = stateColors(c);
   return (
     <View style={styles.container} accessibilityRole="toolbar">
       {actions.map((action) => {
@@ -75,7 +83,10 @@ export function ContextualActions({ actions }: ContextualActionsProps) {
             accessibilityHint={action.disabled ? action.disabledReason : undefined}
             accessibilityState={{ disabled: !!action.disabled }}
           >
-            <Text style={styles.label}>
+            <Text style={[
+              styles.label,
+              action.primary && !action.dangerous && !action.disabled && styles.labelOnAccent,
+            ]}>
               {action.icon ? `${action.icon} ` : ''}
               {action.label}
             </Text>
@@ -92,52 +103,55 @@ export function ContextualActions({ actions }: ContextualActionsProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   container: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
     padding: 8,
     justifyContent: 'center',
-    backgroundColor: '#0f0f23',
+    backgroundColor: c.background,
     borderTopWidth: 1,
-    borderTopColor: '#333',
+    borderTopColor: c.border,
   },
   button: {
-    backgroundColor: '#34495e',
+    backgroundColor: c.surfaceRaised,
     padding: 12,
     borderRadius: 8,
     minWidth: 100,
-    minHeight: 44,
+    minHeight: touchTarget,
     alignItems: 'center',
     justifyContent: 'center',
   },
   primary: {
-    backgroundColor: '#2980b9',
+    backgroundColor: c.accent,
     borderWidth: 2,
-    borderColor: '#f1c40f',
+    borderColor: c.accent,
   },
   dangerous: {
-    backgroundColor: '#c0392b',
+    backgroundColor: c.dangerPressed,
   },
   disabled: {
-    backgroundColor: '#555',
+    backgroundColor: c.surfaceDisabled,
     opacity: 0.6,
   },
   label: {
-    color: '#fff',
-    fontSize: 13,
+    color: c.text,
+    fontSize: fs(13),
     fontWeight: 'bold',
     textAlign: 'center',
   },
+  labelOnAccent: {
+    color: c.textOnAccent,
+  },
   state: {
-    fontSize: 14,
+    fontSize: fs(14),
     fontWeight: 'bold',
     marginLeft: 4,
   },
   reason: {
-    color: '#e74c3c',
-    fontSize: 9,
+    color: c.danger,
+    fontSize: fs(9),
     textAlign: 'center',
     marginTop: 2,
   },

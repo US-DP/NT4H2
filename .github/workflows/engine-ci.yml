@@ -5,12 +5,21 @@ on:
     branches: [main, master]
     paths:
       - 'packages/**'
+      - 'apps/engine-runner/**'
       - '.github/workflows/engine-ci.yml'
+      # I-6: un cambio solo de dependencias/tooling debe re-correr el gate
+      - 'pnpm-*.yaml'
+      - 'package.json'
+      - 'turbo.json'
   pull_request:
     branches: [main, master]
     paths:
       - 'packages/**'
+      - 'apps/engine-runner/**'
       - '.github/workflows/engine-ci.yml'
+      - 'pnpm-*.yaml'
+      - 'package.json'
+      - 'turbo.json'
 
 jobs:
   # ===========================================================================
@@ -22,11 +31,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nt4h/engine typecheck
@@ -43,14 +50,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nt4h/engine test -- --run tests/catalog/catalog-validation.test.ts
+      # Tests del paquete catalog (carga, integridad, validación de sets)
+      - run: pnpm --filter @nt4h/catalog test
 
   # ===========================================================================
   # Capa 2: Pruebas unitarias (Niveles 1-2)
@@ -62,11 +69,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nt4h/engine test -- --run tests/unit/
@@ -81,11 +86,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nt4h/engine test -- --run tests/engine/
@@ -100,11 +103,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nt4h/engine test -- --run tests/cards/ tests/heroes/ tests/scenarios/
@@ -119,11 +120,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nt4h/engine test -- --run tests/properties/
@@ -138,14 +137,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nt4h/engine test
       - name: Verificar conteo de tests
         run: |
           echo "Suite completa ejecutada. Verificar que todos los tests pasan."
+
+  # ===========================================================================
+  # Capa 7: engine-runner (servicio HTTP del motor)
+  # ===========================================================================
+  runner-tests:
+    name: 'Capa 7: Engine Runner'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nt4h/engine-runner typecheck
+      - run: pnpm --filter @nt4h/engine-runner test
+
+  # ===========================================================================
+  # Capa 8: imagen Docker del engine-runner (I-4: el build de la
+  # imagen no pasaba por ningun gate; el parche de expo-image rompia
+  # el `pnpm install` dentro del contenedor sin que CI lo detectara)
+  # ===========================================================================
+  docker-runner:
+    name: 'Capa 8: Docker build (engine-runner)'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f apps/engine-runner/Dockerfile -t nt4h-engine-runner:ci .

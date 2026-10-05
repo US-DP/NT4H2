@@ -17,7 +17,8 @@ import {
   type DeckDefinition,
 } from '@nt4h/schema';
 import type { CatalogLoadResult } from './loader.js';
-import { validateEffectSources } from './effects.js';
+import { normalizeEffects } from './loader.js';
+import { validateDirectExecuteEffects, validateEffectSources } from './effects.js';
 
 export interface CustomSetResult {
   ok: boolean;
@@ -34,6 +35,15 @@ export function validateContentSet(
   raw: unknown,
   officialById: Map<string, CardDefinition>,
 ): CustomSetResult {
+  // Alias snake_case → camelCase ANTES del safeParse (Zod strippea las
+  // claves desconocidas: un JSON importado a mano con `on_match`…
+  // perdería la rama sin error alguno).
+  const rawCardsForNorm = (raw as { cards?: { effects?: unknown[] }[] } | null)?.cards;
+  if (Array.isArray(rawCardsForNorm)) {
+    for (const c of rawCardsForNorm) {
+      if (Array.isArray(c?.effects)) normalizeEffects(c.effects);
+    }
+  }
   const parsed = ContentSetSchema.safeParse(raw);
   if (!parsed.success) {
     return {
@@ -70,13 +80,43 @@ export function validateContentSet(
     }
     errors.push(...validateCardEffects(card.effects).map(e => `${card.id}: ${e}`));
     errors.push(...validateEffectSources(card.type, card.effects).map(e => `${card.id}: ${e}`));
+    // CUSTOM_SCENARIO valida como efecto permitido en SCENARIO, pero el
+    // motor despacha escenarios por definitionId y el `handler` es dato
+    // muerto para contenido custom — sería un no-op silencioso en partida.
+    for (const eff of card.effects) {
+      if (eff.type === 'CUSTOM_SCENARIO') {
+        errors.push(`${card.id}: CUSTOM_SCENARIO solo existe en escenarios oficiales (el handler no es interpretable por el Taller)`);
+      }
+    }
     if (card.heroAbility) {
       errors.push(...validateCardEffects(card.heroAbility.effects).map(e => `${card.id}.heroAbility: ${e}`));
+      // La pericia de héroe corre directa contra el registry: los tipos
+      // que el resolver solo intercepta en raíz de carta no funcionan.
+      errors.push(...validateDirectExecuteEffects(card.heroAbility.effects).map(e => `${card.id}.heroAbility: ${e}`));
     }
     if (card.peritia) {
       // La pericia declarativa pasa por los mismos límites que los
       // efectos normales — sin esto bypassaría los límites del Taller.
       errors.push(...validateCardEffects(card.peritia.effects).map(e => `${card.id}.peritia: ${e}`));
+      // El resolver solo ejecuta un tipo de efecto por trigger; el resto
+      // se descartaría en silencio en partida.
+      const SUPPORTED_BY_TRIGGER: Record<string, string[]> = {
+        DAMAGE_DEALT: ['LOSE_CARDS'],
+        CARD_PLAYED: ['RECOVER_CARDS'],
+      };
+      if (card.peritia.trigger === 'CONTINUOUS') {
+        errors.push(`${card.id}.peritia: trigger CONTINUOUS no tiene ejecución genérica (las auras continuas solo existen hardcodeadas)`);
+      } else {
+        const supported = SUPPORTED_BY_TRIGGER[card.peritia.trigger] ?? [];
+        const unsupported = card.peritia.effects.filter(e => !supported.includes(e.type));
+        for (const e of unsupported) {
+          errors.push(`${card.id}.peritia: ${e.type} no se ejecuta con trigger ${card.peritia.trigger} (soportados: ${supported.join(', ')})`);
+        }
+      }
+      // La única gramática de condición que el motor interpreta.
+      if (card.peritia.condition && !/^printedAttack\s*==\s*\d+$/.test(card.peritia.condition)) {
+        errors.push(`${card.id}.peritia: condition '${card.peritia.condition}' no usa la gramática soportada ('printedAttack == N')`);
+      }
     }
     setById.set(card.id, card);
   }
@@ -105,7 +145,6 @@ export function mergeCustomCards(
   sets: ContentSet[],
 ): CatalogLoadResult {
   const byId = new Map(catalog.byId);
-  const byName = new Map(catalog.byName);
   const byClass = new Map(catalog.byClass);
   const byType = new Map(catalog.byType);
   const errors = [...catalog.errors];
@@ -127,21 +166,18 @@ export function mergeCustomCards(
       }
       byId.set(stamped.id, stamped);
       cards.push(stamped);
-      const names = byName.get(stamped.name) ?? [];
-      names.push(stamped);
-      byName.set(stamped.name, names);
+      // Copiar los arrays al indexar: `new Map(catalog.byX)` comparte los
+      // arrays internos con el catálogo original — un push directo
+      // contaminaba los índices globales con cartas del Taller de otra
+      // sala (y acumulaba duplicados a cada merge).
       if (stamped.heroClass) {
-        const cls = byClass.get(stamped.heroClass) ?? [];
-        cls.push(stamped);
-        byClass.set(stamped.heroClass, cls);
+        byClass.set(stamped.heroClass, [...(byClass.get(stamped.heroClass) ?? []), stamped]);
       }
-      const typed = byType.get(stamped.type) ?? [];
-      typed.push(stamped);
-      byType.set(stamped.type, typed);
+      byType.set(stamped.type, [...(byType.get(stamped.type) ?? []), stamped]);
       totalCopies += stamped.copies;
     }
   }
-  return { cards, byId, byName, byClass, byType, errors, totalCards: cards.length, totalCopies };
+  return { cards, byId, byClass, byType, errors, totalCards: cards.length, totalCopies };
 }
 
 /** Convierte un DeckDefinition validado en el snapshot que usa GameConfig. */

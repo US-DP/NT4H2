@@ -41,6 +41,17 @@ export function applyCoinsGained(
   }));
 }
 
+export function applyCoinsLost(
+  state: GameState,
+  event: Extract<GameEvent, { type: 'COINS_LOST' }>,
+): GameState {
+
+  return mapPlayerState(state, event.playerId, p => ({
+    ...p,
+    coins: Math.max(0, p.coins - event.amount),
+  }));
+}
+
 export function applyCoinsStolen(
   state: GameState,
   event: Extract<GameEvent, { type: 'COINS_STOLEN' }>,

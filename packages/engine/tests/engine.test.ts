@@ -108,8 +108,19 @@ describe('applyEvent', () => {
 
   it('PHASE_CHANGED cambia la fase', () => {
     const state = makeState();
-    const newState = applyEvent(state, { type: 'PHASE_CHANGED', phase: 'MARKET', seq: 1 });
-    expect(newState.phase).toBe('MARKET');
+    const newState = applyEvent(state, {
+      type: 'PHASE_CHANGED',
+      phase: 'INITIAL_PLAYER_SELECTION',
+      seq: 1,
+    });
+    expect(newState.phase).toBe('INITIAL_PLAYER_SELECTION');
+  });
+
+  it('PHASE_CHANGED rechaza transiciones ilegales', () => {
+    const state = makeState();
+    expect(() =>
+      applyEvent(state, { type: 'PHASE_CHANGED', phase: 'MARKET', seq: 1 }),
+    ).toThrow(/Invalid phase transition/);
   });
 
   it('TURN_STARTED resetea contadores del turno', () => {
@@ -148,13 +159,13 @@ describe('applyEvent', () => {
       { type: 'GLORY_GAINED', playerId: 'p1', amount: 2, seq: 1 },
       { type: 'COINS_GAINED', playerId: 'p1', amount: 5, seq: 2 },
       { type: 'GLORY_GAINED', playerId: 'p2', amount: 1, seq: 3 },
-      { type: 'PHASE_CHANGED', phase: 'MARKET', seq: 4 },
+      { type: 'PHASE_CHANGED', phase: 'INITIAL_PLAYER_SELECTION', seq: 4 },
     ];
     const finalState = replayEvents(state, events);
     expect(finalState.players.p1.glory).toBe(2);
     expect(finalState.players.p1.coins).toBe(5);
     expect(finalState.players.p2.glory).toBe(1);
-    expect(finalState.phase).toBe('MARKET');
+    expect(finalState.phase).toBe('INITIAL_PLAYER_SELECTION');
   });
 });
 

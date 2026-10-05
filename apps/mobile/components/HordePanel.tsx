@@ -11,12 +11,16 @@ import { useTranslation } from 'react-i18next';
 import '../lib/i18n';
 import { useGameStore } from '../store/gameStore';
 import { spacing, radius, fontSize } from '../lib/theme';
+import type { Colors } from '../lib/theme';
 import { useColors, useFs } from '../lib/useTheme';
 
 export function HordePanel() {
   const { t } = useTranslation();
   const colors = useColors();
   const fs = useFs();
+  // Sin useMemo: el renderer ligero de tests invoca los componentes
+  // directamente y los hooks de React lanzan fuera de un render real.
+  const styles = createStyles(colors, fs);
   const gameState = useGameStore((s) => s.gameState);
   const catalog = useGameStore((s) => s.catalog);
 
@@ -48,7 +52,7 @@ export function HordePanel() {
         style={[
           styles.miniCard,
           styles.warlordCard,
-          { borderColor: revealed ? '#DC5862' : colors.border },
+          { borderColor: revealed ? colors.danger : colors.border },
         ]}
         accessibilityLabel={
           warlordName
@@ -57,8 +61,8 @@ export function HordePanel() {
         }
       >
         <Text style={styles.miniTitle}>{t('hud.finalEnemyTitle')}</Text>
-        <Text style={[styles.skull, revealed && { color: '#DC5862' }]}>☠</Text>
-        <Text style={[styles.warlordLabel, { color: revealed ? '#DC5862' : colors.textMuted, fontSize: fs(fontSize.detail) }]} numberOfLines={1}>
+        <Text style={[styles.skull, revealed && { color: colors.danger }]}>☠</Text>
+        <Text style={[styles.warlordLabel, { color: revealed ? colors.danger : colors.textMuted, fontSize: fs(fontSize.detail) }]} numberOfLines={1}>
           {warlordName ?? (revealed ? t('hud.warlordRevealed') : t('hud.warlordUnrevealed'))}
         </Text>
       </View>
@@ -66,7 +70,7 @@ export function HordePanel() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   container: {
     flexDirection: 'row',
     gap: spacing.sm,
@@ -79,11 +83,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   warlordCard: {
-    backgroundColor: '#2A1420',
+    backgroundColor: c.dangerSurface,
   },
   miniTitle: {
-    color: '#92909D',
-    fontSize: 10,
+    color: c.textMuted,
+    fontSize: fs(10),
     fontWeight: '700',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
@@ -91,8 +95,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   skull: {
-    fontSize: 26,
-    color: '#92909D',
+    fontSize: fs(26),
+    color: c.textMuted,
     marginBottom: 4,
   },
   count: {

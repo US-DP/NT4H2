@@ -20,10 +20,13 @@ import Animated, { useSharedValue, useAnimatedStyle, withSequence, withTiming, E
 import { useTranslation } from 'react-i18next';
 import '../lib/i18n';
 import { useGameStore } from '../store/gameStore';
-import { useSettingsSafe, useColors } from '../lib/useTheme';
+import { useSettingsSafe, useColors, useFs } from '../lib/useTheme';
+import { touchTarget } from '../lib/theme';
+import type { Colors } from '../lib/theme';
 import { Crosshair } from 'lucide-react-native';
 import { CardView } from './CardView';
 import { getCardTargeting, isValidEnemyTarget } from '../lib/targeting';
+import { getEffectiveFortitude } from '@nt4h/engine';
 import type { EnemyState } from '@nt4h/schema';
 
 /** Halo sobre un objetivo válido: dos pulsos breves y luego borde
@@ -32,6 +35,8 @@ import type { EnemyState } from '@nt4h/schema';
 function TargetPulse() {
   const reduceMotion = useSettingsSafe((s) => s.reduceMotion);
   const c = useColors();
+  const fs = useFs();
+  const styles = createStyles(c, fs);
   const opacity = useSharedValue(0.4);
   if (!reduceMotion) {
     opacity.value = withSequence(
@@ -63,6 +68,9 @@ export function Battlefield() {
   const viewerId = useGameStore((s) => s.viewerId);
   const reduceMotion = useSettingsSafe((s) => s.reduceMotion);
   const autoPlayAnimations = useSettingsSafe((s) => s.autoPlayAnimations);
+  const c = useColors();
+  const fs = useFs();
+  const styles = createStyles(c, fs);
 
   if (!gameState || !catalog) return null;
 
@@ -99,7 +107,7 @@ export function Battlefield() {
   const hordeDamageContribution = gameState.battlefield
     .filter((e) => !e.damageDisabled)
     .reduce(
-      (sum, e) => sum + Math.max(0, (e.effectiveFortitude ?? e.baseFortitude) - e.wounds),
+      (sum, e) => sum + Math.max(0, getEffectiveFortitude(e, gameState) - e.wounds),
       0,
     );
 
@@ -118,7 +126,7 @@ export function Battlefield() {
         {gameState.battlefield.map((enemy: EnemyState) => {
           const enemyDef = catalog.byId.get(enemy.definitionId);
           const baseFortitude = enemy.baseFortitude;
-          const effectiveFortitude = enemy.effectiveFortitude ?? baseFortitude;
+          const effectiveFortitude = getEffectiveFortitude(enemy, gameState);
           const wounds = enemy.wounds;
           const isDefeated = wounds >= effectiveFortitude;
           const isSelected = selectedEnemy === enemy.instanceId;
@@ -211,12 +219,12 @@ export function Battlefield() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   container: {
     padding: 8,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: c.surface,
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderBottomColor: c.border,
   },
   header: {
     flexDirection: 'row',
@@ -225,18 +233,18 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   title: {
-    color: '#ecf0f1',
-    fontSize: 14,
+    color: c.text,
+    fontSize: fs(14),
     fontWeight: 'bold',
   },
   hordeDamage: {
-    color: '#e74c3c',
-    fontSize: 12,
+    color: c.gameDamage,
+    fontSize: fs(12),
     fontWeight: 'bold',
   },
   pickingHint: {
-    color: '#f1c40f',
-    fontSize: 11,
+    color: c.accent,
+    fontSize: fs(11),
     marginBottom: 6,
     fontWeight: 'bold',
   },
@@ -264,66 +272,68 @@ const styles = StyleSheet.create({
     pointerEvents: 'none',
   },
   enemyFallback: {
-    backgroundColor: '#2c3e50',
+    backgroundColor: c.surface,
     padding: 8,
     borderRadius: 6,
     minWidth: 100,
+    minHeight: touchTarget,
+    justifyContent: 'center',
     borderWidth: 2,
-    borderColor: '#34495e',
+    borderColor: c.border,
   },
   selected: {
-    borderColor: '#e74c3c',
+    borderColor: c.danger,
     borderWidth: 3,
   },
   defeated: {
     opacity: 0.4,
   },
   warlord: {
-    backgroundColor: '#7f1a1a',
-    borderColor: '#c0392b',
+    backgroundColor: c.dangerSurface,
+    borderColor: c.dangerPressed,
   },
   enemyInfo: {
     alignItems: 'center',
     marginTop: 2,
   },
   enemyName: {
-    color: '#fff',
-    fontSize: 12,
+    color: c.text,
+    fontSize: fs(12),
     fontWeight: 'bold',
     textAlign: 'center',
   },
   fortitude: {
-    color: '#bdc3c7',
-    fontSize: 11,
+    color: c.textMuted,
+    fontSize: fs(11),
   },
   wounds: {
-    color: '#e74c3c',
-    fontSize: 11,
+    color: c.gameDamage,
+    fontSize: fs(11),
   },
   resistance: {
-    color: '#3498db',
-    fontSize: 10,
+    color: c.gameShield,
+    fontSize: fs(10),
   },
   warlordBadge: {
-    color: '#f1c40f',
-    fontSize: 10,
+    color: c.accent,
+    fontSize: fs(10),
     fontWeight: 'bold',
     marginTop: 2,
   },
   disabled: {
-    color: '#3498db',
-    fontSize: 10,
+    color: c.info,
+    fontSize: fs(10),
     marginTop: 2,
   },
   iconBadge: {
-    color: '#b8a9e8',
-    fontSize: 10,
+    color: c.info,
+    fontSize: fs(10),
     marginTop: 2,
     fontStyle: 'italic',
   },
   modifiers: {
-    color: '#9b59b6',
-    fontSize: 9,
+    color: c.textMuted,
+    fontSize: fs(9),
     fontStyle: 'italic',
     textAlign: 'center',
     marginTop: 2,

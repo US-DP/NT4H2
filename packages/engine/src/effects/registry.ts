@@ -59,6 +59,11 @@ export class EffectRegistry {
     this.handlers.set(type, handler as EffectHandler<any>);
   }
 
+  /** ¿Hay handler registrado para este tipo de efecto? */
+  has(type: CardEffect['type']): boolean {
+    return this.handlers.has(type);
+  }
+
   execute(
     effect: CardEffect,
     ctx: ResolutionContext,
@@ -435,6 +440,10 @@ export function resolveHeroTargets(
     case 'HERO_WITH_MOST_WOUNDS':
     case 'HERO_WITH_MOST_GLORY':
     case 'HERO_WITH_MOST_COINS': {
+      // E-7: el empate de estos selectores también lo resuelve el jugador
+      // vía pendingChoice (detectTieForChoice generalizado) — consumir la
+      // elección igual que HERO_WITH_FEWEST_WOUNDS.
+      if (ctx.chosenHeroTarget) return [ctx.chosenHeroTarget];
       const all = state.playerOrder;
       if (all.length === 0) return [];
       const stat = selector.kind === 'HERO_WITH_MOST_WOUNDS' ? 'WOUNDS'

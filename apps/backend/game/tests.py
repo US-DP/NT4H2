@@ -7,7 +7,7 @@ from unittest.mock import patch
 import httpx  # noqa: ASYNC127 - httpx sigue mantenido; la sugerencia httpx2 es errónea
 from django.test import Client, TestCase, override_settings
 
-from .models import CommunityStat, GameSession, Player
+from .models import CommunityStat, GameEvent, GameSession, Player
 
 
 def _ws_ticket_url(room_id: str, player_id: str) -> str:
@@ -21,15 +21,29 @@ def _ws_ticket_url(room_id: str, player_id: str) -> str:
     return f"/ws/game/{room_id}/?ticket={_issue_ws_ticket(room_id, player_id)}"
 
 
+# Tipos de broadcast de presencia emitidos por el consumer al conectar/
+# desconectar un socket de jugador. Los tests que esperan otro mensaje
+# concreto deben saltarlos (llegan intercalados con connected/chat/etc.).
+_WS_PRESENCE_TYPES = {"room.player_connected", "room.player_disconnected"}
+
+
+async def _ws_next_non_presence(comm, timeout: float = 3) -> dict:
+    """Lee hasta el próximo mensaje que no sea de presencia."""
+    while True:
+        msg = await comm.receive_json_from(timeout=timeout)
+        if msg.get("type") not in _WS_PRESENCE_TYPES:
+            return msg
+
+
 @override_settings(ROOM_RATE_LIMIT_MAX=10000)
 class RoomApiTests(TestCase):
     def setUp(self):
         self.client = Client()
         # El rate limit por IP es un bucket global del proceso: entre tests
         # se acumularían peticiones y darían 429 espurios.
-        from .views import _RATE_LIMITS
+        from django.core.cache import cache
 
-        _RATE_LIMITS.clear()
+        cache.clear()  # rl:*, wst:*, spec:*, cmid:* — estado compartido
 
     def test_health_check(self):
         response = self.client.get("/api/health/")
@@ -63,6 +77,36 @@ class RoomApiTests(TestCase):
         data = response.json()
         self.assertIn("roomId", data)
         self.assertEqual(data["status"], "created")
+
+    @patch("game.views.EngineRunnerClient.create_room")
+    def test_create_room_csrf_exempt(self, mock_create):
+        """Regresión: create_room debe ser csrf_exempt — el SPA no envía
+        token CSRF y sin el decorador la creación de salas devolvía 403."""
+        from django.test import Client
+
+        mock_create.return_value = {"ok": True}
+        client = Client(enforce_csrf_checks=True)
+        response = client.post(
+            "/api/rooms/",
+            data=json.dumps(
+                {
+                    "mode": "STANDARD",
+                    "maxPlayers": 2,
+                    "hostId": "h1",
+                    "hostName": "Ana",
+                    "heroes": [
+                        {
+                            "playerId": "p1",
+                            "heroId": "hero.aranel",
+                            "heroFace": "FEMALE",
+                            "deckId": "explorer.default",
+                        }
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
 
     @patch("game.views.EngineRunnerClient.create_room")
     def test_create_room_engine_down_returns_503(self, mock_create):
@@ -231,6 +275,114 @@ class RoomApiTests(TestCase):
         # La sala del motor se reconstruye con el roster completo
         mock_delete.assert_called_once_with("TEST08")
         mock_create.assert_called_once()
+
+    @patch("game.views.EngineRunnerClient.delete_room")
+    @patch("game.views.EngineRunnerClient.create_room")
+    def test_start_room_multiclass_preserves_second_deck_and_age(self, mock_create, mock_delete):
+        """Multiclase: secondDeckId/playerAge sobreviven create → persist → recreate.
+
+        Auditoría: el modelo Player no persistía esos campos y el roster
+        recreado en start_room los perdía — el motor arrancaba el modo
+        MULTICLASS sin segunda baraja (degradación silenciosa).
+        """
+        mock_create.return_value = {"ok": True}
+        response = self.client.post(
+            "/api/rooms/",
+            data=json.dumps(
+                {
+                    "mode": "MULTICLASS",
+                    "maxPlayers": 2,
+                    "hostId": "h1",
+                    "hostName": "Ana",
+                    "heroes": [
+                        {
+                            "playerId": "h1",
+                            "heroId": "hero.aranel",
+                            "heroFace": "FEMALE",
+                            "deckId": "explorer.default",
+                            "secondDeckId": "warrior.default",
+                            "playerAge": 34,
+                        }
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        room_id = response.json()["roomId"]
+        host_token = response.json()["hostToken"]
+        host = Player.objects.get(session__room_id=room_id, player_id="h1")
+        self.assertEqual(host.second_deck_id, "warrior.default")
+        self.assertEqual(host.player_age, 34)
+
+        # El invitado declara su segunda baraja al entrar
+        join = self.client.post(
+            f"/api/rooms/{room_id}/join/",
+            data=json.dumps(
+                {
+                    "playerId": "p2",
+                    "name": "Beto",
+                    "heroId": "hero.beleth",
+                    "heroFace": "MALE",
+                    "deckId": "mage.default",
+                    "secondDeckId": "rogue.default",
+                    "playerAge": 51,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(join.status_code, 200)
+        guest = Player.objects.get(session__room_id=room_id, player_id="p2")
+        self.assertEqual(guest.second_deck_id, "rogue.default")
+        self.assertEqual(guest.player_age, 51)
+
+        # Marcar listo y arrancar: el recreate del runner debe llevar el
+        # roster completo, segunda baraja y edad incluidas.
+        self.client.post(
+            f"/api/rooms/{room_id}/ready/",
+            data=json.dumps({"playerId": "p2", "playerToken": guest.auth_token, "ready": True}),
+            content_type="application/json",
+        )
+        mock_create.reset_mock()
+        start = self.client.post(
+            f"/api/rooms/{room_id}/start/",
+            data=json.dumps({"playerId": "h1", "playerToken": host_token}),
+            content_type="application/json",
+        )
+        self.assertEqual(start.status_code, 200)
+        mock_create.assert_called_once()
+        heroes = mock_create.call_args[0][1]["heroes"]
+        by_id = {h["playerId"]: h for h in heroes}
+        self.assertEqual(by_id["h1"]["secondDeckId"], "warrior.default")
+        self.assertEqual(by_id["h1"]["playerAge"], 34)
+        self.assertEqual(by_id["p2"]["secondDeckId"], "rogue.default")
+        self.assertEqual(by_id["p2"]["playerAge"], 51)
+
+    @patch("game.views.EngineRunnerClient.create_room")
+    def test_create_room_rejects_invalid_player_age(self, mock_create):
+        mock_create.return_value = {"ok": True}
+        for bad_age in ("treinta", -1, 999, True):
+            response = self.client.post(
+                "/api/rooms/",
+                data=json.dumps(
+                    {
+                        "mode": "MULTICLASS",
+                        "maxPlayers": 2,
+                        "hostId": "h1",
+                        "heroes": [
+                            {
+                                "playerId": "h1",
+                                "heroId": "hero.aranel",
+                                "heroFace": "FEMALE",
+                                "deckId": "explorer.default",
+                                "playerAge": bad_age,
+                            }
+                        ],
+                    }
+                ),
+                content_type="application/json",
+            )
+            self.assertEqual(response.status_code, 400, f"playerAge={bad_age!r} debería dar 400")
 
     def test_start_room_host_wrong_token(self):
         """D431: el host sin token válido no puede arrancar la partida."""
@@ -653,7 +805,7 @@ class RoomApiTests(TestCase):
                     "clientMessageId": "c1",
                 }
             )
-            msg = await comm.receive_json_from()
+            msg = await _ws_next_non_presence(comm)
             self.assertEqual(msg["sender"], "p1")  # no 'mallory'
             self.assertNotEqual(msg["timestamp"], 1)
             self.assertIsNotNone(msg.get("seq"))
@@ -704,12 +856,12 @@ class RoomApiTests(TestCase):
                     "meta": {"kind": "ping", "target": "Gurdrug", "evil": "<script>"},
                 }
             )
-            msg = await comm.receive_json_from()
+            msg = await _ws_next_non_presence(comm)
             self.assertEqual(msg["meta"], {"kind": "ping", "target": "Gurdrug"})
             self.assertNotIn("evil", msg["meta"])
             # meta desconocida no viaja
             await comm.send_json_to({"type": "chat.message", "text": "normal", "meta": {"kind": "xss"}})
-            msg2 = await comm.receive_json_from()
+            msg2 = await _ws_next_non_presence(comm)
             self.assertNotIn("meta", msg2)
             await comm.disconnect()
 
@@ -940,7 +1092,13 @@ class RoomApiTests(TestCase):
         self.assertTrue(response.json()["skipped"])
         # El comando se inyecta como el jugador ACTIVO, no como el host
         self.assertEqual(mock_cmd.call_args.kwargs["player_id"], "p2")
-        self.assertEqual(mock_cmd.call_args.kwargs["command"], {"type": "END_TURN"})
+        sent = mock_cmd.call_args.kwargs
+        # El CommandSchema del runner exige cid dentro del command y que
+        # coincida con el del envelope — antes iba sin cid y todo
+        # skip_turn contra un runner real era un 400.
+        self.assertEqual(sent["command"]["type"], "END_TURN")
+        self.assertEqual(sent["command"]["cid"], sent["cid"])
+        self.assertTrue(sent["cid"].startswith("skip-"))
 
     @patch("game.views.EngineRunnerClient.execute_command")
     @patch("game.views.EngineRunnerClient.get_state")
@@ -963,6 +1121,129 @@ class RoomApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 409)
         self.assertFalse(response.json()["skipped"])
+
+    @patch("game.views.EngineRunnerClient.execute_command")
+    @patch("game.views.players.restore_room_from_snapshot")
+    @patch("game.views.EngineRunnerClient.get_state")
+    def test_skip_turn_restores_missing_runner_room(self, mock_state, mock_restore, mock_cmd):
+        """Sala zombi: un 404 del runner resucita desde el snapshot y reintenta.
+
+        Auditoría: skip_turn era el único flujo sin restauración — una sala
+        PLAYING sin motor respondía 502 para siempre aunque hubiera snapshot.
+        """
+        req = httpx.Request("GET", "http://runner/rooms/SKIP05/state")
+        not_found = httpx.HTTPStatusError("404", request=req, response=httpx.Response(404, request=req))
+        # Primer get_state → 404; tras el restore, el reintento funciona
+        mock_state.side_effect = [not_found, {"state": {"activePlayerId": "p2"}}]
+        mock_restore.return_value = True
+        mock_cmd.return_value = {"accepted": True}
+        session = GameSession.objects.create(
+            room_id="SKIP05",
+            mode="STANDARD",
+            max_players=2,
+            host_id="h1",
+            status="PLAYING",
+        )
+        host = Player.objects.create(session=session, player_id="h1", name="Ana", is_host=True)
+        response = self.client.post(
+            "/api/rooms/SKIP05/skip-turn/",
+            data=json.dumps({"playerId": "h1", "playerToken": host.auth_token}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["skipped"])
+        mock_restore.assert_called_once_with("SKIP05")
+        self.assertEqual(mock_state.call_count, 2)
+        mock_cmd.assert_called_once()
+
+    @patch("game.views.EngineRunnerClient.execute_command")
+    @patch("game.views.EngineRunnerClient.get_state")
+    def test_skip_turn_game_ended_closes_room(self, mock_state, mock_cmd):
+        """Auditoría: si el END_TURN forzado termina la partida, el path
+        REST debe cerrar la sesión igual que el consumer WS — antes el
+        GAME_ENDED se descartaba y la sala quedaba PLAYING zombi."""
+        mock_state.return_value = {"state": {"activePlayerId": "p2"}}
+        mock_cmd.return_value = {
+            "accepted": True,
+            "events": [{"type": "GAME_ENDED", "winnerId": "p2"}],
+        }
+        session = GameSession.objects.create(
+            room_id="SKIP06",
+            mode="STANDARD",
+            max_players=2,
+            host_id="h1",
+            status="PLAYING",
+        )
+        host = Player.objects.create(session=session, player_id="h1", name="Ana", is_host=True)
+        Player.objects.create(session=session, player_id="p2", name="Bob")
+        response = self.client.post(
+            "/api/rooms/SKIP06/skip-turn/",
+            data=json.dumps({"playerId": "h1", "playerToken": host.auth_token}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["skipped"])
+        self.assertTrue(response.json()["gameEnded"])
+        session.refresh_from_db()
+        self.assertEqual(session.status, "FINISHED")
+        self.assertTrue(GameEvent.objects.filter(session=session, event_type="GAME_ENDED").exists())
+
+    @patch("game.views.EngineRunnerClient.execute_command")
+    @patch("game.views.EngineRunnerClient.get_state")
+    def test_skip_turn_too_early_rejected(self, mock_state, mock_cmd):
+        """El host no puede cortar el turno de un jugador conectado que
+        acaba de empezar — el endpoint es anti-AFK, no un botón de
+        veto universal."""
+        from django.utils import timezone
+
+        mock_state.return_value = {"state": {"activePlayerId": "p2"}}
+        session = GameSession.objects.create(
+            room_id="SKIP07",
+            mode="STANDARD",
+            max_players=2,
+            host_id="h1",
+            status="PLAYING",
+            turn_player_id="p2",
+            turn_started_at=timezone.now(),
+        )
+        host = Player.objects.create(session=session, player_id="h1", name="Ana", is_host=True)
+        Player.objects.create(session=session, player_id="p2", name="Bob", is_connected=True)
+        response = self.client.post(
+            "/api/rooms/SKIP07/skip-turn/",
+            data=json.dumps({"playerId": "h1", "playerToken": host.auth_token}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["reason"], "turn_too_early")
+        mock_cmd.assert_not_called()
+
+    @patch("game.views.EngineRunnerClient.execute_command")
+    @patch("game.views.EngineRunnerClient.get_state")
+    def test_skip_turn_allowed_when_afk_disconnected(self, mock_state, mock_cmd):
+        """Un jugador desconectado puede ser saltado sin esperar el
+        umbral — es exactamente el caso AFK que el endpoint cubre."""
+        from django.utils import timezone
+
+        mock_state.return_value = {"state": {"activePlayerId": "p2"}}
+        mock_cmd.return_value = {"accepted": True}
+        session = GameSession.objects.create(
+            room_id="SKIP08",
+            mode="STANDARD",
+            max_players=2,
+            host_id="h1",
+            status="PLAYING",
+            turn_player_id="p2",
+            turn_started_at=timezone.now(),
+        )
+        host = Player.objects.create(session=session, player_id="h1", name="Ana", is_host=True)
+        Player.objects.create(session=session, player_id="p2", name="Bob", is_connected=False)
+        response = self.client.post(
+            "/api/rooms/SKIP08/skip-turn/",
+            data=json.dumps({"playerId": "h1", "playerToken": host.auth_token}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["skipped"])
 
     # --- Reloj de turno autoritativo ---
 
@@ -1086,9 +1367,10 @@ class RoomApiTests(TestCase):
             self.assertTrue(c1 and c2)
             await comm_h.receive_json_from()  # connected
             await comm_g.receive_json_from()
-            # El host se desconecta → auto-transfer al invitado conectado
+            # El host se desconecta → auto-transfer al invitado conectado.
+            # Llega antes un room.player_disconnected (presencia) — saltarlo.
             await comm_h.disconnect()
-            msg = await comm_g.receive_json_from(timeout=2)
+            msg = await _ws_next_non_presence(comm_g, timeout=2)
             self.assertEqual(msg["type"], "room.host_changed")
             self.assertEqual(msg["playerId"], "p2")
             self.assertIsNotNone(msg.get("roomRevision"))
@@ -1408,9 +1690,9 @@ class RoomApiTests(TestCase):
         ticket = self._issue_ticket("TKTE", player)
 
         # Forzar caducidad
-        from game.views import _WS_TICKETS
+        from django.core.cache import cache
 
-        _WS_TICKETS[ticket]["exp"] = 0
+        cache.delete(f"wst:{ticket}")  # fuerza expiración del ticket
 
         async def flow():
             comm = ws_communicator(application, f"/ws/game/TKTE/?ticket={ticket}")
@@ -1529,9 +1811,9 @@ class SecurityRegressionTests(TestCase):
 
     def setUp(self):
         self.client = Client()
-        from .views import _RATE_LIMITS
+        from django.core.cache import cache
 
-        _RATE_LIMITS.clear()
+        cache.clear()  # rl:*, wst:*, spec:*, cmid:* — estado compartido
 
     def test_kick_revokes_pending_ws_ticket(self):
         """Un ticket emitido antes del kick no sigue sirviendo tras él."""
@@ -1602,6 +1884,53 @@ class SecurityRegressionTests(TestCase):
         self.assertFalse(GameSession.objects.filter(room_id__in=["REAPW1", "REAPF1"]).exists())
         self.assertTrue(GameSession.objects.filter(room_id="REAPOK").exists())
 
+    @patch("game.views.EngineRunnerClient.delete_room")
+    def test_reap_playing_uses_event_activity(self, mock_delete):
+        """PLAYING se cierra por inactividad de EVENTOS, no por updated_at.
+
+        Los comandos WS actualizan la revisión con QuerySet.update() —
+        no disparan auto_now. Un juego activo de >48h con un comando
+        reciente NO debe marcarse FINISHED; uno sin eventos recientes sí.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from .views import reap_stale_rooms
+
+        old = timezone.now() - timedelta(hours=72)
+        # Sala activa: vieja pero con un evento de partida reciente.
+        live = GameSession.objects.create(
+            room_id="PLAYL1", mode="STANDARD", max_players=2, host_id="h1", status="PLAYING"
+        )
+        GameSession.objects.filter(pk=live.pk).update(updated_at=old)
+        GameEvent.objects.create(session=live, seq=1, event_type="COMMAND", player_id="h1", data={"accepted": True})
+
+        # Sala zombi: vieja y con el último evento de hace 72h.
+        dead = GameSession.objects.create(
+            room_id="PLAYD1", mode="STANDARD", max_players=2, host_id="h1", status="PLAYING"
+        )
+        GameSession.objects.filter(pk=dead.pk).update(updated_at=old)
+        dead_ev = GameEvent.objects.create(
+            session=dead, seq=1, event_type="COMMAND", player_id="h1", data={"accepted": True}
+        )
+        # auto_now_add no se puede escribir con create(); toca update()
+        GameEvent.objects.filter(pk=dead_ev.pk).update(created_at=old)
+
+        # Sala sin eventos y vieja: también zombi.
+        empty = GameSession.objects.create(
+            room_id="PLAYE1", mode="STANDARD", max_players=2, host_id="h1", status="PLAYING"
+        )
+        GameSession.objects.filter(pk=empty.pk).update(updated_at=old)
+
+        reap_stale_rooms()
+        live.refresh_from_db()
+        dead.refresh_from_db()
+        empty.refresh_from_db()
+        self.assertEqual(live.status, "PLAYING")
+        self.assertEqual(dead.status, "FINISHED")
+        self.assertEqual(empty.status, "FINISHED")
+
     def test_command_result_broadcast_has_no_raw_events(self):
         """El broadcast de comandos no filtra eventos en crudo (D425)."""
         try:
@@ -1634,9 +1963,9 @@ class SecurityRegressionTests(TestCase):
                     "events": [{"type": "DECK_SHUFFLED", "order": [1, 2, 3]}],
                 }
                 await comm.send_json_to({"type": "game.command", "cid": "c1", "command": {"type": "END_TURN"}})
-                ack = await comm.receive_json_from()
+                ack = await _ws_next_non_presence(comm)
                 self.assertTrue(ack["accepted"])
-                broadcast = await comm.receive_json_from()
+                broadcast = await _ws_next_non_presence(comm)
                 self.assertEqual(broadcast["type"], "game.command_result")
                 # Los events del runner NUNCA salen por el grupo
                 self.assertNotIn("events", broadcast)
@@ -1690,19 +2019,53 @@ class PersistencePhase2Tests(TestCase):
             with patch("game.consumers.EngineRunnerClient.execute_command") as mock_cmd:
                 mock_cmd.return_value = {"accepted": True, "revision": 2, "stateChanged": True, "events": []}
                 await comm.send_json_to({"type": "game.command", "cid": "dup-1", "command": {"type": "END_TURN"}})
-                ack1 = await comm.receive_json_from()
+                ack1 = await _ws_next_non_presence(comm)
                 self.assertTrue(ack1["accepted"])
                 self.assertNotIn("deduplicated", ack1)
-                await comm.receive_json_from()  # broadcast command_result
+                await _ws_next_non_presence(comm)  # broadcast command_result
                 # Reenvío del mismo cid → dedup, sin tocar el runner
                 await comm.send_json_to({"type": "game.command", "cid": "dup-1", "command": {"type": "END_TURN"}})
-                ack2 = await comm.receive_json_from()
+                ack2 = await _ws_next_non_presence(comm)
                 self.assertTrue(ack2["accepted"])
                 self.assertTrue(ack2["deduplicated"])
                 self.assertEqual(mock_cmd.call_count, 1)
             await comm.disconnect()
 
         async_to_sync(flow)()
+
+    def test_ws_command_cid_control_chars_rejected(self):
+        """Un cid con caracteres de control (\\n, \\t) se rechaza en backend.
+
+        R-1 simétrico: el runner valida SAFE_ID; el consumer debe rechazar
+        antes de persistir — un cid con \\n en GameEvent.cid sería
+        log-forging latente al exportar eventos.
+        """
+        try:
+            from asgiref.sync import async_to_sync
+            from channels.testing import WebsocketCommunicator
+        except ImportError:
+            self.skipTest("channels.testing no disponible")
+        self._playing("CCID1")
+        application = self._ws_app()
+
+        async def flow():
+            comm = WebsocketCommunicator(application, _ws_ticket_url("CCID1", "p1"))
+            connected, _ = await comm.connect()
+            self.assertTrue(connected)
+            await comm.receive_json_from()
+            with patch("game.consumers.EngineRunnerClient.execute_command") as mock_cmd:
+                await comm.send_json_to(
+                    {"type": "game.command", "cid": "evil\nforged-log-line", "command": {"type": "END_TURN"}}
+                )
+                ack = await _ws_next_non_presence(comm)
+                self.assertFalse(ack["accepted"])
+                self.assertEqual(ack["reason"], "Missing or invalid command")
+                mock_cmd.assert_not_called()
+            await comm.disconnect()
+
+        async_to_sync(flow)()
+        # Nada persistido con ese cid (fuera del loop async — ORM sync)
+        self.assertFalse(GameEvent.objects.filter(cid="evil\nforged-log-line").exists())
 
     def test_ws_game_ended_marks_finished(self):
         """Un GAME_ENDED del runner cierra la sala y deja el evento + snapshot."""
@@ -1731,10 +2094,10 @@ class PersistencePhase2Tests(TestCase):
                 }
                 mock_full.return_value = {"state": {"phase": "FINISHED"}, "revision": 9, "rngState": {}}
                 await comm.send_json_to({"type": "game.command", "cid": "end-1", "command": {"type": "END_TURN"}})
-                await comm.receive_json_from()  # ack
+                await _ws_next_non_presence(comm)  # ack
                 # Broadcasts de grupo: room.finished y command_result
-                types = {(await comm.receive_json_from())["type"]}
-                types.add((await comm.receive_json_from())["type"])
+                types = {(await _ws_next_non_presence(comm))["type"]}
+                types.add((await _ws_next_non_presence(comm))["type"])
                 self.assertEqual(types, {"room.finished", "game.command_result"})
             await comm.disconnect()
 
@@ -1768,12 +2131,12 @@ class PersistencePhase2Tests(TestCase):
             ):
                 mock_cmd.return_value = {"accepted": True, "revision": 1, "stateChanged": True, "events": []}
                 await comm.send_json_to({"type": "game.command", "cid": "s1", "command": {"type": "END_TURN"}})
-                await comm.receive_json_from()
-                await comm.receive_json_from()
+                await _ws_next_non_presence(comm)
+                await _ws_next_non_presence(comm)
                 self.assertEqual(mock_snap.call_count, 0)  # seq=1, no toca
                 await comm.send_json_to({"type": "game.command", "cid": "s2", "command": {"type": "END_TURN"}})
-                await comm.receive_json_from()
-                await comm.receive_json_from()
+                await _ws_next_non_presence(comm)
+                await _ws_next_non_presence(comm)
                 self.assertEqual(mock_snap.call_count, 1)  # seq=2 → snapshot
             await comm.disconnect()
 
@@ -1805,45 +2168,104 @@ class PersistencePhase2Tests(TestCase):
             self.assertFalse(take_snapshot(session))
         self.assertFalse(GameSnapshot.objects.filter(session=session).exists())
 
-    def test_sync_endpoint_events_after_seq(self):
-        """GET /sync/?after=N devuelve solo los eventos posteriores."""
-        from .models import GameEvent
 
-        session = self._playing("SYNC1")
-        for i in range(1, 4):
-            GameEvent.objects.create(
-                session=session,
-                seq=i,
-                event_type="COMMAND",
-                player_id="p1",
-                data={"command": {"type": "END_TURN"}, "accepted": True},
-            )
-        player = session.players.get(player_id="p1")
-        r = self.client.get(
-            "/api/rooms/SYNC1/sync/?playerId=p1&after=1",
-            HTTP_X_PLAYER_TOKEN=player.auth_token,
+@override_settings(ROOM_RATE_LIMIT_MAX=10000)
+class MetricsTests(TestCase):
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
+        self.client = Client()
+
+    def test_metrics_localhost_prometheus_format(self):
+        """Sin METRICS_TOKEN solo localhost; formato texto Prometheus."""
+        GameSession.objects.create(
+            room_id="METR01",
+            mode="STANDARD",
+            max_players=4,
+            host_id="h1",
+            status="PLAYING",
         )
+        r = self.client.get("/api/metrics/")  # testclient → 127.0.0.1
         self.assertEqual(r.status_code, 200)
-        data = r.json()
-        self.assertEqual([e["seq"] for e in data["events"]], [2, 3])
-        self.assertEqual(data["latestSeq"], 3)
-        self.assertFalse(data["truncated"])
-        # El payload privado del comando NO viaja en el sync
-        self.assertNotIn("payload", data["events"][0])
+        body = r.content.decode()
+        self.assertIn('nt4h_rooms_total{status="playing"} 1', body)
+        self.assertIn("nt4h_players_connected 0", body)
 
-    def test_sync_requires_player_token(self):
-        session = self._playing("SYNCX")
-        Player.objects.filter(session=session, player_id="p1").update(
-            auth_token="tok"  # noqa: S106 # nosec B106 - token de test
-        )
-        r = self.client.get("/api/rooms/SYNCX/sync/?playerId=p1")
-        self.assertEqual(r.status_code, 403)
+    def test_metrics_token_required_when_configured(self):
+        from unittest.mock import patch
 
-    def test_sync_invalid_after(self):
-        session = self._playing("SYNCB")
-        player = session.players.get(player_id="p1")
-        r = self.client.get(
-            "/api/rooms/SYNCB/sync/?playerId=p1&after=abc",
-            HTTP_X_PLAYER_TOKEN=player.auth_token,
+        with patch.dict("os.environ", {"METRICS_TOKEN": "sekret"}):
+            self.assertEqual(self.client.get("/api/metrics/").status_code, 401)
+            r = self.client.get("/api/metrics/", HTTP_AUTHORIZATION="Bearer sekret")
+            self.assertEqual(r.status_code, 200)
+
+
+@override_settings(ROOM_RATE_LIMIT_MAX=10000)
+class RestoreDrillTests(TestCase):
+    """Simulacro de recuperación: restaurar una sala PLAYING desde su
+    último GameSnapshot (cubre B-10 — 409 del runner = éxito)."""
+
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
+        self.client = Client()
+
+    def _room_with_snapshot(self, room_id: str) -> None:
+        from .models import GameSnapshot
+
+        session = GameSession.objects.create(
+            room_id=room_id,
+            mode="STANDARD",
+            max_players=4,
+            host_id="h1",
+            status="PLAYING",
         )
-        self.assertEqual(r.status_code, 400)
+        GameSnapshot.objects.create(
+            session=session,
+            seq=10,
+            state={"state": {"phase": "PLAYER_ATTACK"}, "revision": 7},
+        )
+
+    @patch("game.views.engine.EngineRunnerClient.restore_room")
+    def test_restore_sends_snapshot_body(self, mock_restore):
+        from .views.engine import restore_room_from_snapshot
+
+        self._room_with_snapshot("RDRILL1")
+        mock_restore.return_value = {"ok": True}
+        self.assertTrue(restore_room_from_snapshot("RDRILL1"))
+        args = mock_restore.call_args
+        self.assertEqual(args[0][0], "RDRILL1")
+        self.assertEqual(args[0][1]["revision"], 7)
+
+    @patch("game.views.engine.EngineRunnerClient.restore_room")
+    def test_restore_409_counts_as_success(self, mock_restore):
+        """Carrera de restauración: el 409 (sala ya viva) es el objetivo."""
+        from .views.engine import restore_room_from_snapshot
+
+        self._room_with_snapshot("RDRILL2")
+        req = httpx.Request("POST", "http://runner/rooms/RDRILL2/restore")
+        mock_restore.side_effect = httpx.HTTPStatusError("409", request=req, response=httpx.Response(409, request=req))
+        self.assertTrue(restore_room_from_snapshot("RDRILL2"))
+
+    @patch("game.views.engine.EngineRunnerClient.restore_room")
+    def test_restore_500_is_failure(self, mock_restore):
+        from .views.engine import restore_room_from_snapshot
+
+        self._room_with_snapshot("RDRILL3")
+        req = httpx.Request("POST", "http://runner/rooms/RDRILL3/restore")
+        mock_restore.side_effect = httpx.HTTPStatusError("500", request=req, response=httpx.Response(500, request=req))
+        self.assertFalse(restore_room_from_snapshot("RDRILL3"))
+
+    def test_restore_no_snapshot_fails(self):
+        from .views.engine import restore_room_from_snapshot
+
+        GameSession.objects.create(
+            room_id="RDRILL4",
+            mode="STANDARD",
+            max_players=4,
+            host_id="h1",
+            status="PLAYING",
+        )
+        self.assertFalse(restore_room_from_snapshot("RDRILL4"))

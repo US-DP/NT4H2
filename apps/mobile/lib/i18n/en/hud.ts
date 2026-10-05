@@ -50,6 +50,13 @@ export default {
 
     // HandView
     evasionTitle: 'Evasion: choose cards to discard',
+    swapTitle: 'Starting swap: choose up to 2 cards',
+    swapToggle: 'Swap cards',
+    swapToggleA11y: 'Enable starting card swap (once per game)',
+    swapProgress: 'Cards chosen: {{count}} of 2',
+    swapHint: 'Chosen cards go back to the deck and you draw replacements. Can only be done once (solo mode).',
+    swapConfirm: 'Swap',
+    swapConfirmA11y: 'Swap {{count}} starting cards',
     handTitle: 'Hand ({{count}})',
     evasionProgress: '🏃 Evasion: {{count}} of 2 minimum cards',
     evasionHint:
@@ -180,6 +187,35 @@ export default {
     warlordRevealed: 'Revealed!',
     warlordUnrevealed: 'Not revealed',
     warlordFallback: 'Warlord',
+
+    // Engine reasons (reasonCode → localized text; see lib/engineReasons)
+    reasons: {
+      wrongPhase: 'Not the right phase',
+      notYourTurn: 'Not your turn',
+      cardNotInHand: 'The card is not in your hand',
+      targetNotFound: 'Target enemy not found',
+      insufficientCoins: 'Not enough coins (need {{need}}, have {{have}})',
+      supportCardLimit: 'Only 1 support card can be used per turn',
+      evasionUsed: 'You already used the Evasion Token this game',
+      evasionMinCards: 'You must discard at least 2 cards to evade',
+      duplicateCards: 'Duplicate cards in the evasion',
+      cardsNotInHand: 'Discarded cards must be from your hand',
+      cardNotInMarket: 'The card is not in the market',
+      missingCatalog: 'Catalog required to validate the purchase',
+      cardDefNotFound: 'Card definition not found',
+      missingCapabilities: 'You lack the required capabilities',
+      choiceNotFound: 'Invalid or expired choice',
+      targetRequired: 'This card needs a target enemy',
+      targetInvalid: 'The target does not meet the card requirements',
+      heroEliminated: 'The hero is eliminated',
+      gameFinished: 'The game has ended',
+      noAbilityUses: 'No hero ability uses remaining',
+      pendingChoice: 'Resolve the pending choice first',
+      invalidSelection: 'Invalid selection',
+      soloOnly: 'Only available in solo mode',
+      swapUsed: 'You already used the starting card swap',
+      unknown: 'Action not allowed',
+    },
 
     // HordeAttackSummary (title reuses phase.HORDE_ATTACK)
     annulled: 'cancelled',

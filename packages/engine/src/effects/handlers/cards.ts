@@ -151,9 +151,9 @@ export function registerCardsEffects(registry: EffectRegistry): void {
       // Validar que hay monedas suficientes
       if (player.coins < amount) return [];
       return [{
-        type: 'COINS_GAINED',
+        type: 'COINS_LOST',
         playerId: ctx.activePlayerId,
-        amount: -amount,
+        amount,
         seq: registry.nextSeq(),
       }];
     } else {
@@ -331,6 +331,16 @@ export function registerCardsEffects(registry: EffectRegistry): void {
     if (player.glory < costGlory) return []; // No hay gloria suficiente
 
     const events: GameEvent[] = [];
+    // Elegir un héroe aleatorio y robar una carta aleatoria de su MANO
+    // (spec: la carta se "juega" de otro héroe — coincide con la ruta
+    // tears-hero-* de execute.ts que también usa la mano).
+    // Verificar objetivos ANTES de cobrar: resolveCard comprueba primero
+    // y sin candidatos no cobra la gloria — el handler cobraba y no robaba.
+    const otherPlayers = state.playerOrder
+      .filter(pid => pid !== ctx.activePlayerId)
+      .map(pid => state.players[pid])
+      .filter(p => p.hand.length > 0);
+    if (otherPlayers.length === 0) return events;
     // Pagar el coste de Gloria
     if (costGlory > 0) {
       events.push({
@@ -340,14 +350,6 @@ export function registerCardsEffects(registry: EffectRegistry): void {
         seq: registry.nextSeq(),
       });
     }
-    // Elegir un héroe aleatorio y robar una carta aleatoria de su MANO
-    // (spec: la carta se "juega" de otro héroe — coincide con la ruta
-    // tears-hero-* de execute.ts que también usa la mano)
-    const otherPlayers = state.playerOrder
-      .filter(pid => pid !== ctx.activePlayerId)
-      .map(pid => state.players[pid])
-      .filter(p => p.hand.length > 0);
-    if (otherPlayers.length === 0) return events;
     const targetPlayer = rng.pick(otherPlayers);
     const drawnCard = rng.pick(targetPlayer.hand);
     // Mover la carta de la mano del otro héroe a la mano del jugador activo

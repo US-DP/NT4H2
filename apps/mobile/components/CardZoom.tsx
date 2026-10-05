@@ -13,9 +13,11 @@ import { View, Text, Pressable, StyleSheet, Modal, Image, ScrollView } from 'rea
 import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import { useTranslation } from 'react-i18next';
 import type { CardDefinition } from '@nt4h/schema';
-import { cardImage, buildAccessibleLabel } from '../store/cardImage';
+import { cardImage, buildAccessibleLabel, customCardImageUri } from '../store/cardImage';
 import { describeResolution } from '../lib/effectDescriptions';
 import { CardGlow } from './ui/CardGlow';
+import { touchTarget, type Colors } from '../lib/theme';
+import { useColors, useFs } from '../lib/useTheme';
 
 interface CardZoomProps {
   visible: boolean;
@@ -28,7 +30,16 @@ interface CardZoomProps {
 
 export function CardZoom({ visible, card, authorized = true, onClose }: CardZoomProps) {
   const { t } = useTranslation();
+  const c = useColors();
+  const fs = useFs();
+  // Sin useMemo: el renderer ligero de tests invoca el componente
+  // directamente y los hooks de React lanzan fuera de un render real.
+  const styles = createStyles(c, fs);
   const { path, showPlaceholder } = cardImage(card?.id ?? '', 'preview');
+  // Imagen del Taller: 'asset:<id>' resuelto a data-URI (tiene prioridad
+  // sobre la ruta oficial — las cartas custom no están en el registro).
+  const customUri = customCardImageUri(card?.sourceImage);
+  const imageUri = customUri ?? path;
   // Entrada con muelle: la carta "salta" a primer plano
   const zoomIn = useSharedValue(0.85);
   zoomIn.value = withSpring(visible ? 1 : 0.85, { damping: 16, stiffness: 180 });
@@ -50,7 +61,7 @@ export function CardZoom({ visible, card, authorized = true, onClose }: CardZoom
           <Animated.View style={zoomStyle}>
           <View style={styles.header}>
             <Text style={styles.name}>{card.name}</Text>
-            <Pressable onPress={onClose} style={styles.closeBtn} accessibilityLabel={t('cardui.close')}>
+            <Pressable onPress={onClose} style={styles.closeBtn} accessibilityRole="button" accessibilityLabel={t('cardui.close')}>
               <Text style={styles.closeText}>✕</Text>
             </Pressable>
           </View>
@@ -60,8 +71,8 @@ export function CardZoom({ visible, card, authorized = true, onClose }: CardZoom
             <View style={styles.glowWrap}>
               <CardGlow size={300} />
             </View>
-            {path && !showPlaceholder ? (
-              <Image source={{ uri: path }} style={styles.image} resizeMode="contain" />
+            {imageUri && (customUri || !showPlaceholder) ? (
+              <Image source={{ uri: imageUri }} style={styles.image} resizeMode="contain" />
             ) : (
               <View style={styles.imagePlaceholder}>
                 <Text style={styles.placeholderText}>{t('cardui.noImage')}</Text>
@@ -140,7 +151,7 @@ export function CardZoom({ visible, card, authorized = true, onClose }: CardZoom
             </View>
           )}
 
-          <Pressable style={styles.closeButton} onPress={onClose}>
+          <Pressable style={styles.closeButton} onPress={onClose} accessibilityRole="button">
             <Text style={styles.closeButtonText}>{t('cardui.close')}</Text>
           </Pressable>
           </Animated.View>
@@ -150,16 +161,16 @@ export function CardZoom({ visible, card, authorized = true, onClose }: CardZoom
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.9)',
+    backgroundColor: c.overlayStrong,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 16,
   },
   dialog: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: c.surface,
     borderRadius: 12,
     padding: 20,
     width: '100%',
@@ -173,17 +184,21 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   name: {
-    color: '#f1c40f',
-    fontSize: 20,
+    color: c.accent,
+    fontSize: fs(20),
     fontWeight: 'bold',
     flex: 1,
   },
   closeBtn: {
     padding: 8,
+    minHeight: touchTarget,
+    minWidth: touchTarget,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   closeText: {
-    color: '#bdc3c7',
-    fontSize: 18,
+    color: c.textMuted,
+    fontSize: fs(18),
   },
   imageWrap: {
     alignItems: 'center',
@@ -204,75 +219,77 @@ const styles = StyleSheet.create({
   imagePlaceholder: {
     width: '100%',
     height: 150,
-    backgroundColor: '#2c3e50',
+    backgroundColor: c.surfaceRaised,
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 12,
   },
   placeholderText: {
-    color: '#7f8c8d',
-    fontSize: 12,
+    color: c.textFaint,
+    fontSize: fs(12),
   },
   section: {
     marginBottom: 12,
   },
   field: {
-    color: '#ecf0f1',
-    fontSize: 13,
+    color: c.text,
+    fontSize: fs(13),
     marginBottom: 4,
   },
   fieldLabel: {
-    color: '#bdc3c7',
+    color: c.textMuted,
     fontWeight: 'bold',
   },
   sectionTitle: {
-    color: '#f1c40f',
-    fontSize: 14,
+    color: c.accent,
+    fontSize: fs(14),
     fontWeight: 'bold',
     marginBottom: 6,
   },
   resolutionStep: {
-    color: '#ecf0f1',
-    fontSize: 12,
+    color: c.text,
+    fontSize: fs(12),
     marginBottom: 4,
   },
   customBadge: {
-    backgroundColor: '#3a2a1a',
+    backgroundColor: c.surfaceRaised,
     padding: 8,
     borderRadius: 6,
     marginBottom: 12,
   },
   customText: {
-    color: '#d4a017',
-    fontSize: 12,
+    color: c.gameCoin,
+    fontSize: fs(12),
     fontWeight: 'bold',
     marginBottom: 4,
   },
   customDetail: {
-    color: '#ecf0f1',
-    fontSize: 11,
+    color: c.text,
+    fontSize: fs(11),
   },
   privateWarning: {
-    backgroundColor: '#3a1a1a',
+    backgroundColor: c.dangerSurface,
     padding: 8,
     borderRadius: 6,
     marginBottom: 12,
   },
   privateText: {
-    color: '#e74c3c',
-    fontSize: 11,
+    color: c.danger,
+    fontSize: fs(11),
     textAlign: 'center',
   },
   closeButton: {
-    backgroundColor: '#34495e',
+    backgroundColor: c.surfaceRaised,
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
+    minHeight: touchTarget,
+    justifyContent: 'center',
   },
   closeButtonText: {
-    color: '#fff',
-    fontSize: 14,
+    color: c.text,
+    fontSize: fs(14),
     fontWeight: 'bold',
   },
 });

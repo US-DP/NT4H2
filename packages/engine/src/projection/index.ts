@@ -22,9 +22,8 @@ const PRIVATE_EVENT_TYPES = new Set([
   'CARDS_DRAWN',
   'CARDS_LOST',
   'CARDS_RECOVERED',
-  'DECK_SHUFFLED',
-  'DECK_RESHUFFLED',
   'CARDS_REVEALED_TO_PLAYER',
+  'PENDING_CHOICE_CREATED',
 ]);
 
 /** Eventos secretos para TODOS los viewers (orden futuro de la Horda). */
@@ -155,11 +154,22 @@ export function projectForPlayer(
       damageCancellation: playerState.damageCancellation,
       evasionTokenUsed: playerState.evasionTokenUsed ?? false,
       capabilities: playerState.capabilities,
-      persistentCards: playerState.persistentCards.map(c => ({
-        instanceId: c.instanceId,
-        definitionId: c.definitionId,
-        persistentTrigger: c.persistentTrigger ?? '',
-      })),
+      // Trampas (PLACE_PERSISTENT) se colocan BOCA ABAJO en el juego
+      // físico: los demás ven que hay una carta persistente, no cuál
+      // es ni su disparador. Solo el dueño conoce la definición.
+      persistentCards: playerState.persistentCards.map(c =>
+        id === viewerId
+          ? {
+              instanceId: c.instanceId,
+              definitionId: c.definitionId,
+              persistentTrigger: c.persistentTrigger ?? '',
+            }
+          : {
+              instanceId: c.instanceId,
+              definitionId: HIDDEN_CARD,
+              persistentTrigger: HIDDEN_CARD,
+            },
+      ),
     };
 
     // Solo el propio jugador ve su mano
@@ -243,6 +253,20 @@ function sanitizeEventForViewer(
   if (isPrivateEvent(event, viewerId) || ALWAYS_PRIVATE.has(event.type)) {
     return null;
   }
+  if (event.type === 'DECK_SHUFFLED' || event.type === 'DECK_RESHUFFLED') {
+    // E-11: barajar/reciclar un mazo es un hecho público en mesa — el
+    // dueño (y la UI) necesitan el evento para mostrar "mazo reciclado";
+    // solo el orden resultante es secreto para TODOS los viewers.
+    const { newOrder: _newOrder, ...rest } = event as GameEvent & { newOrder?: string[] };
+    return rest as GameEvent;
+  }
+  if (event.type === 'PENDING_CHOICES_REMOVED') {
+    // E-10: los choiceIds son semánticos (`feldon-reduce-3-p2`,
+    // `lisavette-*`, `reaction-<pid>-*`…) — cualquier viewer infería
+    // qué elecciones existieron y se podaron. Conservar el conteo.
+    const e = event as { choiceIds: string[] };
+    return { ...event, choiceIds: e.choiceIds.map(() => HIDDEN_CARD) } as GameEvent;
+  }
   if (event.type === 'CARD_MOVED') {
     const e = event as { from: string; to: string; playerId?: string; toPlayerId?: string };
     if (e.from === 'HAND' || e.to === 'HAND') {
@@ -266,6 +290,14 @@ function sanitizeEventForViewer(
       return { ...event, newEnemyReward: null } as GameEvent;
     }
   }
+  if (event.type === 'ENEMY_SPAWNED') {
+    // Misma política que ENEMY_REVEALED/ENEMY_SWAPPED: el botín solo se
+    // revela al derrotar al enemigo. El resolver lo adjunta para el fold.
+    const e = event as { enemyReward?: unknown };
+    if (e.enemyReward != null) {
+      return { ...event, enemyReward: null } as GameEvent;
+    }
+  }
   if (event.type === 'ENEMY_REVEALED') {
     // El payload `enemy` es necesario para el fold del eventLog, pero su
     // `reward` es secreto hasta la derrota: redactarlo igual que
@@ -273,6 +305,30 @@ function sanitizeEventForViewer(
     const e = event as { enemy?: { reward?: unknown } };
     if (e.enemy && e.enemy.reward != null) {
       return { ...event, enemy: { ...e.enemy, reward: null } } as GameEvent;
+    }
+  }
+  if (event.type === 'PERSISTENT_CARD_PLACED') {
+    // Trampa boca abajo: el hecho de colocarla es público, pero la
+    // definición y el disparador solo los conoce quien la puso.
+    const e = event as { playerId?: string };
+    if (e.playerId !== viewerId) {
+      return {
+        ...event,
+        cardDefinitionId: HIDDEN_CARD,
+        persistentTrigger: HIDDEN_CARD,
+      } as GameEvent;
+    }
+  }
+  if (event.type === 'LEADER_BID_CARDS') {
+    // Puja de líder secreta: los ids de carta pujada solo los ve el
+    // pujante hasta que el líder se determina (y aun entonces quedan
+    // ocultos — LEADER_DETERMINED no los publica).
+    const e = event as { playerId?: string; cardInstanceIds: string[] };
+    if (e.playerId !== viewerId) {
+      return {
+        ...event,
+        cardInstanceIds: e.cardInstanceIds.map(() => HIDDEN_CARD),
+      } as GameEvent;
     }
   }
   return event;
@@ -287,16 +343,20 @@ function isPrivateEvent(event: GameEvent, viewerId: string | null): boolean {
     return ev.playerId !== viewerId;
   }
 
-  // DECK_SHUFFLED, DECK_RESHUFFLED: el orden del mazo es secreto para todos
-  // (ni siquiera el dueño debería ver newOrder)
-  if (event.type === 'DECK_SHUFFLED' || event.type === 'DECK_RESHUFFLED') {
-    return true;
-  }
+  // DECK_SHUFFLED/DECK_RESHUFFLED ya no están aquí: el hecho es público —
+  // sanitizeEventForViewer redacta solo el newOrder (E-11).
 
   // CARDS_REVEALED_TO_PLAYER: solo visible para el jugador receptor
   if (event.type === 'CARDS_REVEALED_TO_PLAYER') {
     const ev = event as { playerId?: string };
     return ev.playerId !== viewerId;
+  }
+
+  // PENDING_CHOICE_CREATED: el payload (options con instanceIds de mano,
+  // mazo, mercado…) es privado del jugador que debe resolverla.
+  if (event.type === 'PENDING_CHOICE_CREATED') {
+    const ev = event as { choice?: { playerId?: string } };
+    return ev.choice?.playerId !== viewerId;
   }
 
   return false;

@@ -11,11 +11,12 @@
  * Cumple UI-PNG-007: marcador de placeholder si no hay PNG.
  */
 
+import { memo } from 'react';
 import { View, Text, Pressable, StyleSheet, Image } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, withTiming } from 'react-native-reanimated';
 import { useTranslation } from 'react-i18next';
 import type { CardDefinition } from '@nt4h/schema';
-import { cardImage, buildAccessibleLabel } from '../store/cardImage';
+import { cardImage, buildAccessibleLabel, customCardImageUri } from '../store/cardImage';
 import { colors } from '../lib/theme';
 import { cardAccentColor } from '../lib/classTokens';
 import { useColors } from '../lib/useTheme';
@@ -38,6 +39,9 @@ interface CardViewProps {
   blocked?: boolean;
   /** Motivo del bloqueo (UI-103) */
   blockedReason?: string;
+  /** En cartas solapadas (abanico de mano) el motivo largo queda tapado
+   *  por la carta siguiente; muestra solo el candado */
+  blockedIconOnly?: boolean;
   /** Variante de imagen a cargar (UI-PNG-009) */
   imageVariant?: 'front' | 'back' | 'thumbnail' | 'game' | 'preview';
   /** Progreso de selección de objetivos (UI-107) */
@@ -48,7 +52,10 @@ interface CardViewProps {
 
 
 
-export function CardView({
+// memo: en mano/mercado/campo cada carta se re-renderizaba con
+// cualquier cambio de estado (selección, turno, monedas) aunque su
+// props no cambiaran (M-3).
+export const CardView = memo(function CardView({
   card,
   onPress,
   onLongPress,
@@ -58,6 +65,7 @@ export function CardView({
   validTarget,
   blocked,
   blockedReason,
+  blockedIconOnly,
   imageVariant = 'game',
   targetProgress,
   positionLabel,
@@ -69,6 +77,12 @@ export function CardView({
   const color = cardAccentColor(card);
   const variant = showBack ? 'back' : imageVariant;
   const { path, showPlaceholder } = cardImage(card.id, variant);
+  // Imagen del Taller (sourceImage 'asset:<id>'): tiene prioridad sobre
+  // la ruta oficial (una carta custom no está en el registro de PNGs),
+  // pero nunca sustituye el reverso.
+  const customUri = customCardImageUri(card.sourceImage);
+  const imageUri = showBack ? path : (customUri ?? path);
+  const hasRenderable = showBack ? (path && !showPlaceholder) : (customUri ?? (path && !showPlaceholder));
   // Descripción accesible estructurada (UI-ACCESS-PNG-001) — ya resuelta
   // via i18n dentro de buildAccessibleLabel. srExpandedLabels añade
   // tipo, clase y estadísticas completas; sin el ajuste solo nombre+tipo.
@@ -127,11 +141,11 @@ export function CardView({
       accessibilityHint={blocked ? blockedReason : undefined}
       accessibilityState={{ selected: !!selected, disabled: !!blocked }}
     >
-      {path && !showPlaceholder ? (
+      {imageUri && hasRenderable ? (
         // PNG real a sangre (UI-PNG-001, UI-GAME-001)
         // Escenarios: apaisados (~1.48); resto de cartas: verticales (0.656)
         <Image
-          source={{ uri: path }}
+          source={{ uri: imageUri }}
           style={[
             styles.cardImage,
             card.type === 'SCENARIO' && styles.cardImageLandscape,
@@ -179,7 +193,7 @@ export function CardView({
       {blocked && (
         <View style={styles.blockedVeil}>
           <Text style={styles.blockedIcon}>🔒</Text>
-          {blockedReason && <Text style={styles.blockedReason}>{blockedReason}</Text>}
+          {blockedReason && !blockedIconOnly && <Text style={styles.blockedReason}>{blockedReason}</Text>}
         </View>
       )}
       {targetProgress && (
@@ -194,7 +208,7 @@ export function CardView({
       )}
     </AnimatedPressable>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {
@@ -287,6 +301,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 6,
+    overflow: 'hidden',
   },
   blockedIcon: {
     fontSize: 18,
@@ -297,6 +312,11 @@ const styles = StyleSheet.create({
     fontSize: 10,
     textAlign: 'center',
     fontWeight: 'bold',
+    // alignSelf stretch + width: en web el texto se dimensionaba por
+    // contenido y desbordaba la carta ("No es la fase adecuada" cortado)
+    alignSelf: 'stretch',
+    width: '100%',
+    flexShrink: 1,
   },
   progressBar: {
     position: 'absolute',

@@ -9,33 +9,47 @@ import hmac
 import json
 import logging
 import os
-import time
 from datetime import timedelta
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.conf import settings
-from django.db import transaction
-from django.db.models import F, Max
+from django.db import IntegrityError, transaction
+from django.db.models import F, Max, Q
 from django.http import JsonResponse
 from django.utils import timezone
 
 from ..engine_client import EngineRunnerClient
 from ..models import GameEvent, GameSession, Player
+from ..store import rate_hit as _rate_hit
+
+# get_object_or_404 no se importa aquí para no arrastrar shortcuts al
+# plumbing; el helper _get_session lo trae solo.
+
+
+def _get_session(room_id: str) -> GameSession:
+    """GameSession con prefetch de players__user__profile.
+
+    ``to_dict()`` lee ``player.user.profile`` por jugador — sin el
+    prefetch eran ~2 queries extra por jugador (N+1) en cada respuesta
+    con roster (join/ready/kick/transfer/start/room_state).
+    """
+    from django.shortcuts import get_object_or_404
+
+    return get_object_or_404(
+        GameSession.objects.prefetch_related("players__user__profile"),
+        room_id=room_id,
+    )
+
 
 logger = logging.getLogger(__name__)
 # Logger dedicado a eventos de seguridad (auditoría): rate limits,
 # auth fallida, kicks, cierres WS. Facilita alertas sin ruido de app.
 security_logger = logging.getLogger("game.security")
 
-# Rate limiting por IP (in-memory; suficiente para una instancia — en
-# despliegue multi-worker usar cache Redis compartida).
-_RATE_LIMITS: dict[str, list[float]] = {}
-_RATE_WINDOW = 60.0  # segundos
+# Rate limiting por IP via game.store (cache compartida: Redis si
+# REDIS_URL está, LocMem por proceso si no — antes era dict in-memory).
 _RATE_MAX = 30  # peticiones mutadoras por IP y ventana
-# Umbral de barrido perezoso: cuando el bucket supera este tamaño se
-# purgan las ventanas ya caducadas (evita crecimiento sin límite).
-_RATE_MAX_KEYS = 10_000
 
 
 # Límites por scope: operaciones destructivas/pesadas tienen techo bajo;
@@ -53,6 +67,7 @@ _SCOPE_LIMITS = {
     "ready": 60,  # toggle frecuente y barato durante el lobby
     "leave": 20,
     "stats": 5,
+    "auth": 10,  # register/login — anti brute-force y enumeración de emails
     "read": 120,  # GET de estado/listado — holgado pero acotado (anti-enumeración)
     "default": _RATE_MAX,
 }
@@ -63,6 +78,11 @@ _SCOPE_LIMITS = {
 MAX_KICKED_IDS = 32
 
 
+# C-2: el set de proxies se parseaba por cada petición de rate-limit;
+# la env no cambia en runtime — leerla una vez.
+_TRUSTED_PROXIES_CACHE: set[str] | None = None
+
+
 def _trusted_proxies() -> set[str]:
     """Conjunto de IPs de proxies confiables para el X-Forwarded-For.
 
@@ -70,8 +90,11 @@ def _trusted_proxies() -> set[str]:
     ignora siempre — cualquier cliente podría falsificar su IP de
     rate-limit simplemente enviando la cabecera.
     """
-    raw = os.environ.get("TRUSTED_PROXY_IPS", "")
-    return {ip.strip() for ip in raw.split(",") if ip.strip()}
+    global _TRUSTED_PROXIES_CACHE
+    if _TRUSTED_PROXIES_CACHE is None:
+        raw = os.environ.get("TRUSTED_PROXY_IPS", "")
+        _TRUSTED_PROXIES_CACHE = {ip.strip() for ip in raw.split(",") if ip.strip()}
+    return _TRUSTED_PROXIES_CACHE
 
 
 def _client_ip(request) -> str:
@@ -88,39 +111,33 @@ def _client_ip(request) -> str:
     return remote or "?"
 
 
-def _sweep_rate_limits(now: float) -> None:
-    """Purga las ventanas caducadas cuando el bucket crece demasiado.
-
-    Sin barrido, un atacante rotando IPs (o salas) inflaría el dict sin
-    límite. Coste: O(n) solo cuando len > _RATE_MAX_KEYS.
-    """
-    for key in [k for k, ts in _RATE_LIMITS.items() if not ts or now - ts[-1] >= _RATE_WINDOW]:
-        _RATE_LIMITS.pop(key, None)
-
-
 def _rate_limited(request, scope: str = "default") -> bool:
     """Devuelve True si la IP supera el límite del scope dado.
 
     Las claves son (scope, ip): un flood de kick no consume el cupo de
-    ready, y viceversa. Configurable globalmente con ROOM_RATE_LIMIT_MAX.
+    ready, y viceversa. Overrides por env: ROOM_RATE_LIMIT_<SCOPE>
+    (p.ej. ROOM_RATE_LIMIT_AUTH) tiene prioridad; ROOM_RATE_LIMIT_MAX
+    es el fallback global — antes ese único env aplanaba TODOS los
+    scopes (subirlo para una demo relajaba el anti-brute-force de auth).
     """
-    override = getattr(settings, "ROOM_RATE_LIMIT_MAX", None)
-    limit = override if override is not None else _SCOPE_LIMITS.get(scope, _RATE_MAX)
+    per_scope = os.environ.get(f"ROOM_RATE_LIMIT_{scope.upper()}", "")
+    limit = -1
+    if per_scope:
+        try:
+            limit = int(per_scope)
+        except ValueError:
+            security_logger.warning("ROOM_RATE_LIMIT_%s=%r no es entero — ignorado", scope.upper(), per_scope)
+            limit = -1
+    if limit < 0:
+        override = getattr(settings, "ROOM_RATE_LIMIT_MAX", None)
+        limit = override if override is not None else _SCOPE_LIMITS.get(scope, _RATE_MAX)
     if limit <= 0:
         return False
     ip = _client_ip(request)
-    key = f"{scope}:{ip}"
-    now = time.monotonic()
-    if len(_RATE_LIMITS) > _RATE_MAX_KEYS:
-        _sweep_rate_limits(now)
-    hits = [t for t in _RATE_LIMITS.get(key, []) if now - t < _RATE_WINDOW]
-    if len(hits) >= limit:
-        _RATE_LIMITS[key] = hits
+    limited = _rate_hit(scope, ip, limit)
+    if limited:
         security_logger.warning("rate limit hit scope=%s ip=%s", scope, ip)
-        return True
-    hits.append(now)
-    _RATE_LIMITS[key] = hits
-    return False
+    return limited
 
 
 # --- Límites de tamaño de entrada -------------------------------------------
@@ -159,6 +176,24 @@ def _check_ids(data: dict, *fields: str, allow_empty: bool = False):
         invalid = _check_str(data.get(field, ""), field, allow_empty=allow_empty)
         if invalid is not None:
             return invalid
+    return None
+
+
+# Mismas restricciones que idSchema del runner (D440, server.ts): los ids
+# que viajan al motor no pueden empezar por '__' (centinelas internos
+# como SPECTATOR_ID) ni ser claves peligrosas de objetos JS. Sin esta
+# réplica, Django persistía el join y el fallo estallaba en start_room
+# como un 503 "Engine unavailable" enmascarado.
+_UNSAFE_ENGINE_IDS = {"__proto__", "constructor", "prototype"}
+
+
+def _check_engine_id(value, field: str):
+    """_check_str + restricciones de idSchema del runner. None si válido."""
+    invalid = _check_str(value, field, allow_empty=False)
+    if invalid is not None:
+        return invalid
+    if value.startswith("__") or value in _UNSAFE_ENGINE_IDS:
+        return JsonResponse({"error": f"Invalid {field}"}, status=400)
     return None
 
 
@@ -221,6 +256,16 @@ def _guard_post(request, scope: str) -> tuple[dict, JsonResponse | None]:
     too_big = _check_body_size(request)
     if too_big is not None:
         return {}, too_big
+    # Transfer-Encoding: chunked llega sin Content-Length — sin esta
+    # comprobación el cap se saltaba entero. WSGI ya bufferiza el body,
+    # así que aquí medimos lo recibido de verdad.
+    if len(request.body) > MAX_BODY_BYTES:
+        security_logger.warning(
+            "oversized chunked body rejected (%s bytes) path=%s",
+            len(request.body),
+            request.path,
+        )
+        return {}, JsonResponse({"error": "Payload too large"}, status=413)
     return _parse_json_body(request)
 
 
@@ -291,19 +336,63 @@ def _persist_command_event(session, player_id, command_type, event_type="COMMAND
     (skip_turn, GAME_ENDED) necesitaban el mismo tratamiento para no
     dejar huecos en el log de auditoría/replay. Mejor esfuerzo: no tumba
     la vista. ``event_type`` permite registrar eventos terminales.
+    El ``cid`` de extra se persiste también en la columna dedicada
+    (dedup atómica por (session, cid)).
     """
+    cid = extra.get("cid")
+    # Lock de sesión: sin él, dos escritores REST concurrentes (p. ej.
+    # skip_turn + GAME_ENDED) calculaban el mismo seq → IntegrityError
+    # tragada y evento de auditoría perdido en silencio. Con el lock la
+    # asignación de seq queda serializada con persist_event del consumer.
+    for _attempt in range(2):
+        try:
+            with transaction.atomic():
+                GameSession.objects.select_for_update().get(pk=session.pk)
+                seq = (GameEvent.objects.filter(session=session).aggregate(m=Max("seq"))["m"] or 0) + 1
+                GameEvent.objects.create(
+                    session=session,
+                    seq=seq,
+                    event_type=event_type,
+                    player_id=player_id,
+                    cid=cid if isinstance(cid, str) else None,
+                    data={"command": command_type, "accepted": True, **extra},
+                )
+            break
+        except IntegrityError:
+            # Colisión de seq/cid con un escritor no serializado — reintenta
+            continue
+        except Exception:  # noqa: PIE786  # pylint: disable=broad-exception-caught
+            logger.warning("could not persist command event for %s", session.room_id, exc_info=True)
+            break
+
+
+def _bump_player_stat(user_id, avg_turn_seconds: float | None = None, **fields: int) -> None:
+    """Incrementa contadores de PlayerStatistics de un usuario vinculado.
+
+    Mejor esfuerzo: una cuenta sin fila de estadísticas se autocrea
+    (usuarios creados por createsuperuser) y un fallo no tumba la vista.
+    Import perezoso para no acoplar game → accounts en tiempo de carga.
+    ``avg_turn_seconds`` es la media de ESTA partida: se fusiona con la
+    histórica ponderando por total_turns.
+    """
+    if user_id is None or not fields:
+        return
     try:
-        with transaction.atomic():
-            seq = (GameEvent.objects.filter(session=session).aggregate(m=Max("seq"))["m"] or 0) + 1
-            GameEvent.objects.create(
-                session=session,
-                seq=seq,
-                event_type=event_type,
-                player_id=player_id,
-                data={"command": command_type, "accepted": True, **extra},
-            )
+        from accounts.models import PlayerStatistics
+
+        stats, _ = PlayerStatistics.objects.get_or_create(user_id=user_id)
+        PlayerStatistics.objects.filter(pk=stats.pk).update(**{k: F(k) + v for k, v in fields.items()})
+        if avg_turn_seconds is not None:
+            stats.refresh_from_db()
+            old_turns = stats.total_turns - fields.get("total_turns", 0)
+            total = stats.total_turns
+            if total > 0:
+                stats.average_turn_seconds = (
+                    stats.average_turn_seconds * old_turns + avg_turn_seconds * fields.get("total_turns", 0)
+                ) / total
+                stats.save(update_fields=["average_turn_seconds"])
     except Exception:  # noqa: PIE786  # pylint: disable=broad-exception-caught
-        logger.warning("could not persist command event for %s", session.room_id, exc_info=True)
+        logger.warning("player statistics update failed for user %s", user_id, exc_info=True)
 
 
 def _broadcast_room(room_id, message):
@@ -327,6 +416,7 @@ def _broadcast_room(room_id, message):
 # perezosa en list_rooms y también por `python manage.py reap_rooms`.
 ROOM_WAITING_GC_MINUTES = int(os.environ.get("ROOM_WAITING_GC_MINUTES", "30"))
 ROOM_FINISHED_GC_HOURS = int(os.environ.get("ROOM_FINISHED_GC_HOURS", "24"))
+ROOM_PLAYING_GC_HOURS = int(os.environ.get("ROOM_PLAYING_GC_HOURS", "48"))
 
 
 def reap_stale_rooms(now=None) -> list[str]:
@@ -334,6 +424,9 @@ def reap_stale_rooms(now=None) -> list[str]:
 
     - WAITING con cero jugadores conectados y sin mutaciones desde hace
       ROOM_WAITING_GC_MINUTES (updated_at como proxy de última actividad).
+    - PLAYING sin actividad desde hace ROOM_PLAYING_GC_HOURS: no se
+      borra — pasa a FINISHED para conservar eventos y snapshots; la
+      regla de FINISHED la limpiará más tarde (salas zombi del runner).
     - FINISHED desde hace más de ROOM_FINISHED_GC_HOURS.
 
     Devuelve los room_id eliminados.
@@ -341,6 +434,42 @@ def reap_stale_rooms(now=None) -> list[str]:
     now = now or timezone.now()
     waiting_cutoff = now - timedelta(minutes=ROOM_WAITING_GC_MINUTES)
     finished_cutoff = now - timedelta(hours=ROOM_FINISHED_GC_HOURS)
+    playing_cutoff = now - timedelta(hours=ROOM_PLAYING_GC_HOURS)
+    # La actividad de una partida es su último GameEvent (comandos/chat),
+    # no updated_at: los comandos WS se persisten con QuerySet.update(),
+    # que no dispara auto_now — un juego activo de >48h quedaría marcado
+    # FINISHED a mitad de partida.
+    stale_playing = (
+        GameSession.objects.filter(status="PLAYING")
+        .annotate(last_event_at=Max("events__created_at"))
+        .filter(
+            Q(last_event_at__lt=playing_cutoff) | (Q(last_event_at__isnull=True) & Q(updated_at__lt=playing_cutoff))
+        )
+    )
+    for session in stale_playing:
+        # B-4: lock + re-check — dos reapers concurrentes (lazy en
+        # list_rooms y el comando reap_rooms) o un mark_finished en curso
+        # podían re-marcar/procesar la misma sala dos veces. Y B-6: la
+        # transición va por mark_finished — el status a pelo perdía el
+        # evento terminal GAME_ENDED, el snapshot final (replay) y las
+        # estadísticas de cuenta de los jugadores.
+        from .engine import mark_finished  # import perezoso: engine ya importa _common
+
+        with transaction.atomic():
+            locked = GameSession.objects.select_for_update().get(pk=session.pk)
+            if locked.status != "PLAYING":
+                continue
+            # Re-verificar frescura bajo el lock: un comando pudo llegar
+            # entre el annotate y ahora.
+            last_event = locked.events.aggregate(m=Max("created_at"))["m"]
+            if (last_event or locked.updated_at) >= playing_cutoff:
+                continue
+        mark_finished(locked, winner_id=None)
+        try:
+            EngineRunnerClient.delete_room(session.room_id)
+        except Exception:  # noqa: PIE786  # pylint: disable=broad-exception-caught
+            logger.warning("engine-runner delete_room failed for stale PLAYING room %s", session.room_id)
+        security_logger.info("stale PLAYING room %s marked FINISHED", session.room_id)
     stale = list(
         GameSession.objects.filter(status="WAITING", updated_at__lt=waiting_cutoff).exclude(players__is_connected=True)
     )
@@ -348,13 +477,31 @@ def reap_stale_rooms(now=None) -> list[str]:
     reaped: list[str] = []
     for session in stale:
         room_id = session.room_id
-        status = session.status  # capturar antes de delete()
+        # B-4: lock + re-check antes de borrar — un join/list concurrente
+        # pudo recolocar la sala (jugador conectado, status cambiado) entre
+        # el listado y el delete.
+        with transaction.atomic():
+            locked = GameSession.objects.select_for_update().filter(pk=session.pk).first()
+            if locked is None:
+                continue
+            status = locked.status
+            if locked.status == "WAITING" and (
+                locked.updated_at >= waiting_cutoff or locked.players.filter(is_connected=True).exists()
+            ):
+                continue
+            if locked.status == "FINISHED" and locked.updated_at >= finished_cutoff:
+                continue
+            locked.delete()
         try:
             EngineRunnerClient.delete_room(room_id)
         except Exception:  # noqa: PIE786  # pylint: disable=broad-exception-caught
             # fire-and-forget: el barrido no debe tumbar por un runner caído
             logger.warning("engine-runner delete_room failed for reaped room %s", room_id)
-        session.delete()
+        # Cerrar los sockets abiertos de la sala borrada: el grupo del
+        # channel layer sobrevive a la fila — sin el broadcast los
+        # conectados quedaban colgados para siempre y handle_chat seguía
+        # difundiendo mensajes de una sala inexistente.
+        _broadcast_room(room_id, {"type": "room.closed", "reason": "reaped", "status": status})
         reaped.append(room_id)
         security_logger.info("reaped stale room %s (status=%s)", room_id, status)
     return reaped

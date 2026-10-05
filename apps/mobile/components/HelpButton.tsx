@@ -6,6 +6,8 @@
 
 import { Pressable, Text, StyleSheet } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { touchTarget, fontSize, type Colors } from '../lib/theme';
+import { useColors, useFs } from '../lib/useTheme';
 
 interface HelpButtonProps {
   onPress: () => void;
@@ -13,10 +15,13 @@ interface HelpButtonProps {
 
 export function HelpButton({ onPress }: HelpButtonProps) {
   const { t } = useTranslation();
+  const c = useColors();
+  const fs = useFs();
+  const styles = createStyles(c, fs);
   return (
     <Pressable
       onPress={onPress}
-      style={styles.button}
+      style={({ pressed }) => [styles.button, pressed && { opacity: 0.75 }]}
       accessibilityRole="button"
       accessibilityLabel={t('panels.help')}
     >
@@ -25,18 +30,18 @@ export function HelpButton({ onPress }: HelpButtonProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   button: {
-    backgroundColor: '#2980b9',
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    backgroundColor: c.info,
+    minWidth: touchTarget,
+    minHeight: touchTarget,
+    borderRadius: touchTarget / 2,
     justifyContent: 'center',
     alignItems: 'center',
   },
   text: {
-    color: '#fff',
-    fontSize: 18,
+    color: '#ffffff',
+    fontSize: fs(fontSize.section),
     fontWeight: 'bold',
   },
 });

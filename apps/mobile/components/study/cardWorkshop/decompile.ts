@@ -263,13 +263,14 @@ function decompileAction(e: CardEffect, n: EffectNode, diag: DiagFn): void {
     case 'GAIN_GLORY': case 'HEAL_WOUNDS': case 'ALL_HEROES_RECOVER':
     case 'OTHER_HEROES_RECOVER': case 'DRAW_FROM_BOTTOM': case 'BLOCK_NEXT_DAMAGE':
       ve(e.amount); break;
-    case 'DRAW_CARDS': case 'DRAW_AND_ADD_ATTACK': {
+    case 'DRAW_CARDS': {
       ve(e.amount);
       if (e.source && e.source !== 'ABILITY_DECK') {
         diag('DECOMPILE_LOSSY', 'warning', 'workshop.diagDecompileLossy', { detail: `source=${e.source}` });
       }
       break;
     }
+    case 'DRAW_AND_ADD_ATTACK': ve(e.amount); break;
     case 'RECOVER_CARDS': ve(e.amount); n.to = e.to; break;
     case 'GAIN_COINS': {
       ve(e.amount);

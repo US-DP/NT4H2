@@ -39,8 +39,9 @@ export default {
     errReady: 'No se pudo actualizar',
     /** Error genérico cuando la excepción no trae mensaje */
     errGeneric: 'Error',
+  errChatOffline: 'Sin conexión — el mensaje no se ha enviado',
     /** Entrada del registro: comando de juego recibido por broadcast */
-    sysCommand: 'Comando {{command}} de {{playerId}}',
+    // (sysCommand eliminada: el lobby ya no muestra eco de comandos)
     /** Toast cuando el usuario recibe el rol de anfitrión */
     youAreHost: 'Ahora eres el anfitrión',
     /** Placeholder del campo de nombre al unirse a la sala */
@@ -59,10 +60,14 @@ export default {
     pickHero: 'Elige tu héroe',
     /** Etiqueta del selector de clase (mazo) al unirse a una sala */
     pickClass: 'Elige tu clase (mazo)',
+    /** Segunda clase del modo multiclase (al unirse) */
+    pickSecondClass: 'Elige tu segunda clase',
     pickCustomDeck: 'O usa un mazo del Taller',
     classDeck: 'Mazo de clase',
     /** Error del formulario de unirse: héroe no elegido */
     errPickHero: 'Elige un héroe para jugar',
+    /** Etiqueta de mazo custom del Taller junto al nombre en el roster */
+    workshopDeck: 'Taller',
 
     chat: {
       /** Título de la cabecera del panel */

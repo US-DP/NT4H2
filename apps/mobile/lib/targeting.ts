@@ -49,6 +49,17 @@ function* walkEffects(effects: readonly unknown[] | undefined): Generator<Record
     yield* walkEffects(branch(e.effects));
     yield* walkEffects(branch(e.onMatch ?? e.on_match));
     yield* walkEffects(branch(e.onMismatch ?? e.on_mismatch));
+    // TRY_EFFECT.onFailure y CHOOSE_ONE.options[].effects: un efecto
+    // con objetivo dentro de estas ramas igualmente necesita
+    // targetEnemyId en el comando — si la UI no lo pide, resolveTarget
+    // devuelve null y el efecto es un no-op silencioso.
+    yield* walkEffects(branch(e.onFailure));
+    const opts = e.options;
+    if (Array.isArray(opts)) {
+      for (const o of opts) {
+        yield* walkEffects(branch((o as Record<string, unknown>)?.effects));
+      }
+    }
   }
 }
 

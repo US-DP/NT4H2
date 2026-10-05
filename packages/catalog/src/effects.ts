@@ -72,8 +72,11 @@ export const EFFECT_REGISTRY: EffectMeta[] = [
   meta('ON_DEFEAT', 'control', 'Al derrotar', 'Efectos al derrotar al objetivo', ABILITY),
   meta('ON_ENEMY_DEFEATED', 'control', 'Tras derrota', 'Efectos cuando un enemigo cae', ANY),
   meta('ON_HORDE_ATTACK', 'control', 'Al atacar la Horda', 'Efectos durante el ataque de la Horda', ENEMIES),
-  meta('IGNORE_COIN_REWARDS', 'control', 'Ignorar Monedas', 'No se ganan Monedas de recompensa', ['ABILITY', 'MARKET', 'SCENARIO']),
-  meta('IGNORE_GLORY_REWARDS', 'control', 'Ignorar Gloria', 'No se gana Gloria de recompensa', ['ABILITY', 'MARKET', 'SCENARIO']),
+  // Solo SCENARIO: los flags ignoreCoinRewards/ignoreGloryRewards los
+  // fija applyScenarioEffects mientras el escenario está activo; en una
+  // carta de habilidad/mercado eran no-ops silenciosos (auditoría).
+  meta('IGNORE_COIN_REWARDS', 'control', 'Ignorar Monedas', 'No se ganan Monedas de recompensa', ['SCENARIO']),
+  meta('IGNORE_GLORY_REWARDS', 'control', 'Ignorar Gloria', 'No se gana Gloria de recompensa', ['SCENARIO']),
   meta('END_ATTACK', 'control', 'Terminar ataque', 'Finaliza la fase de ataque', ABILITY),
   meta('REPEAT', 'control', 'Repetir', 'Repite sus efectos N veces (con máximo obligatorio)', ABILITY),
   meta('CHOOSE_ONE', 'control', 'Elección', 'El jugador elige una de varias ramas de efectos', ABILITY),
@@ -133,12 +136,42 @@ export function getEffectMeta(type: CardEffect['type']): EffectMeta | undefined 
 }
 
 /**
+ * Efectos que el motor solo intercepta en el nivel raíz de la resolución
+ * de una carta. Anidados dentro de CONDITIONAL/REPEAT/FOR_EACH/etc. caen
+ * en handlers no-op (se descartan en silencio), generan elecciones que
+ * nadie resolverá (CHOOSE_ONE/DISCARD_FROM_HAND) o fabrican un enemigo
+ * con stats corruptos (SWAP_ENEMY). Rechazarlos al validar.
+ */
+export const TOP_LEVEL_ONLY_EFFECTS: ReadonlySet<CardEffect['type']> = new Set([
+  'CHOOSE_ONE',
+  'DISCARD_FROM_HAND',
+  'DRAW_AND_CHECK',
+  'DRAW_AND_ADD_ATTACK',
+  'ON_DEFEAT',
+  'ON_HORDE_ATTACK',
+  'PLAY_IMMEDIATELY',
+  'CUSTOM_SCENARIO',
+  'SPAWN_ENEMY',
+  'SWAP_ENEMY',
+  'PLAY_RANDOM_CARD_FROM_OTHER_HERO',
+]);
+
+/**
  * Valida que los efectos de una carta usan tipos registrados y compatibles
  * con el tipo de carta. Devuelve errores legibles para el editor.
  */
 export function validateEffectSources(cardType: CardType, effects: CardEffect[]): string[] {
   const errors: string[] = [];
-  const walk = (list: CardEffect[], path: string): void => {
+  // PLAY_IMMEDIATELY sí es legal anidado dentro de onMatch/onMismatch de
+  // un DRAW_AND_CHECK — es la mecánica entera de Disparo Rápido (la
+  // carta robada se juega en el acto si coincide).
+  const walk = (
+    list: CardEffect[],
+    path: string,
+    depth: number,
+    parentType?: CardEffect['type'],
+    parentKey?: string,
+  ): void => {
     list.forEach((eff, i) => {
       const p = `${path}[${i}]`;
       const m = registryByType.get(eff.type);
@@ -149,12 +182,55 @@ export function validateEffectSources(cardType: CardType, effects: CardEffect[])
       if (!m.allowedSources.includes(cardType)) {
         errors.push(`${p}: ${m.label} no puede usarse en cartas de tipo ${cardType}`);
       }
+      const nestedRapidShot =
+        eff.type === 'PLAY_IMMEDIATELY'
+        && parentType === 'DRAW_AND_CHECK'
+        && (parentKey === 'onMatch' || parentKey === 'onMismatch');
+      if (depth > 0 && TOP_LEVEL_ONLY_EFFECTS.has(eff.type) && !nestedRapidShot) {
+        errors.push(`${p}: ${m.label} solo puede usarse en el nivel raíz de la carta`);
+      }
+      const c = eff as unknown as Record<string, unknown>;
+      for (const key of ['effects', 'then', 'else', 'onMatch', 'onMismatch', 'onFailure']) {
+        const sub = c[key];
+        if (Array.isArray(sub)) {
+          walk(sub as CardEffect[], `${p}.${key}`, depth + 1, eff.type, key);
+        }
+      }
+      // CHOOSE_ONE: validar las ramas como listas anidadas
+      const opts = c['options'];
+      if (Array.isArray(opts)) {
+        for (let oi = 0; oi < opts.length; oi++) {
+          const sub = (opts[oi] as { effects?: unknown }).effects;
+          if (Array.isArray(sub)) {
+            walk(sub as CardEffect[], `${p}.options[${oi}]`, depth + 1, eff.type, 'options');
+          }
+        }
+      }
+    });
+  };
+  walk(effects, 'effects', 0);
+  return errors;
+}
+
+/**
+ * Listas de efectos que se ejecutan DIRECTAMENTE contra el registry
+ * (`heroAbility.effects`, `peritia.effects`): no pasan por el intercepto
+ * de resolveCard, así que los tipos TOP_LEVEL_ONLY son no-ops incluso en
+ * el nivel raíz. Valida la lista entera como si todo fuera "anidado".
+ */
+export function validateDirectExecuteEffects(effects: CardEffect[]): string[] {
+  const errors: string[] = [];
+  const walk = (list: CardEffect[], path: string): void => {
+    list.forEach((eff, i) => {
+      const p = `${path}[${i}]`;
+      if (TOP_LEVEL_ONLY_EFFECTS.has(eff.type)) {
+        errors.push(`${p}: ${eff.type} no se ejecuta en efectos declarativos (pericia/pericia de héroe)`);
+      }
       const c = eff as unknown as Record<string, unknown>;
       for (const key of ['effects', 'then', 'else', 'onMatch', 'onMismatch', 'onFailure']) {
         const sub = c[key];
         if (Array.isArray(sub)) walk(sub as CardEffect[], `${p}.${key}`);
       }
-      // CHOOSE_ONE: validar las ramas como listas anidadas
       const opts = c['options'];
       if (Array.isArray(opts)) {
         for (let oi = 0; oi < opts.length; oi++) {

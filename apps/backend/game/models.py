@@ -89,7 +89,10 @@ class Player(models.Model):
     session = models.ForeignKey(GameSession, related_name="players", on_delete=models.CASCADE)
     player_id = models.CharField(max_length=100)
     name = models.CharField(max_length=100)
-    is_connected = models.BooleanField(default=True)
+    # La presencia real la marca el WS (mark_player_connected): un join
+    # REST sin socket no es "conectado" — sin esto un jugador que nunca
+    # abrió el canal mantenía la sala viva para siempre ante el reaper.
+    is_connected = models.BooleanField(default=False)
     # Recuento de conexiones WS abiertas: un jugador con dos pestañas solo
     # pasa a offline cuando TODAS sus conexiones se cierran.
     connection_count = models.IntegerField(default=0)
@@ -106,6 +109,13 @@ class Player(models.Model):
     # Mazo del Taller: si se informa, sustituye a deck_id en el roster del
     # motor. La definición viaja en session.config["customDecks"].
     custom_deck_id = models.CharField(max_length=100, blank=True, default="")
+    # Multiclase: segunda baraja de habilidades (p.ej. "warrior.default").
+    # Sin persistirla se perdía al recrear el roster del runner en
+    # start_room — la sala quedaba en modo degradado sin error (auditoría).
+    second_deck_id = models.CharField(max_length=100, blank=True, default="")
+    # Edad declarada para el desempate del líder inicial (spec). El runner
+    # la acepta opcional; si no se informa, el motor decide sin ella.
+    player_age = models.PositiveSmallIntegerField(null=True, blank=True)
     # D431: token de autorizacion por jugador — requerido para acciones
     # sensibles (start, leave, comandos WS, estado proyectado). Nunca se
     # expone en to_dict() ni en listados.
@@ -127,6 +137,14 @@ class Player(models.Model):
         unique_together = ["session", "player_id"]
 
     def to_dict(self):
+        # userId liga la cuenta persistente a la presencia en sala: solo
+        # se expone si el usuario permite mostrar su estado online
+        # (mismo criterio que PublicUserSerializer.get_online).
+        user_id = None
+        if self.user_id:
+            profile = getattr(self.user, "profile", None)
+            if profile is None or profile.show_online_status:
+                user_id = str(self.user_id)
         return {
             "playerId": self.player_id,
             "name": self.name,
@@ -137,7 +155,8 @@ class Player(models.Model):
             "deckId": self.deck_id,
             "heroFace": self.hero_face,
             "customDeckId": self.custom_deck_id,
-            "userId": str(self.user_id) if self.user_id else None,
+            "secondDeckId": self.second_deck_id,
+            "userId": user_id,
             "joinedAt": self.joined_at.isoformat(),
         }
 
@@ -185,13 +204,25 @@ class GameEvent(models.Model):
     seq = models.IntegerField()
     event_type = models.CharField(max_length=50)
     player_id = models.CharField(max_length=100, null=True, blank=True)
+    # Command id del cliente (dedup de comandos). Columna propia (no
+    # data__cid): el UniqueConstraint(session, cid) hace la dedup
+    # atómica y el índice evita el scan del JSONField. NULL = eventos
+    # sin cid (chat, GAME_ENDED) — varios NULL no colisionan.
+    cid = models.CharField(max_length=128, null=True, blank=True, db_index=True)
     data = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         app_label = "game"
         ordering = ["seq"]
-        constraints = [models.UniqueConstraint(fields=["session", "seq"], name="uniq_event_seq_per_session")]
+        constraints = [
+            models.UniqueConstraint(fields=["session", "seq"], name="uniq_event_seq_per_session"),
+            models.UniqueConstraint(
+                fields=["session", "cid"],
+                name="uniq_event_cid_per_session",
+                condition=models.Q(cid__isnull=False),
+            ),
+        ]
 
 
 class GameSnapshot(models.Model):
@@ -206,8 +237,8 @@ class GameSnapshot(models.Model):
     session = models.ForeignKey(GameSession, related_name="snapshots", on_delete=models.CASCADE)
     # seq del último GameEvent cubierto por el snapshot
     seq = models.IntegerField()
-    # revisión del estado en el runner al tomar el snapshot
-    revision = models.IntegerField(default=0)
+    # (columna revision eliminada: el valor ya viaja dentro del JSON
+    #  `state` — nadie la leía; la revisión viva es GameSession.revision)
     state = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
 

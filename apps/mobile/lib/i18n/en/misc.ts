@@ -5,6 +5,43 @@ export default {
     cancel: 'Cancel',
     confirm: 'Confirm',
 
+    /* Backend error messages (see lib/serverErrors.ts) */
+    srvErr: {
+      roomFull: 'The room is full',
+      roomNotOpen: 'The room no longer accepts players',
+      roomNotInPlay: 'The game has not started yet',
+      roomNotFound: 'No room exists with that code',
+      roomAllocFailed: 'Could not create the room; try again',
+      notEnoughPlayers: 'Not enough players to start',
+      notAllReady: 'Not all players are ready',
+      allMustPickHero: 'All players must choose a hero',
+      onlySelfLeave: 'Only the player themself can leave mid-game',
+      playerNotFound: 'Player not found in the room',
+      notMember: 'The player is not a member of this room',
+      invalidPlayerToken: 'Invalid player session; rejoin the room',
+      playerKicked: 'You were kicked from this room',
+      playerNotKicked: 'That player is not kicked',
+      targetOffline: 'That player is not connected',
+      invalidTarget: 'Invalid target',
+      tooManyRequests: 'Too many requests; wait a moment and retry',
+      engineUnavailable: 'The game engine is unavailable; try again',
+      engineError: 'Game engine error',
+      customDeckNotYours: 'That custom deck belongs to another player',
+      tooManyCustomDecks: 'Too many custom decks in the room',
+      invalidCustomDeck: 'Invalid custom deck',
+      invalidGameConfig: 'Invalid game configuration',
+      joinFailed: 'Could not join the room',
+      nameRegistered:
+        'That name belongs to a registered account — log in to use it',
+      nameRequired: 'Enter a name',
+      noActivePlayer: 'No active player',
+      hostOnly: 'Only the host can do that',
+      invalidData: 'Invalid data',
+      payloadTooLarge: 'The submitted data is too large',
+      tooMany: 'Too many entries',
+      network: 'No connection to the server; check your network',
+    },
+
     /* _layout: Stack screen titles */
     screen: {
       index: 'No Time for Heroes',
@@ -19,6 +56,7 @@ export default {
       room: 'Room',
       study: 'Workshop',
       showcase: 'Component showcase',
+      replay: 'Replay',
     },
 
     /* (content): installed content */

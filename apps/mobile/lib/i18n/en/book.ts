@@ -47,6 +47,8 @@ export default {
     pageOf: '{{current}} of {{total}}',
     inThisSection: 'IN THIS SECTION',
     related: 'RELATED',
+    keywordRelated: 'Also appears in: {{sections}}',
+    keywordNone: 'This keyword only appears in this section.',
     back: 'Back',
     drawerTitle: 'Rulebook index',
     closeIndexA11y: 'Close index',

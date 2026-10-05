@@ -95,19 +95,16 @@ class AuthFlowTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["profile"]["biography"], "hola")
 
-    def test_public_profile_and_statistics(self):
+    def test_statistics_endpoint(self):
         user_res = _register(self.client).json()
         uid = user_res["user"]["id"]
         tokens = user_res["tokens"]
         auth = {"HTTP_AUTHORIZATION": f"Bearer {tokens['access']}"}
-        pub = self.client.get(f"/api/v1/players/{uid}/", **auth)
-        self.assertEqual(pub.status_code, 200)
-        self.assertEqual(pub.json()["display_name"], "Alex")
         stats = self.client.get(f"/api/v1/players/{uid}/statistics/", **auth)
         self.assertEqual(stats.status_code, 200)
         self.assertEqual(stats.json()["games_played"], 0)
         self.assertEqual(
-            self.client.get("/api/v1/players/00000000-0000-0000-0000-000000000000/", **auth).status_code,
+            self.client.get("/api/v1/players/00000000-0000-0000-0000-000000000000/statistics/", **auth).status_code,
             404,
         )
 
@@ -148,7 +145,7 @@ class PlayerLinkTests(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertIsNone(Player.objects.get(player_id="h1").user_id)
 
-    def test_join_links_and_match_history(self):
+    def test_join_links_player_to_user(self):
         room_id = self._create_room(**self.auth).json()["roomId"]
         res = _post(
             self.client,
@@ -158,51 +155,6 @@ class PlayerLinkTests(TestCase):
         )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(str(Player.objects.get(player_id="p2").user_id), self.user_id)
-        hist = self.client.get(f"/api/v1/players/{self.user_id}/match-history/", **self.auth)
-        self.assertEqual(hist.status_code, 200)
-        self.assertEqual(len(hist.json()["games"]), 1)
-
-    def test_claim_guest_binds_player(self):
-        # Crear sala como invitado (sin JWT)
-        res = self._create_room()
-        room_id = res.json()["roomId"]
-        token = res.json()["hostToken"]
-        claim = _post(
-            self.client,
-            "/api/v1/auth/claim-guest/",
-            {"roomId": room_id, "playerId": "h1", "playerToken": token},
-            **self.auth,
-        )
-        self.assertEqual(claim.status_code, 200)
-        self.assertEqual(str(Player.objects.get(player_id="h1").user_id), self.user_id)
-
-    def test_claim_guest_rejects_bad_token(self):
-        room_id = self._create_room().json()["roomId"]
-        claim = _post(
-            self.client,
-            "/api/v1/auth/claim-guest/",
-            {"roomId": room_id, "playerId": "h1", "playerToken": "wrong"},
-            **self.auth,
-        )
-        self.assertEqual(claim.status_code, 403)
-
-    def test_claim_guest_rejects_other_account(self):
-        res = self._create_room()
-        room_id, token = res.json()["roomId"], res.json()["hostToken"]
-        _post(
-            self.client,
-            "/api/v1/auth/claim-guest/",
-            {"roomId": room_id, "playerId": "h1", "playerToken": token},
-            **self.auth,
-        )
-        other = _register(self.client, email="b@example.com", display="Bob").json()
-        second = _post(
-            self.client,
-            "/api/v1/auth/claim-guest/",
-            {"roomId": room_id, "playerId": "h1", "playerToken": token},
-            HTTP_AUTHORIZATION=f"Bearer {other['tokens']['access']}",
-        )
-        self.assertEqual(second.status_code, 409)
 
     def test_rejoin_links_guest_player(self):
         res = self._create_room()

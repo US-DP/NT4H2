@@ -39,6 +39,10 @@ export interface PhaseResult {
   rng: DeterministicRng;
   /** Si la fase requiere accion del jugador, indica cual */
   pendingPhase: 'PLAYER_ATTACK' | 'MARKET' | 'ATTACK_CHOICE' | 'FINISHED' | null;
+  /** True si el presupuesto de iteraciones se agotó sin llegar a una
+   *  fase estable — antes se truncaba en silencio y el estado "a
+   *  medias" era indistinguible de uno terminado. */
+  halted?: boolean;
 }
 
 /**
@@ -72,8 +76,42 @@ export function processPhases(
     return { state: s, extra };
   };
 
-  // Maximo 20 iteraciones para evitar bucles infinitos
-  for (let i = 0; i < 20; i++) {
+  // E-2: diff de frontera sobre pendingChoices. Las elecciones se crean
+  // por mutación directa en este orquestador y dentro de los pasos
+  // (restoration, turnEnd, gameEnd, ventana de reacción, Feldon…); sin
+  // evento, el eventLog no las contenía y un fold/replayFromSnapshot las
+  // perdía. Los diffs se aplican con applyEvent: el reducer es
+  // idempotente y además escribe el evento en state.eventLog.
+  const emittedChoiceIds = new Set(current.pendingChoices.map(c => c.choiceId));
+  const flushChoiceDiff = () => {
+    for (const c of current.pendingChoices) {
+      if (!emittedChoiceIds.has(c.choiceId)) {
+        emittedChoiceIds.add(c.choiceId);
+        const ev: GameEvent = { type: 'PENDING_CHOICE_CREATED', choice: c, seq: nextSeq() };
+        allEvents.push(ev);
+        current = applyEvent(current, ev);
+      }
+    }
+    const gone = [...emittedChoiceIds]
+      .filter(id => !current.pendingChoices.some(c => c.choiceId === id));
+    if (gone.length > 0) {
+      for (const id of gone) emittedChoiceIds.delete(id);
+      const ev: GameEvent = { type: 'PENDING_CHOICES_REMOVED', choiceIds: gone, seq: nextSeq() };
+      allEvents.push(ev);
+      current = applyEvent(current, ev);
+    }
+  };
+
+  // Maximo 20 iteraciones para evitar bucles infinitos entre fases
+  // automaticas. Una fase que espera entrada externa (SETUP,
+  // INITIAL_PLAYER_SELECTION, WAITING_FOR_CHOICE, TURN_START si no
+  // avanza sola…) sale del bucle en el default — iterarla era presu-
+  // puesto quemado que acababa en halted=true siendo un estado sano.
+  const MAX_PHASE_ITERS = 20;
+  let iterationsUsed = 0;
+  let waitingExternal = false;
+  for (let i = 0; i < MAX_PHASE_ITERS; i++) {
+    iterationsUsed = i + 1;
     // Podar pendingChoices de héroes eliminados: un héroe con
     // wounds >= maxWounds no puede ejecutar comandos (salvo PASS),
     // así que sus elecciones pendientes bloquearían la máquina de
@@ -85,15 +123,19 @@ export function processPhases(
       return !!p && p.wounds < (p.maxWounds ?? 3);
     });
     if (aliveChoices.length !== current.pendingChoices.length) {
-      // Event-sourced: la poda también debe ocurrir en el fold del eventLog
-      allEvents.push({
+      // Event-sourced: la poda también debe ocurrir en el fold del
+      // eventLog — se emite Y se aplica (el reducer filtra de nuevo:
+      // idempotente) para que el eventLog del estado la contenga.
+      const ev: GameEvent = {
         type: 'PENDING_CHOICES_REMOVED',
         choiceIds: current.pendingChoices
           .filter(c => !aliveChoices.includes(c))
           .map(c => c.choiceId),
         seq: nextSeq(),
-      });
-      current = { ...current, pendingChoices: aliveChoices };
+      };
+      allEvents.push(ev);
+      current = applyEvent(current, ev);
+      for (const id of ev.choiceIds) emittedChoiceIds.delete(id);
     }
 
     switch (current.phase) {
@@ -110,11 +152,16 @@ export function processPhases(
               ...current,
               pendingChoices: [...current.pendingChoices, ...reactionChoices],
             };
-            allEvents.push({
+            const ev: GameEvent = {
               type: 'PHASE_CHANGED',
               phase: 'HORDE_ATTACK',
               seq: nextSeq(),
-            });
+            };
+            allEvents.push(ev);
+            // Aplicado (no solo emitido): sin esto el eventLog no lo
+            // contenía y el fold divergía del estado vivo.
+            current = applyEvent(current, ev);
+            flushChoiceDiff();
             // Detener: esperar a que los jugadores reaccionen
             return { events: allEvents, state: current, rng, pendingPhase: null };
           }
@@ -134,6 +181,7 @@ export function processPhases(
             || c.choiceId.startsWith('valerys-')
         );
         if (pendingReactions.length > 0) {
+          flushChoiceDiff();
           return { events: allEvents, state: current, rng, pendingPhase: null };
         }
 
@@ -156,6 +204,7 @@ export function processPhases(
             pendingChoices: [...trigApplied.state.pendingChoices, triggerResult.pendingChoice],
           };
           // Detener el procesamiento de fases: el jugador debe resolver la eleccion
+          flushChoiceDiff();
           return { events: allEvents, state: current, rng, pendingPhase: null };
         }
         current = trigApplied.state;
@@ -173,6 +222,7 @@ export function processPhases(
         // su resolución — antes atacaba directamente dejando la elección
         // bloqueando las fases siguientes.
         if (feldonChoicePending) {
+          flushChoiceDiff();
           return { events: allEvents, state: current, rng, pendingPhase: null };
         }
         // No ofrecer la Pericia si el daño entrante es 0 (campo vacío o
@@ -201,6 +251,7 @@ export function processPhases(
               maxSelections: 1,
             }],
           };
+          flushChoiceDiff();
           return { events: allEvents, state: current, rng, pendingPhase: null };
         }
         // Luego procesar el ataque de la Horda
@@ -217,8 +268,13 @@ export function processPhases(
         const restApplied = applyBatch(result.state, result.events);
         current = restApplied.state;
         allEvents.push(...result.events, ...restApplied.extra);
-        // Si el jugador debe elegir qué descartar (mano > 4), pausar
-        if (current.pendingChoices.length > 0) {
+        // Si el jugador debe elegir qué descartar (mano > 4), pausar.
+        // Solo elecciones OBLIGATORIAS (minSelections > 0): una CONFIRM
+        // opcional sin responder (turn-start-* de un jugador AFK o
+        // eliminado) dejaba la fase parada para siempre — misma
+        // convención que execute.ts (minSelections > 0 = bloqueante).
+        if (current.pendingChoices.some(c => c.minSelections > 0)) {
+          flushChoiceDiff();
           return { events: allEvents, state: current, rng, pendingPhase: null };
         }
         break;
@@ -272,13 +328,22 @@ export function processPhases(
       default:
         // Fases que requieren accion o no se procesan aqui
         pending = null;
+        waitingExternal = true;
         break;
     }
 
-    if (pending !== null) break;
+    flushChoiceDiff();
+    if (pending !== null || waitingExternal) break;
   }
 
-  return { state: current, events: allEvents, rng, pendingPhase: pending };
+  // Si el presupuesto se agotó sin llegar a una fase estable, el estado
+  // queda "a medias" — señalarlo para que el llamador pueda decidir
+  // (antes era indistinguible de un proceso terminado).
+  const halted = pending === null && iterationsUsed >= MAX_PHASE_ITERS;
+  if (halted) {
+    console.warn(`processPhases agotó ${MAX_PHASE_ITERS} iteraciones en fase ${current.phase}`);
+  }
+  return { state: current, events: allEvents, rng, pendingPhase: pending, halted };
 }
 
 // ============================================================================
@@ -293,6 +358,10 @@ function buildReactionWindow(state: GameState): PendingChoice[] {
     if (playerId === activePlayerId) continue;
     const player = state.players[playerId];
     if (!player || player.heroUsesRemaining <= 0) continue;
+    // Jugador eliminado: no ofrecer reacción — la poda de pendingChoices
+    // la retiraría en la siguiente iteración y buildReactionWindow la
+    // recrearía en un bucle infinito (deadlock del Ataque de la Horda).
+    if (player.wounds >= (player.maxWounds ?? 3)) continue;
 
     const heroId = state.players[playerId]?.heroId;
     // D428: identificar héroes reactivos por heroId estable (Valèrys, Lisavette)

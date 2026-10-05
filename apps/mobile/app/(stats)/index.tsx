@@ -14,9 +14,13 @@ import { ChevronLeft, Trophy, Lock, BarChart3 } from 'lucide-react-native';
 import { loadHistory, computeStats, type GameHistoryEntry } from '../../lib/gameHistory';
 import { evaluateAchievements, almostThere, type AchievementCategory } from '../../lib/achievements';
 import { fetchCommunity, fetchLeaderboard, type CommunityStats, type LeaderboardEntryData } from '../../lib/communityStats';
+import { authApi } from '../../lib/auth';
+import { useAuth } from '../../store/authStore';
 import { useSettings } from '../../store/settingsStore';
 import { loadCatalog } from '@nt4h/catalog';
-import { useColors } from '../../lib/useTheme';
+import { useColors, useFs } from '../../lib/useTheme';
+import { AppNav, useNavSidebarWidth } from '../../components/AppNav';
+import { NtButton } from '../../components/ui/NtButton';
 import { fontSize, type Colors } from '../../lib/theme';
 
 const CATEGORY_IDS: (AchievementCategory | 'todas')[] = [
@@ -27,7 +31,9 @@ const MODE_IDS = ['STANDARD', 'SOLO', 'MULTICLASS'] as const;
 
 export default function StatsScreen() {
   const c = useColors();
-  const styles = makeStyles(c);
+  const fs = useFs();
+  const styles = makeStyles(c, fs);
+  const navWidth = useNavSidebarWidth();
   const router = useRouter();
   const { t } = useTranslation();
   const [history, setHistory] = useState<GameHistoryEntry[]>([]);
@@ -38,12 +44,24 @@ export default function StatsScreen() {
   const publicLeaderboard = useSettings((s) => s.publicLeaderboard);
   const setSetting = useSettings((s) => s.set);
   const displayName = useSettings((s) => s.displayName);
+  // Estadísticas de cuenta (jugadas/ganadas online, vinculadas al usuario)
+  const authUser = useAuth((s) => s.user);
+  const [acctStats, setAcctStats] = useState<{
+    games_played: number; games_won: number; games_lost: number;
+    games_abandoned: number; win_rate: number;
+  } | null>(null);
 
   useEffect(() => {
     void loadHistory().then(setHistory);
     void fetchCommunity().then(setCommunity);
     void fetchLeaderboard().then(setBoard);
-  }, []);
+    if (authUser) {
+      void authApi.myStatistics(authUser.id)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => { if (data) setAcctStats(data); })
+        .catch(() => { /* offline: la tarjeta simplemente no aparece */ });
+    }
+  }, [authUser?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const stats = computeStats(history);
   const achievements = evaluateAchievements(history);
@@ -64,7 +82,11 @@ export default function StatsScreen() {
   const heroRows = [...heroCounts.entries()].sort((a, b) => b[1] - a[1]);
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: c.background }]} contentContainerStyle={styles.content}>
+    <View style={{ flex: 1 }}>
+    <ScrollView
+      style={[styles.container, { backgroundColor: c.background, marginLeft: navWidth }]}
+      contentContainerStyle={styles.content}
+    >
       <View style={styles.headerRow}>
         <Pressable onPress={() => router.back()} accessibilityRole="button" accessibilityLabel={t('stats.back')}
           style={styles.backBtn}>
@@ -73,11 +95,35 @@ export default function StatsScreen() {
         <Text style={styles.title}>{t('stats.title')}</Text>
       </View>
 
+      {/* Estadísticas de la cuenta (solo con sesión iniciada) */}
+      {acctStats && (
+        <View style={[styles.card, { borderColor: c.border }]}>
+          <Text style={[styles.cardTitle, { color: c.text }]}>{t('stats.accountTitle')}</Text>
+          <Text style={[styles.meta, { color: c.textMuted }]}>
+            {t('stats.accountLine', {
+              played: acctStats.games_played,
+              won: acctStats.games_won,
+              lost: acctStats.games_lost,
+              abandoned: acctStats.games_abandoned,
+            })}
+          </Text>
+          <Text style={[styles.meta, { color: c.accent }]}>
+            {t('stats.accountWinRate', { pct: Math.round(acctStats.win_rate * 100) })}
+          </Text>
+        </View>
+      )}
+
       {history.length === 0 ? (
         <View style={[styles.card, { borderColor: c.border }]}>
           <BarChart3 size={24} color={c.textMuted} />
           <Text style={[styles.cardTitle, { color: c.text }]}>{t('stats.emptyTitle')}</Text>
           <Text style={styles.meta}>{t('stats.emptyHint')}</Text>
+          <NtButton
+            label={t('stats.ctaPlay')}
+            variant="secondary"
+            size="sm"
+            onPress={() => router.push('/(play)')}
+          />
         </View>
       ) : (
         <>
@@ -128,7 +174,7 @@ export default function StatsScreen() {
                 {t('stats.almostTitle')}
               </Text>
               {almost.map((a) => (
-                <Text key={a.id} style={{ color: c.text, fontSize: fontSize.micro }}>
+                <Text key={a.id} style={{ color: c.text, fontSize: fs(fontSize.micro) }}>
                   {t(`ach.${a.id}.name`, { defaultValue: a.name })} — {a.progress}/{a.target} ({t(`ach.${a.id}.desc`, { defaultValue: a.desc })})
                 </Text>
               ))}
@@ -153,12 +199,13 @@ export default function StatsScreen() {
                   borderWidth: 1,
                   borderColor: catFilter === cat ? c.accent : c.border,
                   backgroundColor: catFilter === cat ? c.accent : c.surface,
-                  minHeight: 36,
+                  minHeight: 44,
+                  justifyContent: 'center',
                 }}
               >
                 <Text style={{
-                  color: catFilter === cat ? '#1a1a2e' : c.textMuted,
-                  fontSize: fontSize.micro,
+                  color: catFilter === cat ? c.textOnAccent : c.textMuted,
+                  fontSize: fs(fontSize.micro),
                   fontWeight: '700',
                 }}>
                   {t(`stats.categories.${cat}`)}
@@ -191,7 +238,7 @@ export default function StatsScreen() {
                 </Text>
                 {/* Rareza global (opt-in): % de informantes que lo tiene */}
                 {a.unlocked && community && community.rarity[a.id] != null && (
-                  <Text style={{ color: c.textMuted, fontSize: fontSize.micro }}>
+                  <Text style={{ color: c.textMuted, fontSize: fs(fontSize.micro) }}>
                     {t('stats.rarity', { pct: Math.round(community.rarity[a.id] * 100) })}
                   </Text>
                 )}
@@ -252,15 +299,17 @@ export default function StatsScreen() {
         </>
       )}
     </ScrollView>
+    <AppNav />
+    </View>
   );
 }
 
-const makeStyles = (c: Colors) => StyleSheet.create({
+const makeStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: 16, gap: 10 },
+  content: { padding: 16, gap: 10, paddingBottom: 84 }, // barra inferior de AppNav en móvil
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   backBtn: { padding: 6, minHeight: 44, justifyContent: 'center' },
-  title: { color: c.accent, fontSize: fontSize.section, fontWeight: 'bold' },
+  title: { color: c.accent, fontSize: fs(fontSize.section), fontWeight: 'bold' },
   summaryRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
   statCard: {
     flex: 1,
@@ -271,8 +320,8 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     paddingVertical: 12,
     alignItems: 'center',
   },
-  statValue: { fontSize: fontSize.section, fontWeight: '800' },
-  statLabel: { color: c.textMuted, fontSize: fontSize.micro },
+  statValue: { fontSize: fs(fontSize.section), fontWeight: '800' },
+  statLabel: { color: c.textMuted, fontSize: fs(fontSize.micro) },
   card: {
     backgroundColor: c.surface,
     borderWidth: 1,
@@ -280,15 +329,15 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     padding: 12,
     gap: 6,
   },
-  cardTitle: { fontSize: fontSize.detail, fontWeight: '700' },
+  cardTitle: { fontSize: fs(fontSize.detail), fontWeight: '700' },
   heroRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  heroName: { fontSize: fontSize.micro, width: 110 },
+  heroName: { fontSize: fs(fontSize.micro), width: 110 },
   heroBarBg: { flex: 1, height: 8, borderRadius: 4, overflow: 'hidden' },
   heroBarFill: { height: 8, borderRadius: 4 },
-  heroCount: { fontSize: fontSize.micro, width: 26, textAlign: 'right' },
+  heroCount: { fontSize: fs(fontSize.micro), width: 26, textAlign: 'right' },
   sectionLabel: {
     color: c.textMuted,
-    fontSize: fontSize.detail,
+    fontSize: fs(fontSize.detail),
     fontWeight: '700',
     letterSpacing: 0.5,
     marginTop: 8,
@@ -304,9 +353,9 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     padding: 10,
     gap: 3,
   },
-  achName: { fontSize: fontSize.micro, fontWeight: '700' },
-  achDesc: { color: c.textMuted, fontSize: fontSize.micro },
-  achProgress: { fontSize: fontSize.micro, fontWeight: '700' },
+  achName: { fontSize: fs(fontSize.micro), fontWeight: '700' },
+  achDesc: { color: c.textMuted, fontSize: fs(fontSize.micro) },
+  achProgress: { fontSize: fs(fontSize.micro), fontWeight: '700' },
   gameRow: {
     backgroundColor: c.surface,
     borderWidth: 1,
@@ -314,6 +363,6 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     padding: 10,
     gap: 2,
   },
-  gameName: { fontSize: fontSize.detail, fontWeight: '600' },
-  meta: { color: c.textMuted, fontSize: fontSize.micro },
+  gameName: { fontSize: fs(fontSize.detail), fontWeight: '600' },
+  meta: { color: c.textMuted, fontSize: fs(fontSize.micro) },
 });

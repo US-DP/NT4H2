@@ -5,6 +5,7 @@
  */
 
 import { Pressable, Text, StyleSheet, type PressableProps } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { colors, spacing, radius, fontSize, touchTarget, type Colors } from '../../lib/theme';
 import { useColors, useFontScale, useDensity, useControlHeight, useFontWeight, useFontFamily } from '../../lib/useTheme';
 
@@ -50,6 +51,7 @@ export function Button({
   ...rest
 }: ButtonProps) {
   const inactive = disabled || loading;
+  const { t } = useTranslation();
   // Preferencias de accesibilidad aplicadas al control
   const themedColors = useColors();
   const fontScale = useFontScale();
@@ -77,7 +79,7 @@ export function Button({
       ]}
     >
       <Text style={[styles.label, { color: FG[variant], fontSize: fontSize.body * fontScale, fontWeight: labelWeight, fontFamily }]}>
-        {loading ? 'Cargando…' : label}
+        {loading ? t('common.loading') : label}
       </Text>
       {sublabel != null && (
         <Text style={[styles.sublabel, { color: FG[variant], fontSize: fontSize.micro * fontScale, fontFamily }]}>{sublabel}</Text>

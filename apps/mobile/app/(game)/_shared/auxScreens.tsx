@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Pantallas auxiliares de la partida: fin de partida, limite de zona y
  * fallback de error. Extraidas de app/(game)/index.tsx.
  */
@@ -10,15 +10,15 @@ import ConfettiCannon from 'react-native-confetti-cannon';
 import { useTranslation } from 'react-i18next';
 import { Trophy } from 'lucide-react-native';
 import { computeFinalScore } from '@nt4h/engine';
-import { useGameStore } from '../../store/gameStore';
-import { useSettings } from '../../store/settingsStore';
-import { captureError } from '../../lib/monitoring';
-import { useColors } from '../../lib/useTheme';
+import { useGameStore } from '../../../store/gameStore';
+import { useSettings } from '../../../store/settingsStore';
+import { captureError } from '../../../lib/monitoring';
+import { useColors } from '../../../lib/useTheme';
 import { ErrorBoundary } from 'react-error-boundary';
 import * as Clipboard from 'expo-clipboard';
 import { createStyles } from './gameStyles';
-import { colors } from '../../lib/theme';
-import type { Achievement } from '../../lib/achievements';
+import { colors } from '../../../lib/theme';
+import type { Achievement } from '../../../lib/achievements';
 
 export function FinishedScreen({ newAchievements = [] }: { newAchievements?: Achievement[] }) {
   const { t } = useTranslation();
@@ -34,14 +34,14 @@ export function FinishedScreen({ newAchievements = [] }: { newAchievements?: Ach
 
   const catalog = useGameStore.getState().catalog;
   const heroName = (id: string) => catalog?.byId.get(id)?.name ?? id;
-  // PuntuaciÃ³n final calculada por el motor (spec 3.8): Gloria + 1/3 monedas
-  // + 1 Tenaz sin heridas. Desempate: mÃ¡s trofeos.
+  // Puntuación final calculada por el motor (spec 3.8): Gloria + 1/3 monedas
+  // + 1 Tenaz sin heridas. Desempate: más trofeos.
   const { ranking: sorted, isTie } = computeFinalScore(gameState.players);
   const winner = sorted[0];
 
   return (
     <ScrollView style={styles.finishedContainer} contentContainerStyle={styles.finishedContent}>
-      {/* CelebraciÃ³n de victoria â€” se omite si el usuario pidiÃ³ evitar destellos */}
+      {/* Celebración de victoria — se omite si el usuario pidió evitar destellos */}
       {!noFlashes && (
         <ConfettiCannon count={120} origin={{ x: 200, y: -20 }} fadeOut autoStart />
       )}
@@ -63,8 +63,8 @@ export function FinishedScreen({ newAchievements = [] }: { newAchievements?: Ach
             gap: 8,
           }}
         >
-          <Trophy size={18} color="#1a1a2e" />
-          <Text style={{ color: '#1a1a2e', fontWeight: '700' }}>
+          <Trophy size={18} color={colors.textOnAccent} />
+          <Text style={{ color: colors.textOnAccent, fontWeight: '700' }}>
             {t('ach.toast', { name: t(`ach.${a.id}.name`, { defaultValue: a.name }) })}
           </Text>
         </View>
@@ -94,7 +94,7 @@ export function FinishedScreen({ newAchievements = [] }: { newAchievements?: Ach
               <Text style={styles.rankName}>{heroName(p.heroId)}</Text>
               <Text style={styles.rankBreakdown}>
                 {p.breakdown.filter((b) => b.value > 0).map((b) => `${b.label} ${b.value}`).join(' + ')}
-                {' '}Â· {t('gm.finishedTrophies', { count: p.trophies })}
+                {' '}· {t('gm.finishedTrophies', { count: p.trophies })}
               </Text>
             </View>
             <Text style={styles.rankGlory}>{p.total}</Text>
@@ -110,8 +110,10 @@ export function FinishedScreen({ newAchievements = [] }: { newAchievements?: Ach
           style={styles.finishedButtonSecondary}
           onPress={() => {
             if (initialConfig) {
-              // Revancha real: misma configuraciÃ³n, semilla nueva
-              newGame({ ...initialConfig, seed: `rematch-${Date.now()}` });
+              // Revancha real: misma config. Si el motor la rechaza
+              // (p.ej. un set del Taller borrado), volver al asistente.
+              const res = newGame({ ...initialConfig, seed: `rematch-${Date.now()}` });
+              if (!res.ok) router.push({ pathname: '/(create)' } as never);
             } else {
               router.push({ pathname: '/(create)' } as never);
             }

@@ -54,7 +54,16 @@ export function captureError(error: unknown, context?: Record<string, unknown>):
         scope.setContext('diagnostic', diagnostic as unknown as Record<string, unknown>);
       }
       if (context) scope.setContext('context', context);
-      Sentry.captureException(error);
+      // El error CRUDO puede llevar tokens/semillas/rutas en message y
+      // stack — enviar solo la versión sanitizada (conserva nombre y
+      // frames relativos para agrupar y localizar).
+      const safe = diagnostic
+        ? Object.assign(new Error(diagnostic.message), {
+            name: error instanceof Error ? error.name : 'Error',
+            stack: diagnostic.stackTail.join('\n') || undefined,
+          })
+        : error;
+      Sentry.captureException(safe);
     });
   } catch {
     // ignorar

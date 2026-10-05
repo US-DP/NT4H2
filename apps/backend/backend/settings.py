@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "django.contrib.contenttypes",
     "django.contrib.auth",
+    "django.contrib.sessions",  # requerido por el admin montado en urls.py
     "django.contrib.admin",
     "django.contrib.messages",
     "django.contrib.staticfiles",
@@ -34,7 +35,8 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt.token_blacklist",
     "accounts",
     "game.apps.GameConfig",
-    "content",
+    # (app `content` retirada: su API REST /api/cards* no tenía ningún
+    #  consumidor — el Taller es local y viaja en session.config.customSets)
 ]
 
 AUTH_USER_MODEL = "accounts.User"
@@ -122,20 +124,31 @@ if REDIS_URL:
             "CONFIG": {"hosts": [REDIS_URL]},
         }
     }
+    # Estado compartido multi-worker (game/store.py): rate-limits, tickets
+    # WS, conteo de espectadores, dedup de chat — globales con Redis,
+    # por proceso con LocMem (dev/single-worker).
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": REDIS_URL,
+        }
+    }
 else:
     CHANNEL_LAYERS = {
         "default": {
             "BACKEND": "channels.layers.InMemoryChannelLayer",
         }
     }
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        }
+    }
 
-# DRF: por defecto solo lectura anónima; las escrituras de contenido pueden
-# protegerse con CONTENT_API_TOKEN (Bearer) — ver content/views.py.
-# Las vistas de cuentas autentican con JWT (simplejwt); las vistas de salas
-# siguen usando playerToken + get_auth_user() para el enlace opcional.
-# NB: NO DEFAULT_AUTHENTICATION_CLASSES global — el Bearer de
-# CONTENT_API_TOKEN pasaría por JWTAuthentication y moriría con 401
-# antes del permission check. JWT se declara por vista en accounts.
+# DRF: solo JSONRenderer; las vistas de cuentas autentican con JWT
+# (simplejwt) por vista y las de salas usan playerToken + get_auth_user().
+# NB: NO DEFAULT_AUTHENTICATION_CLASSES global — JWT se declara por vista
+# en accounts (un Bearer no-JWT moriría con 401 antes del permission check).
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
 }
@@ -178,10 +191,22 @@ if not DEBUG:
 if not DEBUG and not TESTING:
     if not os.environ.get("ENGINE_RUNNER_TOKEN"):
         raise RuntimeError("ENGINE_RUNNER_TOKEN must be set when DJANGO_DEBUG is False")
-    if not os.environ.get("CONTENT_API_TOKEN") and not os.environ.get("CONTENT_API_TOKENS"):
-        raise RuntimeError("CONTENT_API_TOKEN(S) must be set when DJANGO_DEBUG is False")
     if not REDIS_URL:
         raise RuntimeError(
             "REDIS_URL must be set when DJANGO_DEBUG is False "
             "(InMemoryChannelLayer no comparte estado entre procesos)"
         )
+
+# Rate limit de salas: override global vía env (peticiones/minuto por IP y
+# scope). Sin esta línea game.views._common._rate_limited leía un setting
+# inexistente y la variable de entorno no hacía nada (auditoría).
+_room_rate_limit_env = os.environ.get("ROOM_RATE_LIMIT_MAX", "")
+if _room_rate_limit_env:
+    try:
+        ROOM_RATE_LIMIT_MAX = int(_room_rate_limit_env)
+    except ValueError:
+        # Un override global mal formado crasheaba el arranque de Django;
+        # los límites por-scope ya toleran ValueError — misma política.
+        import warnings
+
+        warnings.warn(f"ROOM_RATE_LIMIT_MAX={_room_rate_limit_env!r} no es numérico; ignorado", stacklevel=0)

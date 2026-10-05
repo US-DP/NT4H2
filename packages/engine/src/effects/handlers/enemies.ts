@@ -13,26 +13,12 @@ export function registerEnemiesEffects(registry: EffectRegistry): void {
     // Los handlers reales estan en scenarios/index.ts (applyScenarioEffects, onTurnStart, etc.)
     return [];
   });
-  registry.register('SWAP_ENEMY', (eff, ctx, state) => {
-    // Nota: el resolver intercepta SWAP_ENEMY antes de llegar aqui para acceder al catalogo.
-    // Este handler es fallback si el resolver no lo intercepta.
-    const targetId = resolveTarget(eff.target, ctx, state);
-    if (!targetId || state.hordeDeck.length === 0) return [];
-    const newEnemyCard = state.hordeDeck[state.hordeDeck.length - 1];
-    return [
-      {
-        type: 'ENEMY_SWAPPED' as const,
-        oldEnemyInstanceId: targetId,
-        newEnemyInstanceId: newEnemyCard.instanceId,
-        newEnemyDefinitionId: newEnemyCard.definitionId,
-        newEnemyFortitude: 1,
-        newEnemyReward: null,
-        newEnemyIsOrc: false,
-        newEnemyIsWarlord: false,
-        newEnemySpecialIcons: [],
-        seq: registry.nextSeq(),
-      },
-    ];
+  registry.register('SWAP_ENEMY', (_eff, _ctx, _state) => {
+    // El resolver intercepta SWAP_ENEMY antes de llegar aqui porque
+    // necesita el catalogo para fortaleza/botín/iconos reales. Un
+    // fallback que inventa stats (fortaleza 1, sin recompensa) crea un
+    // enemigo corrupto — mejor no hacer nada que fabricar datos.
+    return [];
   });
   registry.register('RETURN_TO_HORDE', (eff, ctx, state) => {
     const targetId = resolveTarget(eff.target, ctx, state);
@@ -60,12 +46,14 @@ export function registerEnemiesEffects(registry: EffectRegistry): void {
   });
   registry.register('MOVE_HORDE_CARDS', (eff, _ctx, state) => {
     const deck = state.hordeDeck;
-    if (deck.length === 0) return [];
+    // to:'BOTTOM' es identidad (se roba del fondo y se devuelve al
+    // fondo): emitir HORDE_DECK_REORDERED con el mismo orden era ruido.
+    if (deck.length === 0 || eff.to !== 'TOP') return [];
     const n = Math.min(eff.count, deck.length);
     // Se roba desde el FONDO (fin del array)
     const drawn = deck.slice(-n);
     const rest = deck.slice(0, deck.length - n);
-    const newDeck = eff.to === 'TOP' ? [...drawn, ...rest] : [...rest, ...drawn];
+    const newDeck = [...drawn, ...rest];
     return [{
       type: 'HORDE_DECK_REORDERED' as const,
       newOrder: newDeck.map(c => c.instanceId),

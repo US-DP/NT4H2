@@ -8,6 +8,7 @@
 import { View, Text, Platform } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { NtDialog } from './ui/NtDialog';
+import { useColors, useFs } from '../lib/useTheme';
 
 interface ExitGameDialogProps {
   visible: boolean;
@@ -30,6 +31,8 @@ export function ExitGameDialog({
   diagnostics,
 }: ExitGameDialogProps) {
   const { t } = useTranslation();
+  const c = useColors();
+  const fs = useFs();
   const SHORTCUTS: [string, string][] = [
     ['1-5', t('panels.exitShortcutZone')],
     ['H / E / C', t('panels.exitShortcutPanels')],
@@ -48,21 +51,21 @@ export function ExitGameDialog({
         <View>
           {Platform.OS === 'web' && (
             <View accessibilityLabel={t('panels.exitShortcuts')} style={{ marginBottom: 8 }}>
-              <Text style={{ color: '#a8b0bc', fontSize: 12, fontWeight: '700', marginBottom: 4 }}>
+              <Text style={{ color: c.textMuted, fontSize: fs(12), fontWeight: '700', marginBottom: 4 }}>
                 {t('panels.exitShortcuts')}
               </Text>
               {SHORTCUTS.map(([keys, desc]) => (
                 <View key={keys} style={{ flexDirection: 'row', gap: 12, marginBottom: 2 }}>
-                  <Text style={{ color: '#f1c40f', fontSize: 11, fontFamily: 'monospace', minWidth: 64 }}>
+                  <Text style={{ color: c.accent, fontSize: fs(11), fontFamily: 'monospace', minWidth: 64 }}>
                     {keys}
                   </Text>
-                  <Text style={{ color: '#a8b0bc', fontSize: 11 }}>{desc}</Text>
+                  <Text style={{ color: c.textMuted, fontSize: fs(11) }}>{desc}</Text>
                 </View>
               ))}
             </View>
           )}
           {diagnostics && (
-            <Text style={{ color: '#8a8fa3', fontSize: 10, fontFamily: 'monospace' }}>
+            <Text style={{ color: c.textFaint, fontSize: fs(10), fontFamily: 'monospace' }}>
               {diagnostics}
             </Text>
           )}

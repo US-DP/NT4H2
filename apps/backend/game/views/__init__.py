@@ -8,13 +8,11 @@ siga funcionando sin cambios en urls.py, tests ni consumers.
 """
 
 from ..engine_client import EngineRunnerClient  # patch target de los tests
-from ._common import _RATE_LIMITS, reap_stale_rooms
+from ._common import reap_stale_rooms
 from .engine import (
-    _WS_TICKETS,
     _issue_ws_ticket,
     consume_ws_ticket,
     room_engine_state,
-    room_sync,
     ws_ticket,
 )
 from .players import kick_player, skip_turn, transfer_host, unkick_player
@@ -28,12 +26,10 @@ from .rooms import (
     set_ready,
     start_room,
 )
-from .stats import health_check, leaderboard, stats_community, stats_report
+from .stats import health_check, leaderboard, metrics, stats_community, stats_report
 
 __all__ = [
     "EngineRunnerClient",
-    "_RATE_LIMITS",
-    "_WS_TICKETS",
     "_issue_ws_ticket",
     "close_room",
     "consume_ws_ticket",
@@ -44,10 +40,10 @@ __all__ = [
     "leaderboard",
     "leave_room",
     "list_rooms",
+    "metrics",
     "reap_stale_rooms",
     "room_engine_state",
     "room_state",
-    "room_sync",
     "set_ready",
     "skip_turn",
     "start_room",

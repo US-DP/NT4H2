@@ -1,10 +1,10 @@
-/**
- * Helpers de la pantalla de partida: acciones contextuales e instruccion de fase.
- * Extraido de app/(game)/index.tsx.
+﻿/**
+ * Helpers de la pantalla de partida: acciones contextuales e instrucción de fase.
+ * Extraído de app/(game)/index.tsx.
  */
 
 import type { TFunction } from 'i18next';
-import type { ContextualAction } from '../../components/ContextualActions';
+import type { ContextualAction } from '../../../components/ContextualActions';
 
 export function buildContextualActions(
   phase: string,
@@ -22,11 +22,11 @@ export function buildContextualActions(
   switch (phase) {
     case 'ATTACK_CHOICE':
       return [
-        { id: 'end-attack', label: t('gm.actionToHorde'), icon: 'âš”', onPress: handlers.endAttack, primary: true },
+        { id: 'end-attack', label: t('gm.actionToHorde'), icon: '⚔️', onPress: handlers.endAttack, primary: true },
         {
           id: 'evasion',
           label: t('gm.actionEvade'),
-          icon: 'ðŸƒ',
+          icon: '🏃',
           onPress: handlers.startEvasion,
           disabled: handlers.handSize < 2 || handlers.evasionTokenUsed,
           disabledReason: handlers.evasionTokenUsed
@@ -36,11 +36,11 @@ export function buildContextualActions(
       ];
     case 'PLAYER_ATTACK':
       return [
-        { id: 'end-attack', label: t('gm.actionEndAttack'), icon: 'âš”', onPress: handlers.endAttack, primary: true },
+        { id: 'end-attack', label: t('gm.actionEndAttack'), icon: '⚔️', onPress: handlers.endAttack, primary: true },
         {
           id: 'use-ability',
           label: t('gm.actionUsePower'),
-          icon: 'âœ¨',
+          icon: '✨',
           onPress: handlers.useHeroAbility,
           disabled: !handlers.canUseAbility,
           disabledReason: handlers.canUseAbility ? undefined : t('gm.abilityExhausted'),
@@ -48,18 +48,18 @@ export function buildContextualActions(
       ];
     case 'MARKET':
       return [
-        { id: 'end-market', label: t('gm.actionEndMarket'), icon: 'ðŸ’°', onPress: handlers.endTurn, primary: true },
+        { id: 'end-market', label: t('gm.actionEndMarket'), icon: '💰', onPress: handlers.endTurn, primary: true },
       ];
     case 'RESTORATION':
       return [
-        { id: 'confirm-restore', label: t('gm.actionConfirm'), icon: 'âœ“', onPress: handlers.endTurn, primary: true },
+        { id: 'confirm-restore', label: t('gm.actionConfirm'), icon: '✓', onPress: handlers.endTurn, primary: true },
       ];
     default:
       return [];
   }
 }
 
-/** Construye la instrucciÃ³n concreta segÃºn la fase (UI-073). */
+/** Construye la instrucción concreta según la fase (UI-073). */
 export function buildInstruction(phase: string, t: TFunction): string | null {
   switch (phase) {
     case 'PLAYER_ATTACK':
@@ -72,8 +72,8 @@ export function buildInstruction(phase: string, t: TFunction): string | null {
       return t('gm.instrAttackChoice');
     case 'HORDE_ATTACK':
       return t('gm.instrHordeAttack');
-    case 'LEADER_CHOICE':
-      return t('gm.instrLeaderChoice');
+    // La puja de líder vive en INITIAL_PLAYER_SELECTION como pendingChoice
+    // (no hay fase LEADER_CHOICE) — instrucción la da PendingChoiceView.
     default:
       return null;
   }

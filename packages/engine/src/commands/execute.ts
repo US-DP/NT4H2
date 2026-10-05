@@ -19,6 +19,7 @@ import { resolveCard } from '../effects/resolver.js';
 import { dispatchListeners } from '../effects/listeners.js';
 import { nextSeq } from '../seq.js';
 import { swapStartingCards, openSupportDeck, buySupportCard } from '../modes/solo.js';
+import { getEffectiveFortitude } from '../modifiers/index.js';
 import { executeTurnStartEffect } from '../scenarios/index.js';
 import { executeResolveChoice } from './resolveChoice.js';
 import type { CatalogLoadResult } from '@nt4h/catalog';
@@ -47,6 +48,12 @@ export function isLegal(
   if (!state.players[playerId]) {
     return { ok: false, reason: 'Player not found' };
   }
+  // La partida terminó: ningún comando muta el estado final (una
+  // RESOLVE_CHOICE residual o un PLAY_CARD tardío corromperían el
+  // resultado persistido). PASS se exime: es no-op por contrato.
+  if (state.phase === 'FINISHED' && command.type !== 'PASS') {
+    return { ok: false, reason: 'Game is finished' };
+  }
   // Validaciones basicas
   switch (command.type) {
     case 'PLAY_CARD': {
@@ -60,6 +67,13 @@ export function isLegal(
       const card = player.hand.find(c => c.instanceId === command.cardInstanceId);
       if (!card) {
         return { ok: false, reason: 'Card not in hand' };
+      }
+      // E-13: una elección obligatoria propia sin resolver bloquea jugar
+      // más cartas (mismo criterio que END_ATTACK/END_TURN/EVASION) —
+      // si no, la elección quedaba colgada y podía resolverse fuera de
+      // contexto.
+      if (state.pendingChoices.some(c => c.playerId === playerId && c.minSelections > 0)) {
+        return { ok: false, reason: 'Resolve pending choices first' };
       }
       // D419: validar que el objetivo existe — si no, la carta se quemaria sin efecto
       if (command.targetEnemyId !== undefined) {
@@ -98,6 +112,45 @@ export function isLegal(
                 : evalValue(eff.amount, costCtx, state);
               if (player.coins < amount) {
                 return { ok: false, reason: `Not enough coins (need ${amount}, have ${player.coins})` };
+              }
+            }
+          }
+        }
+        // E-13: objetivo requerido — una carta de daño directo jugada sin
+        // targetEnemyId se consumía sin hacer daño (no-op silencioso).
+        const hasSpecialDamage = cardDef?.effects?.some(
+          e => e.type === 'DEAL_DAMAGE_SPLIT' || e.type === 'DEAL_DAMAGE_ALL_ENEMIES'
+            || e.type === 'DEAL_DAMAGE_TO_HERO' || e.type === 'DEAL_DAMAGE_TO_OTHER_HEROES',
+        ) ?? false;
+        const enemyTargetKind = (e: unknown): string | undefined => {
+          const t = (e as { target?: unknown }).target;
+          return typeof t === 'object' && t !== null ? (t as { kind?: string }).kind : undefined;
+        };
+        const needsTarget =
+          ((cardDef?.printedAttack ?? 0) > 0 && !hasSpecialDamage)
+          || cardDef?.effects?.some(e => {
+            const k = enemyTargetKind(e);
+            return k === 'SELECTED_ENEMY' || k === 'ONE_ENEMY';
+          }) === true;
+        if (needsTarget && !command.targetEnemyId) {
+          return { ok: false, reason: 'Card requires a target enemy' };
+        }
+        // Filtro de clase del objetivo (mismo criterio que resolveTarget):
+        // un enemigo que no cumple el filter hacía que el efecto no se
+        // aplicara tras consumir la carta.
+        if (command.targetEnemyId && cardDef?.effects) {
+          const enemy = state.battlefield.find(e => e.instanceId === command.targetEnemyId);
+          if (enemy) {
+            for (const eff of cardDef.effects) {
+              const t = 'target' in eff ? eff.target : undefined;
+              if (typeof t !== 'object' || t === null || t.kind !== 'ONE_ENEMY' || !('filter' in t) || !t.filter) continue;
+              const f = t.filter;
+              const fails =
+                (f.minFortitude !== undefined && getEffectiveFortitude(enemy, state) < f.minFortitude)
+                || (f.isOrc !== undefined && enemy.isOrc !== f.isOrc)
+                || (f.isWarlord !== undefined && enemy.isWarlord !== f.isWarlord);
+              if (fails) {
+                return { ok: false, reason: 'Target does not meet card requirements' };
               }
             }
           }
@@ -148,6 +201,12 @@ export function isLegal(
         if (!inHand) {
           return { ok: false, reason: 'Discarded cards must be from hand' };
         }
+      }
+      // Igual que END_ATTACK/END_TURN: una elección obligatoria sin
+      // resolver bloquea la evasión — si no, quedaba colgando y podía
+      // resolverse en otra fase con un contexto ya obsoleto.
+      if (state.pendingChoices.some(c => c.playerId === playerId && c.minSelections > 0)) {
+        return { ok: false, reason: 'Resolve pending choices first' };
       }
       return { ok: true };
     }
@@ -237,7 +296,7 @@ export function isLegal(
         return { ok: false, reason: 'Reactive ability cannot be used on your own turn' };
       }
       // Héroes activos: solo durante el turno del jugador (no SETUP, FINISHED, etc.)
-      if (!isReactiveHero && (state.phase === 'SETUP' || state.phase === 'FINISHED' || state.phase === 'GAME_END_CHECK')) {
+      if (!isReactiveHero && (state.phase === 'SETUP' || state.phase === 'GAME_END_CHECK')) {
         return { ok: false, reason: 'Cannot use hero ability in this phase' };
       }
       // Pericias no reactivas: únicamente en el propio turno — sin este
@@ -254,6 +313,11 @@ export function isLegal(
       }
       if (state.phase !== 'SETUP' && state.phase !== 'INITIAL_PLAYER_SELECTION') {
         return { ok: false, reason: 'Only during setup or initial selection' };
+      }
+      // Spec §4.1: el cambio de cartas iniciales se permite UNA vez —
+      // sin el flag se podía barajar toda la mano a gusto (sculpting).
+      if (state.players[playerId]?.startingSwapUsed) {
+        return { ok: false, reason: 'Starting card swap already used' };
       }
       if (command.cardInstanceIds.length > 2) {
         return { ok: false, reason: 'Can only swap up to 2 cards' };
@@ -281,6 +345,9 @@ export function isLegal(
       }
       if (command.cardInstanceIds.length < 1 || command.cardInstanceIds.length > 2) {
         return { ok: false, reason: 'Must choose 1 or 2 cards' };
+      }
+      if (new Set(command.cardInstanceIds).size !== command.cardInstanceIds.length) {
+        return { ok: false, reason: 'Duplicate card ids' };
       }
       // Validar que las cartas están en la mano del jugador
       const player = state.players[playerId];
@@ -353,6 +420,14 @@ export function isLegal(
       const choice = state.pendingChoices.find(c => c.choiceId === command.choiceId);
       if (!choice) return { ok: false, reason: 'Choice not found' };
       if (choice.playerId !== playerId) return { ok: false, reason: 'Not your choice' };
+      // Estas elecciones NO se resuelven con RESOLVE_CHOICE: la puja de
+      // líder va por CHOOSE_LEADER_CARDS y la confirmación de turno por
+      // ACCEPT_TURN_START_EFFECT. Resolverlas aquí caía al fallthrough
+      // de resolveChoice, que las borraba sin registrar la puja — la
+      // partida quedaba bloqueada para siempre en INITIAL_PLAYER_SELECTION.
+      if (choice.type === 'SELECT_CARDS_FOR_LEADER' || choice.choiceId.startsWith('turn-start-')) {
+        return { ok: false, reason: 'Choice must be resolved with its dedicated command' };
+      }
       if (command.selectedIds.length < choice.minSelections || command.selectedIds.length > choice.maxSelections) {
         return { ok: false, reason: 'Invalid number of selections' };
       }
@@ -403,12 +478,39 @@ export function execute(
     if (dl.events.length > 0) {
       for (const dev of dl.events) {
         emitted.push(dev);
+        // El evento de oyente se aplica EN SU POSICIÓN del log
+        // (foldState), no sobre el estado final — aplicarlo al final
+        // hacía divergir vivo vs fold(replay) cuando el efecto no
+        // conmuta con los eventos siguientes (E-1).
+        foldState = applyEvent(foldState, dev);
+        // Y también sobre `s` para mantener coherentes los campos que
+        // el fold no reproduce (pendingChoices creadas por mutación — E-2).
         s = applyEvent(s, dev);
       }
     }
   }
   if (emitted.length === result.events.length) return result;
-  return { ...result, events: emitted, newState: s };
+  // Renumerar en orden de log: los eventos de oyente se insertan tras su
+  // disparador pero nacieron con seq posteriores — sin renumerar el seq no
+  // sería monótono por posición y un fold ordenado por seq divergiría.
+  const renumbered = emitted.map(e => ({ ...e, seq: nextSeq() }));
+  // Estado final = fold completo del log emitido (eventos de oyente en su
+  // posición real) + los campos que el fold no reproduce: pendingChoices
+  // creadas por mutación directa (E-2) y rngState (no event-sourced).
+  const merged = {
+    ...foldState,
+    pendingChoices: s.pendingChoices,
+    rngState: s.rngState,
+  };
+  // Y reescribir la cola de newState.eventLog con los mismos seq: antes
+  // result.events llevaba la numeración nueva pero el log conservaba los
+  // seq originales — divergencia para cualquier consumidor que
+  // correlacione por seq (replay, auditoría, sync online).
+  const tailStart = merged.eventLog.length - renumbered.length;
+  const fixedState = tailStart >= 0
+    ? { ...merged, eventLog: [...merged.eventLog.slice(0, tailStart), ...renumbered] }
+    : merged;
+  return { ...result, events: renumbered, newState: fixedState };
 }
 
 function executeCommand(
@@ -474,6 +576,10 @@ function executeCommand(
 
   // 3. Generar eventos segun el comando
   const events: GameEvent[] = [];
+  // pendingChoices retiradas por mutación directa durante el comando se
+  // convierten al final en un evento PENDING_CHOICES_REMOVED — sin él el
+  // fold del eventLog las conservaba y divergía del estado vivo.
+  const initialChoiceIds = new Set(state.pendingChoices.map(c => c.choiceId));
 
   switch (command.type) {
     case 'PLAY_CARD': {
@@ -520,9 +626,18 @@ function executeCommand(
               // persistirlo evita divergencia si hay snapshot entre medias.
               rngState: rng.serialize(),
             };
+            // La elección creada por mutación queda documentada en el
+            // eventLog (E-2): el reducer es idempotente — ya está en la
+            // lista — pero registra el evento para el fold.
+            const createdEv: GameEvent = {
+              type: 'PENDING_CHOICE_CREATED',
+              choice: result.pendingChoice,
+              seq: reg.nextSeq(),
+            };
+            choiceState = applyEvent(choiceState, createdEv);
             return {
               accepted: true,
-              events: [...events, ...result.events],
+              events: [...events, ...result.events, createdEv],
               newState: choiceState,
               rng,
             };
@@ -703,9 +818,12 @@ function executeCommand(
       ) {
         return { accepted: false, reason: 'Invalid targetId', events: [], newState: state, rng };
       }
-      const abilityResult = catalog
-        ? useHeroAbility(state, playerId, rng, catalog, targetId)
-        : { events: [] as GameEvent[], state, pendingChoice: null };
+      // Sin catálogo no hay resolución posible: rechazar en lugar de
+      // aceptar un no-op silencioso (igual que BUY_CARD, D376).
+      if (!catalog) {
+        return { accepted: false, reason: 'Catalog required to resolve hero ability', events: [], newState: state, rng };
+      }
+      const abilityResult = useHeroAbility(state, playerId, rng, catalog, targetId);
       events.push(...abilityResult.events);
       // Usar el estado devuelto (puede incluir pendingChoices para Idril/Aranel/Neddia)
       state = abilityResult.state;
@@ -727,7 +845,15 @@ function executeCommand(
     }
 
     case 'CHOOSE_LEADER_CARDS': {
-      // Guardar las cartas pujadas por el jugador en leaderBidCards
+      // La puja queda event-sourced: el fold reproduce leaderBidCards;
+      // la pendingChoice 'leader-bid-<pid>' se retira aquí y el diff
+      // final la documenta como PENDING_CHOICES_REMOVED.
+      events.push({
+        type: 'LEADER_BID_CARDS',
+        playerId,
+        cardInstanceIds: command.cardInstanceIds,
+        seq: reg.nextSeq(),
+      });
       state = {
         ...state,
         players: {
@@ -851,6 +977,14 @@ function executeCommand(
         state = {
           ...state,
           pendingChoices: state.pendingChoices.filter(c => !c.choiceId.startsWith('leader-bid-')),
+          // Residuo de puja: limpiar como hace el reducer de
+          // LEADER_DETERMINED (mismo estado final inline y por fold).
+          players: Object.fromEntries(
+            Object.entries(state.players).map(([pid, p]) => [
+              pid,
+              p.leaderBidCards?.length ? { ...p, leaderBidCards: undefined } : p,
+            ]),
+          ),
         };
         events.push({
           type: 'LEADER_DETERMINED',
@@ -919,7 +1053,29 @@ function executeCommand(
 
     case 'RESOLVE_CHOICE': {
       const outcome = executeResolveChoice(state, command, playerId, rng, reg, catalog);
-      if ('accepted' in outcome) return outcome;
+      if ('accepted' in outcome) {
+        // El retorno directo salta el diff final de pendingChoices:
+        // si la resolución retiró o creó alguna, documentarlo con su
+        // evento (y aplicarlo a newState para que eventLog lo contenga).
+        if (outcome.accepted) {
+          const removed = state.pendingChoices
+            .filter(c => !outcome.newState.pendingChoices.some(n => n.choiceId === c.choiceId))
+            .map(c => c.choiceId);
+          if (removed.length > 0) {
+            const ev: GameEvent = { type: 'PENDING_CHOICES_REMOVED', choiceIds: removed, seq: reg.nextSeq() };
+            outcome.events.push(ev);
+            outcome.newState = applyEvent(outcome.newState, ev);
+          }
+          for (const c of outcome.newState.pendingChoices) {
+            if (!initialChoiceIds.has(c.choiceId)) {
+              const ev: GameEvent = { type: 'PENDING_CHOICE_CREATED', choice: c, seq: reg.nextSeq() };
+              outcome.events.push(ev);
+              outcome.newState = applyEvent(outcome.newState, ev);
+            }
+          }
+        }
+        return outcome;
+      }
       state = outcome.state;
       events.push(...outcome.events);
       break;
@@ -928,6 +1084,23 @@ function executeCommand(
     default:
       // Comandos no manejados aquí
       return { accepted: false, reason: 'Command not supported', events, newState: state, rng };
+  }
+
+  // 3b. Las pendingChoices retiradas por mutación directa quedan
+  // documentadas como PENDING_CHOICES_REMOVED (idempotente en el fold:
+  // la mutación ya las quitó del estado base y el reducer re-filtra).
+  const removedChoiceIds = [...initialChoiceIds]
+    .filter(id => !state.pendingChoices.some(c => c.choiceId === id));
+  if (removedChoiceIds.length > 0) {
+    events.push({ type: 'PENDING_CHOICES_REMOVED', choiceIds: removedChoiceIds, seq: reg.nextSeq() });
+  }
+  // 3c. Y las pendingChoices CREADAS por mutación quedan documentadas
+  // como PENDING_CHOICE_CREATED (idempotente en el fold: la mutación ya
+  // las insertó en el estado base y el reducer salta si ya existe).
+  for (const c of state.pendingChoices) {
+    if (!initialChoiceIds.has(c.choiceId)) {
+      events.push({ type: 'PENDING_CHOICE_CREATED', choice: c, seq: reg.nextSeq() });
+    }
   }
 
   // 4. Aplicar eventos al estado (reducer puro)

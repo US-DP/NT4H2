@@ -1,0 +1,16 @@
+# Contexto de build Docker (engine-runner): solo se copian
+# pnpm-workspace.yaml, pnpm-lock.yaml, package.json, packages/ y
+# apps/engine-runner — el resto se ignora por contexto.
+node_modules
+**/node_modules
+**/dist
+**/.expo
+**/__pycache__
+**/.venv
+**/venv
+apps/mobile
+apps/backend
+.git
+.github
+*.md
+coverage

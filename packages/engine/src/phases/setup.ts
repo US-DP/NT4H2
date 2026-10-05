@@ -26,6 +26,7 @@ import type {
   Zone,
 } from '@nt4h/schema';
 import { DeterministicRng } from '../rng/index.js';
+import { applyEntryAuras } from '../modifiers/index.js';
 import { applyScenarioEffects } from '../scenarios/index.js';
 import { resetPhaseSeq } from './engine.js';
 import { validateMulticlassDeck } from '../modes/multiclass.js';
@@ -81,7 +82,6 @@ export function setupGame(
     marketCostModifier: 0,
     ignoreCoinRewards: false,
     ignoreGloryRewards: false,
-    orcFortitudeBonus: 0,
   };
 
   // === 1. Construir la Horda ===
@@ -222,8 +222,23 @@ export function setupGame(
 
   // === 2. Construir el mazo de Mercado ===
   const marketCardsAll = catalog.byType.get('MARKET') ?? [];
-  // D364: En multiclase, filtrar mercado por capabilities de los jugadores
+  // Pool personalizado (Taller) o whitelist explícita: se aplica sobre el
+  // catálogo COMPLETO antes del filtro de capabilities — un id que existe
+  // pero queda excluido por capabilities no es "desconocido", es filtrado.
   let marketCards = marketCardsAll;
+  if (config.marketCardIds?.length) {
+    const wanted = new Set(config.marketCardIds);
+    marketCards = marketCards.filter(c => wanted.has(c.id));
+    for (const id of config.marketCardIds) {
+      if (!marketCardsAll.some(c => c.id === id)) {
+        errors.push(`Market pool: unknown card id '${id}'`);
+      }
+    }
+    if (marketCards.length === 0) {
+      errors.push('Custom Market pool is empty or has no valid MARKET cards');
+    }
+  }
+  // D364: En multiclase, filtrar mercado por capabilities de los jugadores
   if (config.mode === 'MULTICLASS') {
     const playerCapabilities = new Set<string>();
     for (const heroConfig of config.heroes) {
@@ -250,19 +265,6 @@ export function setupGame(
         (card.penaltyCapabilities?.some(p => playerCapabilities.has(p.icon)) ?? false)
       );
     });
-  }
-  // Pool de Mercado personalizado (Taller): sustituye al pool oficial
-  if (config.marketCardIds?.length) {
-    const wanted = new Set(config.marketCardIds);
-    marketCards = marketCards.filter(c => wanted.has(c.id));
-    for (const id of config.marketCardIds) {
-      if (!marketCards.some(c => c.id === id)) {
-        errors.push(`Market pool: unknown card id '${id}'`);
-      }
-    }
-    if (marketCards.length === 0) {
-      errors.push('Custom Market pool is empty or has no valid MARKET cards');
-    }
   }
   const marketInstances: CardInstance[] = [];
   if (config.mode === 'SOLO') {
@@ -292,22 +294,24 @@ export function setupGame(
   // === 3. Construir el mazo de Escenarios ===
   if (config.useScenarios) {
     let scenarioCards = catalog.byType.get('SCENARIO') ?? [];
-    // Solitario: retirar escenarios no válidos (spec §4.1)
-    if (config.mode === 'SOLO') {
-      scenarioCards = scenarioCards.filter(s => s.id !== 'scenario.tears-of-aradiel' && s.id !== 'scenario.cemenmar-wastes');
-    }
-    // scenarioIds: el jugador puede limitar qué escenarios entran en el mazo
+    // scenarioIds: whitelist sobre el catálogo completo (la existencia se
+    // valida ANTES de las exclusiones de modo — un id oficial que el modo
+    // excluye no es "desconocido", es filtrado por las reglas).
     if (config.scenarioIds && config.scenarioIds.length > 0) {
       const wanted = new Set(config.scenarioIds);
       scenarioCards = scenarioCards.filter(s => wanted.has(s.id));
       for (const id of config.scenarioIds) {
-        if (!scenarioCards.some(s => s.id === id)) {
+        if (!catalog.byId.has(id)) {
           errors.push(`Scenario pool: unknown card id '${id}'`);
         }
       }
       if (scenarioCards.length === 0) {
         errors.push('Custom Scenario pool is empty or has no valid SCENARIO cards');
       }
+    }
+    // Solitario: retirar escenarios no válidos (spec §4.1)
+    if (config.mode === 'SOLO') {
+      scenarioCards = scenarioCards.filter(s => s.id !== 'scenario.tears-of-aradiel' && s.id !== 'scenario.cemenmar-wastes');
     }
     const scenarioInstances: CardInstance[] = scenarioCards.map(card => ({
       instanceId: nextInstanceId('scenario'),
@@ -360,12 +364,32 @@ export function setupGame(
       : [];
 
     if (customDeck) {
+      // El snapshot viaja como lista plana de ids — aplicar las mismas
+      // reglas que validateDeck sobre el catálogo fusionado: copias ≤
+      // def.copies, compatibilidad de clase con el héroe (su clase y la
+      // segunda en multiclase) y ≥5 por clase en multiclase.
+      const allowedClasses = new Set<string>([heroClass]);
+      if (secondClass && catalog.byClass.has(secondClass)) allowedClasses.add(secondClass);
+      const copiesByDef = new Map<string, number>();
+      const perClass = new Map<string, number>();
       for (const defId of customDeck.cardDefinitionIds) {
         const def = catalog.byId.get(defId);
         if (!def || def.type !== 'ABILITY') {
           errors.push(`Custom deck ${customDeck.id}: unknown/non-ability card ${defId}`);
           continue;
         }
+        const copies = (copiesByDef.get(defId) ?? 0) + 1;
+        copiesByDef.set(defId, copies);
+        if (copies > def.copies) {
+          errors.push(`Custom deck ${customDeck.id}: ${def.name} x${copies} (max ${def.copies})`);
+          continue;
+        }
+        if (def.heroClass && !allowedClasses.has(def.heroClass)) {
+          errors.push(`Custom deck ${customDeck.id}: ${def.name} is class ${def.heroClass}, incompatible`);
+          continue;
+        }
+        const cls = def.heroClass ?? 'UNKNOWN';
+        perClass.set(cls, (perClass.get(cls) ?? 0) + 1);
         deckInstances.push({
           instanceId: nextInstanceId('ability'),
           definitionId: def.id,
@@ -376,6 +400,12 @@ export function setupGame(
       }
       if (deckInstances.length !== 15) {
         errors.push(`Custom deck ${customDeck.id}: ${deckInstances.length} cards (must be 15)`);
+      } else if (allowedClasses.size === 2) {
+        for (const cls of allowedClasses) {
+          if ((perClass.get(cls) ?? 0) < 5) {
+            errors.push(`Custom deck ${customDeck.id}: multiclass needs min 5 cards of ${cls}`);
+          }
+        }
       }
     } else if (secondClassCards.length > 0 && config.mode === 'MULTICLASS') {
       // Multiclase: mínimo 5 de cada clase, 15 total
@@ -516,7 +546,10 @@ export function setupGame(
       cardsPlayedAgainstEnemy: {},
       persistentCards: [],
       supportDecks: [],
-      playerAge: heroConfig.playerAge,
+      // playerAge ausente ≠ undefined: el estado vivo no debe llevar claves
+      // undefined porque el snapshot JSON las pierde y stateHash diverge
+      // entre la partida en vivo y la restaurada desde un save.
+      ...(heroConfig.playerAge !== undefined ? { playerAge: heroConfig.playerAge } : {}),
       evasionTokenUsed: false,
     };
 
@@ -566,7 +599,7 @@ export function setupGame(
     const enemyDef = catalog.byId.get(enemyCard.definitionId);
     if (!enemyDef) continue;
 
-    const enemy: EnemyState = {
+    const enemyBase: EnemyState = {
       instanceId: enemyCard.instanceId,
       definitionId: enemyCard.definitionId,
       baseFortitude: enemyDef.printedFortitude ?? 1,
@@ -581,6 +614,10 @@ export function setupGame(
       damageDisabled: false,
       statuses: [],
     };
+
+    // Auras de entrada: si Roghkiller ya está en el campo (revelado en
+    // una iteración previa), los orcos posteriores entran con +1.
+    const enemy = applyEntryAuras(enemyBase, state);
 
     state.battlefield.push(enemy);
 
@@ -606,16 +643,17 @@ export function setupGame(
     }
   }
 
-  // D375: Aplicar bonus de Roghkiller a los 3 enemigos iniciales si está en el campo
+  // D375: Roghkiller entró en el lote inicial — aplicar +1 a los orcos
+  // revelados ANTES que él (los posteriores ya lo recibieron por
+  // applyEntryAuras dentro del bucle; no duplicar).
   // D428: identificar por definitionId estable
-  const roghkillerInField = state.battlefield.some(e =>
-    e.isWarlord && e.definitionId === 'warlord.roghkiller'
+  const roghkillerIdx = state.battlefield.findIndex(
+    e => e.isWarlord && e.definitionId === 'warlord.roghkiller'
   );
-  if (roghkillerInField) {
-    const roghkillerInstanceId = state.battlefield.find(e =>
-      e.isWarlord && e.definitionId === 'warlord.roghkiller'
-    )?.instanceId;
-    state.battlefield = state.battlefield.map(e => {
+  if (roghkillerIdx >= 0) {
+    const roghkillerInstanceId = state.battlefield[roghkillerIdx].instanceId;
+    state.battlefield = state.battlefield.map((e, i) => {
+      if (i >= roghkillerIdx) return e;
       if (e.isOrc && e.instanceId !== roghkillerInstanceId) {
         const mod = {
           id: `roghkiller-setup-${nextSeq()}`,
@@ -687,6 +725,9 @@ export function setupGame(
     // Aplicar efectos continuos del escenario (Lötharion, Skaàrg, Brunmar, etc.)
     const scenarioResult = applyScenarioEffects(state, state.scenario.definitionId, catalog);
     state = scenarioResult.state;
+    // Sin push el SCENARIO_EFFECTS_APPLIED quedaba fuera del eventLog
+    // inicial y el fold no reconstruía flags/auras/ledger.
+    events.push(...scenarioResult.events);
 
     // Solitario: 1 moneda sobre el escenario activo (spec §4.1)
     if (config.mode === 'SOLO') {
@@ -880,10 +921,17 @@ export function resolveLeaderBid(
     seq: nextSeq(),
   });
 
-  // Limpiar pendingChoices de líder
+  // Limpiar pendingChoices de líder y el residuo de puja (el reducer de
+  // LEADER_DETERMINED hace lo propio en el fold — mismo estado final)
   state = {
     ...state,
     pendingChoices: state.pendingChoices.filter(c => !c.choiceId.startsWith('leader-bid-')),
+    players: Object.fromEntries(
+      Object.entries(state.players).map(([pid, p]) => [
+        pid,
+        p.leaderBidCards?.length ? { ...p, leaderBidCards: undefined } : p,
+      ]),
+    ),
   };
 
   return { state, events };

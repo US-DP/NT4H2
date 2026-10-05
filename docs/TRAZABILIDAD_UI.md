@@ -165,12 +165,12 @@ Cada requisito se mapea a componentes existentes o planificados y a pruebas.
 
 | Requisito | Componente | Estado | Test |
 |-----------|-----------|--------|------|
-| UI-130 Diálogo elección | ChoiceDialog | OK | ui-components.test |
-| UI-131 Info panel elección | ChoiceDialog | OK | ui-components.test |
-| UI-132 Elecciones privadas | ChoiceDialog | OK | ui-components.test |
-| UI-133 Esperando decisión | ChoiceDialog | OK | ui-components.test |
-| UI-134 Restaurar al reconectar | ChoiceDialog | ~ | - |
-| UI-135 No bloquear sin opción | ChoiceDialog | OK | ui-components.test |
+| UI-130 Diálogo elección | PendingChoiceView | OK | ui-components.test |
+| UI-131 Info panel elección | PendingChoiceView | OK | ui-components.test |
+| UI-132 Elecciones privadas | PendingChoiceView | OK | ui-components.test |
+| UI-133 Esperando decisión | PendingChoiceView | OK | ui-components.test |
+| UI-134 Restaurar al reconectar | PendingChoiceView | ~ | - |
+| UI-135 No bloquear sin opción | PendingChoiceView | OK | ui-components.test |
 
 ## 14. Mercado (UI-140..UI-146)
 

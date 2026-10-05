@@ -187,6 +187,39 @@ describe('Partida real — casos negativos', () => {
       const ok = execNeg(cmd({ type: 'PLAY_CARD', cardInstanceId: inst.instanceId }));
       expect(ok.reason ?? '').not.toMatch(/Not enough coins/);
     });
+
+    it('exige objetivo a cartas de daño directo y respeta el filtro (E-13)', () => {
+      const atkCard = (catalog.byType.get('ABILITY') ?? []).find(
+        c => (c.printedAttack ?? 0) > 0 && !c.effects?.some(e =>
+          e.type === 'DEAL_DAMAGE_SPLIT' || e.type === 'DEAL_DAMAGE_ALL_ENEMIES'
+          || e.type === 'DEAL_DAMAGE_TO_HERO' || e.type === 'DEAL_DAMAGE_TO_OTHER_HEROES'),
+      );
+      expect(atkCard, 'el catálogo debe tener una carta de ataque directo').toBeDefined();
+      const inst = putCardInHand('p1', atkCard!.id);
+      // Sin objetivo: la carta se consumía sin hacer daño (no-op silencioso)
+      expectRejected(
+        cmd({ type: 'PLAY_CARD', cardInstanceId: inst.instanceId }),
+        'Card requires a target enemy');
+      // Con objetivo válido entra
+      const ok = execNeg(
+        cmd({ type: 'PLAY_CARD', cardInstanceId: inst.instanceId, targetEnemyId: 'neg-enemy-1' }));
+      expect(ok.accepted, `legal rechazada: ${ok.reason}`).toBe(true);
+
+      // Filtro de clase: una carta "solo orcos" contra un no-orco fizzleaba
+      // en silencio tras consumir la carta.
+      const orcCard = (catalog.byType.get('ABILITY') ?? []).find(c =>
+        c.effects?.some(e => {
+          const t = 'target' in e ? e.target : undefined;
+          return typeof t === 'object' && t !== null && t.kind === 'ONE_ENEMY'
+            && 'filter' in t && t.filter?.isOrc === true;
+        }));
+      if (orcCard) {
+        const orcInst = putCardInHand('p1', orcCard.id);
+        expectRejected(
+          cmd({ type: 'PLAY_CARD', cardInstanceId: orcInst.instanceId, targetEnemyId: 'neg-enemy-1' }),
+          'Target does not meet card requirements');
+      }
+    });
   });
 
   describe('EVASION', () => {
@@ -550,12 +583,16 @@ describe('Partida real — casos negativos', () => {
 
     it('partida terminada: ningún comando muta el estado', () => {
       state.phase = 'FINISHED';
-      expectRejected(cmd({ type: 'PLAY_CARD', cardInstanceId: 'x' }), 'Not in attack phase');
-      expectRejected(cmd({ type: 'BUY_CARD', marketCardInstanceId: 'x' }), 'Not in market phase');
-      expectRejected(cmd({ type: 'END_TURN' }), 'Not in restoration or market phase');
-      expectRejected(cmd({ type: 'END_ATTACK' }), 'Not in attack phase');
-      expectRejected(cmd({ type: 'EVASION', discardedCardInstanceIds: ['a', 'b'] }), 'Not in attack choice phase');
-      expectRejected(cmd({ type: 'USE_HERO_ABILITY' }), 'Cannot use hero ability in this phase');
+      // Guard global post-fin: todo comando rechazado con razón unificada
+      // (antes dependía de la fase concreta y RESOLVE_CHOICE pasaba).
+      expectRejected(cmd({ type: 'PLAY_CARD', cardInstanceId: 'x' }), 'Game is finished');
+      expectRejected(cmd({ type: 'BUY_CARD', marketCardInstanceId: 'x' }), 'Game is finished');
+      expectRejected(cmd({ type: 'END_TURN' }), 'Game is finished');
+      expectRejected(cmd({ type: 'END_ATTACK' }), 'Game is finished');
+      expectRejected(cmd({ type: 'EVASION', discardedCardInstanceIds: ['a', 'b'] }), 'Game is finished');
+      expectRejected(cmd({ type: 'USE_HERO_ABILITY' }), 'Game is finished');
+      expectRejected(cmd({ type: 'RESOLVE_CHOICE', choiceId: 'x', selectedIds: [] }), 'Game is finished');
+      // PASS es no-op por contrato: sigue admitido.
       expect(execNeg(cmd({ type: 'PASS' })).accepted).toBe(true);
     });
 

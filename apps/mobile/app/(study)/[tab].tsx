@@ -7,6 +7,6 @@ import { useLocalSearchParams } from 'expo-router';
 import { StudyScreen } from '../../components/StudyScreen';
 
 export default function StudyTabRoute() {
-  const { tab } = useLocalSearchParams<{ tab: string }>();
-  return <StudyScreen initialTab={tab} />;
+  const { tab, deckId } = useLocalSearchParams<{ tab: string; deckId?: string }>();
+  return <StudyScreen initialTab={tab} editDeckId={deckId} />;
 }

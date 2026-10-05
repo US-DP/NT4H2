@@ -11,24 +11,26 @@ import type {
 import {
   type DeterministicRng,
   type EffectRegistry,
-  createReplay,
+  type CommandReasonCode,
+  type CommandCostPreview,
+  type createReplay,
   projectEventsForPlayer,
   ENGINE_VERSION,
   SNAPSHOT_VERSION,
 } from '@nt4h/engine';
-import type { CommandReasonCode } from '@nt4h/engine';
 import type { CatalogLoadResult } from '@nt4h/catalog';
 
 
 export interface GameUIState {
   selectedCardInstanceId: string | null;
   selectedEnemyInstanceId: string | null;
-  showHand: boolean;
   message: string | null;
   /** En hot-seat, indica si estamos en la pantalla de privacidad */
   privacyScreen: boolean;
   /** Modo evasión: null = inactivo; array = cartas elegidas para descartar (mín 2) */
   evasionSelection: string[] | null;
+  /** Cambio de cartas iniciales (SOLO): null = inactivo; array = elegidas (máx 2) */
+  swapSelection: string[] | null;
 }
 
 export interface SavedGame {
@@ -91,6 +93,21 @@ export function newCid(prefix: string): string {
  * - pendingChoices de otros jugadores
  * - Eventos privados del log
  */
+/**
+ * Redacción a nivel de carta — paridad con `redactCard` del runner
+ * (apps/engine-runner/server.ts): el `definitionId` oculto solo no
+ * bastaba, `name`/`persistentTrigger`/`auraModifiers` también revelan
+ * la carta. Cortafuegos del cliente: aunque el servidor ya proyecta,
+ * un backend que devolviera estado crudo por bug no filtraría aquí.
+ */
+const redactCard = <T extends { definitionId: string }>(c: T): T => ({
+  ...c,
+  definitionId: HIDDEN_CARD,
+  name: undefined,
+  persistentTrigger: undefined,
+  auraModifiers: undefined,
+});
+
 export function sanitizeOnlineState(state: GameState, viewerId: string | null): GameState {
   const players: GameState['players'] = {};
   for (const [id, p] of Object.entries(state.players)) {
@@ -98,17 +115,20 @@ export function sanitizeOnlineState(state: GameState, viewerId: string | null): 
       ? p
       : {
           ...p,
-          hand: p.hand.map(c => ({ ...c, definitionId: HIDDEN_CARD })),
-          abilityDeck: p.abilityDeck.map(c => ({ ...c, definitionId: HIDDEN_CARD })),
-          wearPile: p.wearPile.map(c => ({ ...c, definitionId: HIDDEN_CARD })),
+          hand: p.hand.map(redactCard),
+          abilityDeck: p.abilityDeck.map(redactCard),
+          wearPile: p.wearPile.map(redactCard),
+          // Paridad con sanitizeForPlayer del runner (X-1): el mazo de
+          // apoyos ajeno también es información oculta.
+          supportDecks: (p.supportDecks ?? []).map(d => d.map(redactCard)),
         };
   }
   return {
     ...state,
     players,
-    hordeDeck: state.hordeDeck.map(c => ({ ...c, definitionId: HIDDEN_CARD })),
-    marketDeck: state.marketDeck.map(c => ({ ...c, definitionId: HIDDEN_CARD })),
-    scenarioDeck: state.scenarioDeck.map(c => ({ ...c, definitionId: HIDDEN_CARD })),
+    hordeDeck: state.hordeDeck.map(redactCard),
+    marketDeck: state.marketDeck.map(redactCard),
+    scenarioDeck: state.scenarioDeck.map(redactCard),
     battlefield: state.battlefield.map(e => ({ ...e, reward: null })),
     pendingChoices: state.pendingChoices.filter(c => c.playerId === viewerId),
     eventLog: projectEventsForPlayer(state.eventLog, viewerId),
@@ -137,6 +157,9 @@ export interface GameStore {
     lastMessageAt: number | null;
     /** Host de la sala (para acciones de moderación en partida: skip AFK) */
     hostId: string | null;
+    /** cid del último comando realmente enviado por el socket — permite
+     *  a la UI correlacionar command_ack/ref con la acción pendiente (M-23). */
+    lastCid: string | null;
     /** Reloj de turno autoritativo del servidor (epoch ms; null = desconocido) */
     turnStartedAt: number | null;
   };
@@ -149,8 +172,10 @@ export interface GameStore {
   /** Base del "Deshacer" local: snapshot de estado+RNG tomado al crear o
    * cargar la partida. `initialCommands.slice(0,-1)` re-ejecutado sobre
    * esta base produce el estado anterior (rewind tipo Tabletop Playground).
+   * También es el `initialState` del envelope de guardado (§51.12): el
+   * `seq` capturado hace el replay bit-idéntico.
    * null = sin undo disponible (partida online o recién cerrada). */
-  undoBase: { state: GameState; rngState: number; seed: string } | null;
+  undoBase: { state: GameState; rngState: number; seed: string; seq?: number } | null;
 
   // Estado de UI
   ui: GameUIState;
@@ -163,8 +188,12 @@ export interface GameStore {
   trashedGames: TrashedGame[];
 
   // Acciones
-  initCatalog: () => void;
-  newGame: (config: GameConfig) => void;
+  /** Resuelve cuando el catálogo (oficial + Taller) está cargado — los
+   *  llamadores que necesiten contenido custom deben esperarla. */
+  initCatalog: () => Promise<void>;
+  /** Crea la partida local. `ok:false` = setupGame rechazó la config;
+   *  `errors` trae los motivos del motor para mostrarlos en la UI. */
+  newGame: (config: GameConfig) => { ok: boolean; errors: string[] };
   playCard: (cardInstanceId: string, targetEnemyId?: string) => void;
   endAttack: () => void;
   /** Maniobra de Evasión: descarta ≥2 cartas de la mano para evitar la respuesta de la Horda */
@@ -194,9 +223,9 @@ export interface GameStore {
   disconnectOnline: () => void;
   sendOnlineCommand: (command: CommandWithoutCid) => void;
   /** Verifica si una carta de la mano es jugable y devuelve el motivo si no */
-  checkCardPlayable: (cardInstanceId: string) => { ok: boolean; reason?: string; reasonCode?: CommandReasonCode };
+  checkCardPlayable: (cardInstanceId: string) => { ok: boolean; reason?: string; reasonCode?: CommandReasonCode; costs?: CommandCostPreview };
   /** Verifica si una carta del mercado es comprable y devuelve el motivo si no */
-  checkMarketCardBuyable: (marketCardInstanceId: string) => { ok: boolean; reason?: string; reasonCode?: CommandReasonCode };
+  checkMarketCardBuyable: (marketCardInstanceId: string) => { ok: boolean; reason?: string; reasonCode?: CommandReasonCode; costs?: CommandCostPreview };
   /** Deshace el último comando en partida local re-ejecutando el log
    *  sobre `undoBase` menos el último paso. No-op en online. */
   undoLastCommand: () => void;
@@ -204,15 +233,28 @@ export interface GameStore {
   resolvePendingChoice: (choiceId: string, selectedIds: string[]) => void;
   /** Enviar puja de Líder (CHOOSE_LEADER_CARDS) */
   chooseLeaderCards: (cardInstanceIds: string[]) => void;
-  setViewer: (id: string | null) => void;
+  /** Activar/desactivar el modo cambio de cartas iniciales (SOLO) */
+  toggleSwapMode: () => void;
+  /** Marcar/desmarcar una carta para el cambio inicial (máx 2) */
+  toggleSwapCard: (cardInstanceId: string) => void;
+  /** Aceptar o declinar el efecto opcional de inicio de turno del
+   *  escenario (comando ACCEPT_TURN_START_EFFECT; elección `turn-start-*`) */
+  acceptTurnStartEffect: (accepted: boolean) => void;
+  /** Cambiar hasta 2 cartas de la mano inicial (solo SOLO, una vez) */
+  swapStartingCards: (cardInstanceIds: string[]) => void;
+  /** Abrir el siguiente mazo de Apoyo (solo SOLO, coste 3/5/6 monedas) */
+  openSupportDeck: (supportDeckIndex: number) => void;
+  /** Robar 1 carta de un mazo de Apoyo abierto (pago Gloria o monedas) */
+  buySupportCard: (supportDeckIndex: number, paymentType: 'GLORY' | 'COINS') => void;
   passPrivacy: () => void;
-  saveGame: (name: string) => void;
+  /** Hot-seat: entrega el dispositivo a `playerId` — pone viewerId y abre
+   *  la pantalla de privacidad para que el jugador anterior no vea su mano. */
+  handOverTo: (playerId: string) => void;
+  saveGame: (name: string) => Promise<boolean>;
   loadGame: (id: string) => void;
   loadSavedGames: () => void;
   /** Mueve una partida a la papelera (recuperable hasta que caduque) */
   deleteSavedGame: (id: string) => void;
-  /** Re-inserta una partida previamente borrada (deshacer) */
-  restoreSavedGame: (saved: SavedGame) => void;
   /** Exporta una partida guardada como fichero JSON (compartir/descargar) */
   exportSavedGame: (id: string) => void;
   /** Importa un fichero JSON exportado previamente. Devuelve error o null. */

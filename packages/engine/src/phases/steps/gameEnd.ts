@@ -8,6 +8,7 @@ import type { CatalogLoadResult } from '@nt4h/catalog';
 import type { DeterministicRng } from '../../rng/index.js';
 import { calculateSoloScore } from '../../modes/solo.js';
 import { executeTurnStartEffect, onTurnStart } from '../../scenarios/index.js';
+import { computeFinalScore } from '../../scoring.js';
 import { nextSeq } from '../../seq.js';
 
 export function processGameEndCheck(
@@ -105,43 +106,18 @@ export function processGameEndCheck(
       });
       return { state: { ...state, phase: 'FINISHED', scenarioCoins: 0 }, events };
     }
-    // Recuento de Gloria
-    // Recuento de Gloria (especificacion 3.8):
-    // 1. Fichas de Gloria acumuladas (ya incluyen Gloria de trofeos
-    //    porque applyEvent la suma al derrotar enemigos)
-    // 2. 1 Gloria por cada 3 Monedas
-    // 3. Tenaz: +1 Gloria si llegas al final sin Heridas
+    // Recuento de Gloria (especificacion 3.8) — computeFinalScore es la
+    // única fuente de verdad de la fórmula: Gloria + 1/3 Monedas +
+    // Tenaz, con desempate por trofeos. El record se construye en
+    // playerOrder para que el desempate estable sea determinista.
+    const finalScore = computeFinalScore(
+      Object.fromEntries(state.playerOrder.map(pid => [pid, state.players[pid]])),
+    );
     const scores: Record<string, number> = {};
-    const trophyCounts: Record<string, number> = {};
-    for (const playerId of state.playerOrder) {
-      const player = state.players[playerId];
-      let total = player.glory;
-      // 1 Gloria por cada 3 Monedas
-      total += Math.floor(player.coins / 3);
-      // Tenaz: +1 si sin Heridas
-      if (player.wounds === 0) {
-        total += 1;
-      }
-      scores[playerId] = total;
-      trophyCounts[playerId] = player.trophies.length;
+    for (const ps of finalScore.players) {
+      scores[ps.playerId] = ps.total;
     }
-
-    // Determinar ganador (mas Gloria)
-    // Empate: gana el jugador con mas cartas de enemigos derrotados (especificacion 3.8)
-    let winnerId: string | null = null;
-    let maxGlory = -1;
-    for (const playerId of state.playerOrder) {
-      const glory = scores[playerId];
-      if (glory > maxGlory) {
-        maxGlory = glory;
-        winnerId = playerId;
-      } else if (glory === maxGlory && winnerId !== null) {
-        // Desempate por trofeos
-        if (trophyCounts[playerId] > trophyCounts[winnerId]) {
-          winnerId = playerId;
-        }
-      }
-    }
+    const winnerId: string | null = finalScore.ranking[0]?.playerId ?? null;
 
     events.push({
       type: 'GAME_ENDED',
@@ -171,7 +147,10 @@ export function processGameEndCheck(
         state = {
           ...state,
           pendingChoices: [
-            ...state.pendingChoices,
+            // Purga de turn-start-* obsoletos: una confirmación opcional
+            // no respondida en un turno anterior no debe acumularse ni
+            // (sobre todo) bloquear el avance de fases posteriores.
+            ...state.pendingChoices.filter(c => !c.choiceId.startsWith('turn-start-')),
             {
               choiceId: `turn-start-${state.turnNumber}`,
               playerId: state.activePlayerId,

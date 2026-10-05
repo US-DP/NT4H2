@@ -1,6 +1,8 @@
 /**
  * cardWorkshop — API pública del módulo del editor de efectos.
- * El tab CreateCardTab.tsx consume desde aquí; los tests también.
+ * Los consumidores internos importan los submódulos directamente
+ * (model/compiler/decompile); este barrel lo usa el test de paridad
+ * del Taller y queda como superficie pública del módulo.
  */
 
 export * from './model';

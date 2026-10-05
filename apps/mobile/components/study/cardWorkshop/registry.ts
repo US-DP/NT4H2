@@ -189,7 +189,7 @@ export const ACTION_DEFS: ActionDef[] = [
   { type: 'LOOK_AT_CARDS', labelKey: 'actionLookAtCards', amount: true,
     build: n => ({ type: 'LOOK_AT_CARDS', deck: 'HORDE', amount: valueExpr(n), action: 'REORDER' }) },
   { type: 'DRAW_AND_ADD_ATTACK', labelKey: 'actionDrawAndAddAttack', amount: true,
-    build: n => ({ type: 'DRAW_AND_ADD_ATTACK', amount: valueExpr(n), source: 'ABILITY_DECK' }) },
+    build: n => ({ type: 'DRAW_AND_ADD_ATTACK', amount: valueExpr(n) }) },
   { type: 'SHUFFLE_DECK', labelKey: 'actionShuffleDeck', searchDeck: true,
     build: n => ({ type: 'SHUFFLE_DECK', deck: (n.searchDeck ?? 'ABILITY') as 'ABILITY' }) },
   { type: 'SEARCH_DECK', labelKey: 'actionSearchDeck', cardName: true, searchAction: true, searchDeck: true,
@@ -204,13 +204,16 @@ export const ACTION_DEFS: ActionDef[] = [
   { type: 'RECOVER_CARD_BY_NAME', labelKey: 'actionRecoverCardByName', cardName: true, to: true,
     build: n => ({ type: 'RECOVER_CARD_BY_NAME', name: n.cardName?.trim() ?? '', from: 'WEAR_PILE', to: n.to === 'HAND' ? 'HAND' : 'BOTTOM_OF_DECK' }) },
   { type: 'SWAP_ENEMY', labelKey: 'actionSwapEnemy', enemyTarget: true,
-    build: n => ({ type: 'SWAP_ENEMY', target: enemySel(n), newFrom: 'BOTTOM_OF_HORDE' as const }) },
+    build: n => ({ type: 'SWAP_ENEMY', target: enemySel(n) }) },
   { type: 'INTERCEPT_DAMAGE', labelKey: 'actionInterceptDamage', heroTarget: true,
     build: n => ({ type: 'INTERCEPT_DAMAGE', from: heroSel(n) }) },
   { type: 'PLAY_IMMEDIATELY', labelKey: 'actionPlayImmediately', inherit: true,
     build: n => ({ type: 'PLAY_IMMEDIATELY', inheritTarget: !!n.inheritTarget }) },
-  { type: 'CUSTOM_SCENARIO', labelKey: 'actionCustomScenario', handler: true,
-    build: n => ({ type: 'CUSTOM_SCENARIO', handler: n.cardName?.trim() || 'CUSTOM' }) },
+  // CUSTOM_SCENARIO: NO es seleccionable — su `handler` solo despacha
+  // escenarios oficiales hardcodeados (engine/scenarios), y
+  // validateContentSet lo rechaza al publicar. Se conserva en
+  // decompile/validation para poder VER cartas oficiales que lo usan.
+
   { type: 'STEAL_COINS_MULTIPLE', labelKey: 'actionStealCoinsMultiple', amount: true,
     build: n => ({ type: 'STEAL_COINS_MULTIPLE', maxTotal: valueExpr(n) }) },
   { type: 'PLAY_RANDOM_CARD_FROM_OTHER_HERO', labelKey: 'actionPlayRandomCardFromOtherHero',
@@ -398,6 +401,7 @@ export const LISTEN_EVENTS = [
   { id: 'CARDS_DRAWN', labelKey: 'evtCardsDrawn' },
   { id: 'CARDS_LOST', labelKey: 'evtCardsLost' },
   { id: 'COINS_GAINED', labelKey: 'evtCoinsGained' },
+  { id: 'COINS_LOST', labelKey: 'evtCoinsLost' },
   { id: 'GLORY_GAINED', labelKey: 'evtGloryGained' },
   { id: 'HERO_WOUNDED', labelKey: 'evtHeroWounded' },
   { id: 'CARD_PLAYED', labelKey: 'evtCardPlayed' },

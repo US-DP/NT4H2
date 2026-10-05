@@ -20,13 +20,53 @@ import NetInfo from '@react-native-community/netinfo';
 // Cleanup de la conexión online activa (fuera del estado: no serializable)
 let _onlineCleanup: (() => void) | null = null;
 
-// Secuencia monotónica de comandos por sesión online (anti-reordenado)
-let _clientSeq = 0;
+// Secuencia monotónica de comandos por sesión online (anti-reordenado).
+// Se siembra con Date.now(): el runner conserva lastClientSeq entre
+// reconexiones y snapshots — un contador que reinicia en 0 quedaría
+// rechazado como 'out_of_order' para siempre tras re-entrar a la sala.
+let _clientSeq = Date.now();
 
 /** Comandos encolados mientras el socket no está OPEN (reconexión breve).
  *  Se reenvían al reabrir — no se descartan en silencio. */
 let _pendingCmds: CommandWithoutCid[] = [];
 const MAX_PENDING_CMDS = 32;
+
+/** Comandos en vuelo: clave = cuerpo del comando (sin cid) → {cid, deadline}.
+ *  Un doble-tap en el mismo botón enviaba el MISMO comando dos veces
+ *  (dos END_TURN = dos turnos saltados; dos BUY_CARD = doble gasto).
+ *  El dedup por cuerpo idéntico no bloquea jugadas distintas rápidas.
+ *  Deadline para no vetar para siempre si el ack se pierde. */
+const _inFlightCmds = new Map<string, { cid: string; deadline: number }>();
+const INFLIGHT_CMD_TTL_MS = 10_000;
+
+function _pruneInFlight(now: number): void {
+  for (const [k, v] of _inFlightCmds) {
+    if (v.deadline <= now) _inFlightCmds.delete(k);
+  }
+}
+
+function _dropInFlightCid(cid: string | undefined): void {
+  if (!cid) return;
+  for (const [k, v] of _inFlightCmds) {
+    if (v.cid === cid) {
+      _inFlightCmds.delete(k);
+      return;
+    }
+  }
+}
+
+/** Cuerpo del comando en vuelo asociado a un cid (para reintento M-7). */
+function _inFlightBodyByCid(cid: string | undefined): string | undefined {
+  if (!cid) return undefined;
+  for (const [k, v] of _inFlightCmds) {
+    if (v.cid === cid) return k;
+  }
+  return undefined;
+}
+
+/** M-7: comandos ya reintentados tras stale_revision — una segunda
+ *  stale_revision del mismo cuerpo se rinde (no ping-pong infinito). */
+const _staleRetried = new Set<string>();
 
 type Actions = Pick<GameStore, 'setConnectionMode'|'connectOnline'|'connectSpectator'|'disconnectOnline'|'sendOnlineCommand'>;
 
@@ -75,13 +115,24 @@ export const createOnlineSlice: StateCreator<GameStore, [['zustand/immer', never
           return;
         }
         const data = await res.json();
+        // Respuesta tardía: si la sesión cambió (disconnect, otra sala,
+        // newGame local) no pisar el estado actual.
+        if (closed || get().online.roomId !== roomId || get().online.playerId !== playerId) return;
         // Respuestas concurrentes pueden llegar desordenadas (ráfaga de
         // command_result + resync): aplicar una revisión vieja encima de
         // una nueva regresaría el estado y provocaría stale_revision.
         const rev = typeof data.revision === 'number' ? data.revision : null;
         const last = get().online.lastRevision;
-        if (rev !== null && last !== null && rev <= last) return;
-        if (data.state) {
+        // Sin revisión válida no podemos ordenar la respuesta: si ya
+        // conocemos una revisión, una respuesta revision-less solo
+        // podría retroceder el estado → descartarla.
+        if (last !== null && (rev === null || rev <= last)) return;
+        // Forma mínima del estado: un payload malformado no debe romper
+        // la UI más abajo (players ausente / playerOrder no array).
+        const s = data.state;
+        const plausible = s && typeof s === 'object' && s.players
+          && typeof s.players === 'object' && Array.isArray(s.playerOrder);
+        if (plausible) {
           const parsedAt = typeof data.turnStartedAt === 'string'
             ? Date.parse(data.turnStartedAt)
             : null;
@@ -136,10 +187,24 @@ export const createOnlineSlice: StateCreator<GameStore, [['zustand/immer', never
           set((state) => {
             state.ui.message = i18n.t('common.msg.stateStale');
           });
-          void fetchProjectedState();
+          // M-7: el comando era legal; solo su expectedRevision era vieja.
+          // Tras resincronizar se reenvía UNA vez — antes el movimiento se
+          // perdía en silencio y el jugador tenía que repetirlo a mano.
+          const staleCid = (msg as { ref?: string; cid?: string }).ref
+            ?? (msg as { cid?: string }).cid;
+          const staleBody = _inFlightBodyByCid(staleCid);
+          _dropInFlightCid(staleCid);
+          void fetchProjectedState().then(() => {
+            if (staleBody && !_staleRetried.has(staleBody)) {
+              _staleRetried.add(staleBody);
+              get().sendOnlineCommand(JSON.parse(staleBody) as CommandWithoutCid);
+            }
+          });
         }
       }
       if (msg.type === 'game.command_result') {
+        // Liberar la entrada en vuelo del dedup de doble-submit.
+        _dropInFlightCid((msg as { cid?: string }).cid);
         if (msg.stateChanged) {
           void fetchProjectedState();
         } else if (msg.reason) {
@@ -156,11 +221,36 @@ export const createOnlineSlice: StateCreator<GameStore, [['zustand/immer', never
           });
         }
       }
+      if (msg.type === 'error') {
+        // Rate-limit del servidor (consumers.py): el comando/chat se
+        // descartó — sin este handler el frame moría en silencio y el
+        // jugador pensaba que su acción había entrado.
+        const reason = (msg as { reason?: string }).reason;
+        set((state) => {
+          state.ui.message = reason === 'chat_rate_limited'
+            ? i18n.t('common.msg.chatRateLimited')
+            : i18n.t('common.msg.rateLimited');
+        });
+      }
       if (msg.type === 'room.player_kicked' && (msg as { playerId?: string }).playerId === playerId) {
         // El servidor cierra con 4401 justo después; cortar la sesión
         // aquí evita el bucle de reconexión de un jugador expulsado.
         get().disconnectOnline();
         return;
+      }
+      if (msg.type === 'room.finished') {
+        // GAME_ENDED procesado por el backend: refetch para converger a
+        // la vista final aunque un command_result se hubiera perdido.
+        void fetchProjectedState();
+      }
+      if (msg.type === 'room.host_changed') {
+        // Un transfer/disconnect cambió el host: sin actualizar
+        // online.hostId el nuevo host no veía el botón de skip-AFK y el
+        // antiguo lo veía pero recibía 403 del backend.
+        const newHost = (msg as { playerId?: string }).playerId;
+        if (typeof newHost === 'string' && newHost) {
+          set((state) => { state.online.hostId = newHost; });
+        }
       }
       if (msg.type === 'room.closed') {
         // Sala cerrada por el host o por abandono total: el servidor
@@ -318,11 +408,20 @@ export const createOnlineSlice: StateCreator<GameStore, [['zustand/immer', never
       })();
     };
 
+    // Conservar hostId si el caller acaba de fijarlo para ESTA sala vía
+    // setConnectionMode — pisarlo a null dejaba el botón de skip-turn
+    // AFK del host invisible en partida.
+    const keepHostId = get().online.roomId === roomId ? get().online.hostId : null;
     set((state) => {
       state.connectionMode = 'online';
-      state.online = { roomId, playerId, playerToken: token || null, socket: null, lastRevision: null, lastMessageAt: null, hostId: null, turnStartedAt: null };
-      _clientSeq = 0;
+      state.online = { roomId, playerId, playerToken: token || null, socket: null, lastRevision: null, lastMessageAt: null, hostId: keepHostId, turnStartedAt: null, lastCid: null };
+      // Date.now() — ver nota sobre _clientSeq: debe crecer respecto a
+      // cualquier sesión previa del mismo playerId en esta sala.
+      _clientSeq = Math.max(_clientSeq + 1, Date.now());
       _pendingCmds = [];
+      // Sesión nueva: los acks en vuelo pertenecían al socket viejo —
+      // sin el reset un rejoin vetaba el primer comando idéntico.
+      _inFlightCmds.clear();
     });
     connect();
 
@@ -356,13 +455,23 @@ export const createOnlineSlice: StateCreator<GameStore, [['zustand/immer', never
         // (sin manos, sin elecciones privadas) — D435.
         const res = await fetchWithTimeout(`${API_BASE}/rooms/${roomId}/engine/`);
         const data = await res.json();
-        if (data.state) {
+        // No aplicar una respuesta de una sesión ya cerrada/reemplazada.
+        if (closed || get().online.roomId !== roomId) return;
+        // Mismo guard de revisión que el modo jugador: respuestas
+        // desordenadas o sin revisión no deben retroceder la vista.
+        const rev = typeof data.revision === 'number' ? data.revision : null;
+        const last = get().online.lastRevision;
+        if (last !== null && (rev === null || rev <= last)) return;
+        const s = data.state;
+        const plausible = s && typeof s === 'object' && s.players
+          && typeof s.players === 'object' && Array.isArray(s.playerOrder);
+        if (plausible) {
           const parsedAt = typeof data.turnStartedAt === 'string'
             ? Date.parse(data.turnStartedAt)
             : null;
           const serverTurnAt = parsedAt !== null && Number.isFinite(parsedAt) ? parsedAt : null;
           set((state) => {
-            state.gameState = data.state;
+            state.gameState = s;
             state.viewerId = null;
             if (typeof data.revision === 'number') {
               state.online.lastRevision = data.revision;
@@ -375,8 +484,55 @@ export const createOnlineSlice: StateCreator<GameStore, [['zustand/immer', never
       }
     };
 
-    const connect = () => {
+    // Mismo gobierno por NetInfo que el modo jugador: sin red no se
+    // gasta el backoff ni se abren sockets que nacen muertos (antes el
+    // espectador reconectaba a ciegas mientras el jugador pausaba).
+    let deviceOnline = true;
+    const markOffline = () => {
+      set((state) => {
+        if (state.connectionMode === 'online') {
+          state.ui.message = i18n.t('common.msg.netWait');
+        }
+      });
+    };
+    const netinfoUnsub = NetInfo.addEventListener((netState) => {
+      const online = netState.isConnected !== false && netState.isInternetReachable !== false;
+      const wasOffline = !deviceOnline;
+      deviceOnline = online;
+      if (!online) {
+        markOffline();
+      } else if (wasOffline && !closed && socket?.readyState !== WebSocket.OPEN) {
+        reconnectDelay = 1000;
+        connect();
+      }
+    });
+    const scheduleReconnect = () => {
       if (closed) return;
+      if (!deviceOnline) {
+        markOffline();
+        return; // el listener de NetInfo reanuda al volver la red
+      }
+      NetInfo.fetch()
+        .then((net) => {
+          if (closed) return;
+          if (net && net.isConnected === false) {
+            deviceOnline = false;
+            markOffline();
+            return;
+          }
+          deviceOnline = true;
+          reconnectTimer = setTimeout(connect, reconnectDelay);
+          reconnectDelay = Math.min(reconnectDelay * 2, 15_000);
+        })
+        .catch(() => {
+          if (closed) return;
+          reconnectTimer = setTimeout(connect, reconnectDelay);
+          reconnectDelay = Math.min(reconnectDelay * 2, 15_000);
+        });
+    };
+
+    const connect = () => {
+      if (closed || !deviceOnline) return;
       const ws = new WebSocket(`${WS_BASE}/game/${roomId}/?spectator=1`);
       socket = ws;
       const isStale = () => socket !== ws;
@@ -400,6 +556,12 @@ export const createOnlineSlice: StateCreator<GameStore, [['zustand/immer', never
           if (msg.type === 'game.command_result' && msg.stateChanged) {
             void fetchSpectatorState();
           }
+          if (msg.type === 'room.finished') {
+            // GAME_ENDED procesado: converger a la vista final aunque el
+            // command_result de cierre se hubiera perdido (igual que el
+            // socket de jugador).
+            void fetchSpectatorState();
+          }
           if (msg.type === 'room.closed') {
             // Sala borrada: el servidor cierra con 4400; sin esto el
             // espectador reconectaría en bucle contra un 404.
@@ -419,8 +581,7 @@ export const createOnlineSlice: StateCreator<GameStore, [['zustand/immer', never
           get().disconnectOnline();
           return;
         }
-        reconnectTimer = setTimeout(connect, reconnectDelay);
-        reconnectDelay = Math.min(reconnectDelay * 2, 15_000);
+        scheduleReconnect();
       };
       set((state) => { state.online.socket = ws; });
     };
@@ -428,13 +589,19 @@ export const createOnlineSlice: StateCreator<GameStore, [['zustand/immer', never
     set((state) => {
       state.connectionMode = 'online';
       state.viewerId = null;
-      state.online = { roomId, playerId: null, playerToken: null, socket: null, lastRevision: null, lastMessageAt: null, hostId: null, turnStartedAt: null };
+      state.online = { roomId, playerId: null, playerToken: null, socket: null, lastRevision: null, lastMessageAt: null, hostId: null, turnStartedAt: null, lastCid: null };
     });
     void fetchSpectatorState();
-    connect();
+    NetInfo.fetch()
+      .then((net) => {
+        deviceOnline = !(net && net.isConnected === false);
+        if (deviceOnline) connect(); else markOffline();
+      })
+      .catch(connect);
 
     const cleanup = () => {
       closed = true;
+      netinfoUnsub();
       if (heartbeat) clearInterval(heartbeat);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       socket?.close();
@@ -447,11 +614,26 @@ export const createOnlineSlice: StateCreator<GameStore, [['zustand/immer', never
     _onlineCleanup?.();
     _onlineCleanup = null;
     _pendingCmds = [];
+    _inFlightCmds.clear();
+    _staleRetried.clear();
     void clearRoomSession();
     get().online.socket?.close();
     set((state) => {
-      state.online = { roomId: null, playerId: null, playerToken: null, socket: null, lastRevision: null, lastMessageAt: null, hostId: null, turnStartedAt: null };
+      state.online = { roomId: null, playerId: null, playerToken: null, socket: null, lastRevision: null, lastMessageAt: null, hostId: null, turnStartedAt: null, lastCid: null };
       state.connectionMode = 'local';
+      // La proyección online (manos ocultas, rng zeroed) NO es una
+      // partida local válida: limpiarla para que un playCard/endTurn
+      // posterior no ejecute el motor local sobre estado sanitizado con
+      // un RNG desalineado ni la empuje a initialCommands.
+      state.gameState = null;
+      state.rng = null;
+      state.registry = null;
+      state.viewerId = null;
+      state.initialCommands = [];
+      state.initialConfig = null;
+      state.undoBase = null;
+      state.ui.evasionSelection = null;
+      state.ui.swapSelection = null;
     });
   },
 
@@ -475,10 +657,19 @@ export const createOnlineSlice: StateCreator<GameStore, [['zustand/immer', never
       }
       return;
     }
+    // Dedup de doble-submit: el mismo comando (cuerpo idéntico) ya en
+    // vuelo → descartar el segundo envío. PLAY_CARD con la misma carta
+    // repetida es un error igualmente (el servidor la rechazaría).
+    const cmdKey = JSON.stringify(command);
+    const now = Date.now();
+    _pruneInFlight(now);
+    if (_inFlightCmds.has(cmdKey)) return;
     const cid = newCid('cmd');
+    _inFlightCmds.set(cmdKey, { cid, deadline: now + INFLIGHT_CMD_TTL_MS });
     // actorId documenta al actor real en el log (el runner lo
     // sobrescribe con el playerId autenticado si lo persistiera).
     const fullCommand: Command = { ...command, cid, actorId: online.playerId } as Command;
+    set((state) => { state.online.lastCid = cid; });
     socket.send(JSON.stringify({
       type: 'game.command',
       cid,

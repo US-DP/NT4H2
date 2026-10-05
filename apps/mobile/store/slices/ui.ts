@@ -11,7 +11,7 @@ import {
 } from '@nt4h/engine';
 import type { GameState } from '@nt4h/schema';
 
-type Actions = Pick<GameStore, 'selectCard'|'selectEnemy'|'setMessage'|'toggleMuteChatSender'|'setGameState'|'setViewer'|'passPrivacy'>;
+type Actions = Pick<GameStore, 'selectCard'|'selectEnemy'|'setMessage'|'toggleMuteChatSender'|'setGameState'|'passPrivacy'|'handOverTo'>;
 
 export const createUiSlice: StateCreator<GameStore, [['zustand/immer', never]], [], Actions> = (set, get) => ({
   selectCard: (cardInstanceId: string | null) => {
@@ -63,15 +63,16 @@ export const createUiSlice: StateCreator<GameStore, [['zustand/immer', never]], 
     });
   },
 
-  setViewer: (id: string | null) => {
-    set((state) => {
-      state.viewerId = id;
-    });
-  },
-
   passPrivacy: () => {
     set((state) => {
       state.ui.privacyScreen = false;
+    });
+  },
+
+  handOverTo: (playerId: string) => {
+    set((state) => {
+      state.viewerId = playerId;
+      state.ui.privacyScreen = true;
     });
   },
 });

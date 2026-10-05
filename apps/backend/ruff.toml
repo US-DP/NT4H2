@@ -1,5 +1,8 @@
 target-version = "py311"
 line-length = 120
+# Migraciones generadas: el estilo lo fija Django, no el proyecto
+# (alineado con .flake8, que ya las excluye).
+exclude = ["**/migrations/**", ".venv/**"]
 
 [lint]
 select = [
@@ -15,6 +18,3 @@ ignore = [
   "E501",  # line too long (handled by formatter)
   "B008",  # do not perform function call in argument (Django pattern)
 ]
-
-[lint.per-file-ignores]
-"tests/*" = ["B011"]

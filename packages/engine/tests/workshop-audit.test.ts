@@ -21,7 +21,7 @@ import { resetPhaseSeq } from '../src/phases/engine.js';
 import { resetResolveSeq } from '../src/effects/resolver.js';
 import { dispatchListeners } from '../src/effects/listeners.js';
 import { nextSeq } from '../src/seq.js';
-import { loadCatalog, type CatalogLoadResult } from '@nt4h/catalog';
+import { loadCatalog, EFFECT_REGISTRY, type CatalogLoadResult } from '@nt4h/catalog';
 import type {
   GameState, ResolutionContext, CardEffect, CardListener,
 } from '@nt4h/schema';
@@ -184,5 +184,18 @@ describe('dispatchListeners es idempotente por evento', () => {
     const second = dispatchListeners(first.state, ev as never, deps);
     expect(second.events).toHaveLength(0);
     expect(second.state).toBe(first.state);
+  });
+});
+
+describe('cobertura EFFECT_REGISTRY ↔ handlers del motor', () => {
+  // El EFFECT_REGISTRY del catálogo es lo que el Taller ofrece en el
+  // editor: un tipo declarado sin register() en el motor sería un no-op
+  // silencioso en partida (execute lanza 'Unknown effect type'). Este
+  // test impide que ambos registros deriven por separado.
+  it('todo tipo declarado en el catálogo tiene handler en el motor', () => {
+    const missing = EFFECT_REGISTRY
+      .map(m => m.type)
+      .filter(t => !reg.has(t));
+    expect(missing).toEqual([]);
   });
 });

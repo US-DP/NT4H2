@@ -38,7 +38,8 @@ export interface Settings {
   extraTextSpacing: boolean;
   // Color y contraste
   highContrast: boolean;
-  noColorOnly: boolean;
+  // (noColorOnly eliminado: invariante estructural — los estados combinan
+  //  color+icono+borde y ningún componente lo ramificaba)
   colorMode: ColorMode;
   // Movimiento
   reduceMotion: boolean;
@@ -71,7 +72,9 @@ export interface Settings {
   lastGameConfig: GameConfig | null;
   /** Atajos de teclado de la mesa activos (web; Escape siempre funciona) */
   shortcutsEnabled: boolean;
-  /** Escritorio web: sidebar de navegación expandida (icono + etiqueta) */
+  /** @deprecated Solo se lee para migrar a `navMode`; ningún componente
+   *  lo consume — no usar. Se conserva en el tipo para no romper el
+   *  storage de versiones antiguas. */
   navExpanded: boolean;
   /** Modo del sidebar: 'auto' expande solo en monitores amplios (≥1200 px) */
   navMode: 'auto' | 'collapsed' | 'expanded';
@@ -96,7 +99,6 @@ export const DEFAULT_SETTINGS: Settings = {
   highLegibilityFont: false,
   extraTextSpacing: false,
   highContrast: false,
-  noColorOnly: true,
   colorMode: 'default',
   reduceMotion: false,
   noFlashes: false,
@@ -144,7 +146,7 @@ export type AccessibilitySection =
 
 const SECTION_KEYS: Record<AccessibilitySection, (keyof Settings)[]> = {
   text: ['useSystemTextSize', 'fontScale', 'density', 'boldText', 'highLegibilityFont', 'extraTextSpacing'],
-  color: ['highContrast', 'noColorOnly', 'colorMode'],
+  color: ['highContrast', 'colorMode'],
   motion: ['reduceMotion', 'noFlashes', 'autoPlayAnimations'],
   sound: ['volumeMaster', 'volumeMusic', 'volumeEffects', 'vibration', 'hapticFeedback', 'hapticIntensity'],
   controls: ['controlSize', 'dragSensitivity', 'holdToConfirm', 'gestureAlternatives'],
@@ -153,7 +155,7 @@ const SECTION_KEYS: Record<AccessibilitySection, (keyof Settings)[]> = {
 
 const ACCESSIBILITY_KEYS: (keyof Settings)[] = [
   'useSystemTextSize', 'fontScale', 'density', 'boldText', 'highLegibilityFont',
-  'extraTextSpacing', 'highContrast', 'noColorOnly', 'colorMode', 'reduceMotion',
+  'extraTextSpacing', 'highContrast', 'colorMode', 'reduceMotion',
   'noFlashes', 'autoPlayAnimations', 'volumeMaster', 'volumeMusic', 'volumeEffects',
   'vibration', 'hapticFeedback', 'hapticIntensity', 'controlSize', 'dragSensitivity',
   'holdToConfirm', 'gestureAlternatives', 'srAnnounceState', 'srExpandedLabels',
@@ -219,86 +221,9 @@ export const useSettings = create<SettingsStore>()((set, get) => ({
       reduceMotion: true,
       noFlashes: true,
       controlSize: 'large',
-      noColorOnly: true,
     });
   },
 }));
 
-/* ---------- Exportar / importar ajustes ---------- */
-
-const SETTINGS_ENVELOPE = { app: 'nt4h', kind: 'settings', version: 1 } as const;
-
-/** Claves exportables: todo excepto lastGameConfig (datos de partida, no preferencia). */
-const EXPORT_KEYS = (Object.keys(DEFAULT_SETTINGS) as (keyof Settings)[])
-  .filter((k) => k !== 'lastGameConfig');
-
-const ENUM_OPTIONS: Partial<Record<keyof Settings, readonly string[]>> = {
-  language: ['system', 'es', 'en'],
-  density: ['compact', 'standard', 'comfortable', 'wide'],
-  colorMode: ['default', 'protanopia', 'deuteranopia', 'tritanopia', 'monochrome'],
-  hapticIntensity: ['off', 'light', 'medium', 'strong'],
-  controlSize: ['normal', 'large', 'xlarge'],
-  dragSensitivity: ['low', 'medium', 'high'],
-  gameOrientation: ['auto', 'landscape', 'portrait'],
-  hordeSummaryMode: ['always', 'modifiers', 'never'],
-};
-
-const NUMERIC_RANGE: Partial<Record<keyof Settings, [number, number]>> = {
-  fontScale: [FONT_SCALE_MIN, FONT_SCALE_MAX],
-  volumeMaster: [0, 100],
-  volumeMusic: [0, 100],
-  volumeEffects: [0, 100],
-};
-
-/** Serializa las preferencias exportables a JSON. */
-export function exportSettingsJson(s: Settings): string {
-  const settings = Object.fromEntries(EXPORT_KEYS.map((k) => [k, s[k]]));
-  return JSON.stringify({ ...SETTINGS_ENVELOPE, settings }, null, 2);
-}
-
-/**
- * Valida y normaliza un fichero de ajustes importado.
- * Devuelve un Partial<Settings> seguro o null si el envelope no es válido.
- * Entrada no confiable: se ignoran claves desconocidas y valores de tipo
- * incorrecto; enums fuera de lista se descartan; números se clampean.
- */
-export function parseSettingsJson(raw: string): Partial<Settings> | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (
-    typeof parsed !== 'object' || parsed === null ||
-    (parsed as Record<string, unknown>).app !== SETTINGS_ENVELOPE.app ||
-    (parsed as Record<string, unknown>).kind !== SETTINGS_ENVELOPE.kind
-  ) {
-    return null;
-  }
-  const incoming = (parsed as Record<string, unknown>).settings;
-  if (typeof incoming !== 'object' || incoming === null) return null;
-
-  const out: Partial<Settings> = {};
-  for (const key of EXPORT_KEYS) {
-    const value = (incoming as Record<string, unknown>)[key];
-    if (value === undefined) continue;
-    const def = DEFAULT_SETTINGS[key];
-    const enums = ENUM_OPTIONS[key];
-    const range = NUMERIC_RANGE[key];
-    if (enums) {
-      if (typeof value === 'string' && (enums as readonly string[]).includes(value)) {
-        (out as Record<string, unknown>)[key] = value;
-      }
-    } else if (range) {
-      if (typeof value === 'number' && Number.isFinite(value)) {
-        (out as Record<string, unknown>)[key] = Math.max(range[0], Math.min(range[1], value));
-      }
-    } else if (typeof value === typeof def) {
-      // strings (displayName) con límite razonable
-      if (typeof value === 'string' && value.length > 80) continue;
-      (out as Record<string, unknown>)[key] = value;
-    }
-  }
-  return Object.keys(out).length > 0 ? out : null;
-}
+// Exportar/importar ajustes vive en lib/settingsTransfer.ts (única
+// implementación — una versión anterior duplicada aquí quedó muerta).

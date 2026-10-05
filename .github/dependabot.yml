@@ -1,0 +1,31 @@
+version: 2
+
+# Dependabot semanal: dependencias npm (workspace), pip (backend),
+# imágenes Docker y acciones de GitHub. Las PRs pasan por los gates de CI
+# igual que cualquier cambio.
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      pnpm-workspace:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /apps/backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: docker
+    directory: /apps/engine-runner
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

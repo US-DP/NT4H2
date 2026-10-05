@@ -8,6 +8,7 @@ import type {
 import type { CatalogLoadResult } from '@nt4h/catalog';
 import type { DeterministicRng } from '../../rng/index.js';
 import { applyEvent, checkFortitudeDefeats } from '../../events/applyEvent.js';
+import { applyEntryAuras } from '../../modifiers/index.js';
 import { applyScenarioEffects, clearScenarioEffects } from '../../scenarios/index.js';
 import { nextSeq } from '../../seq.js';
 
@@ -40,7 +41,7 @@ export function processBattlefieldReplenishment(
         seq: nextSeq(),
       });
       // Limpiar efectos continuos del escenario descartado
-      const clearResult = clearScenarioEffects(state, state.scenario.definitionId);
+      const clearResult = clearScenarioEffects(state, state.scenario.definitionId, catalog);
       state = clearResult.state;
       events.push(...clearResult.events);
     }
@@ -98,7 +99,7 @@ export function processBattlefieldReplenishment(
     const enemyDef = catalog.byId.get(enemyCard.definitionId);
     if (!enemyDef) continue;
 
-    const enemy: EnemyState = {
+    const enemyBase: EnemyState = {
       instanceId: enemyCard.instanceId,
       definitionId: enemyCard.definitionId,
       baseFortitude: enemyDef.printedFortitude ?? 1,
@@ -111,38 +112,10 @@ export function processBattlefieldReplenishment(
       damageDisabled: false,
     };
 
-    // Ruinas de Brunmar: aplicar -1 fortaleza a enemigos revelados mientras el escenario esté activo
-    if (state.scenario?.definitionId === 'scenario.brunmar-ruins') {
-      enemy.modifiers.push({
-        id: `scenario-brunmar-${nextSeq()}`,
-        sourceId: state.scenario.instanceId,
-        layer: 'FORTITUDE_MODIFIERS',
-        timestamp: nextSeq(),
-        duration: 'WHILE_SOURCE_ACTIVE',
-        amount: -1,
-      });
-    }
-
-    // Roghkiller: +1 fortaleza a cada orco mientras esté vivo en el campo
-    // D374: Solo excluir al propio Roghkiller, no a todos los Warlords orcos
-    // D402: Usar newBattlefield (incluye enemigos revelados en iteraciones previas del bucle)
-    // D428: identificar Roghkiller por definitionId estable
-    const roghkillerInField = newBattlefield.some(e =>
-      e.isWarlord && e.definitionId === 'warlord.roghkiller'
-    );
-    const roghkillerInstanceId = newBattlefield.find(e =>
-      e.isWarlord && e.definitionId === 'warlord.roghkiller'
-    )?.instanceId;
-    if (roghkillerInField && enemy.isOrc && enemy.instanceId !== roghkillerInstanceId) {
-      enemy.modifiers.push({
-        id: `roghkiller-${nextSeq()}`,
-        sourceId: 'roghkiller',
-        layer: 'FORTITUDE_MODIFIERS',
-        timestamp: nextSeq(),
-        duration: 'WHILE_SOURCE_ACTIVE',
-        amount: 1,
-      });
-    }
+    // Auras de entrada: Ruinas de Brunmar (-1) y Roghkiller (+1 a orcos).
+    // D402: el campo provisional incluye enemigos revelados en
+    // iteraciones previas del bucle — por eso se pasa newBattlefield.
+    const enemy = applyEntryAuras(enemyBase, { ...state, battlefield: newBattlefield });
 
     newBattlefield.push(enemy);
 
@@ -177,7 +150,7 @@ export function processBattlefieldReplenishment(
           seq: nextSeq(),
         });
         // Limpiar efectos continuos del escenario descartado
-        const clearResult = clearScenarioEffects(state, state.scenario.definitionId);
+        const clearResult = clearScenarioEffects(state, state.scenario.definitionId, catalog);
         state = clearResult.state;
         // Marcar escenario como descartado para que el filtro de modificadores funcione
         state = { ...state, scenario: null };

@@ -7,12 +7,19 @@ on:
       - 'apps/mobile/**'
       - 'packages/**'
       - '.github/workflows/ui-ci.yml'
+      # I-6: cambios solo de dependencias/tooling también corren el gate
+      - 'pnpm-*.yaml'
+      - 'package.json'
+      - 'turbo.json'
   pull_request:
     branches: [main, master]
     paths:
       - 'apps/mobile/**'
       - 'packages/**'
       - '.github/workflows/ui-ci.yml'
+      - 'pnpm-*.yaml'
+      - 'package.json'
+      - 'turbo.json'
 
 jobs:
   # ===========================================================================
@@ -24,11 +31,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nt4h/mobile typecheck
@@ -43,11 +48,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nt4h/mobile test -- tests/components.test.tsx
@@ -62,11 +65,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nt4h/mobile test -- tests/accessibility.test.tsx
@@ -81,11 +82,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nt4h/mobile test -- tests/interactions.test.tsx
@@ -100,11 +99,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nt4h/mobile test -- tests/responsive.test.tsx tests/states.test.tsx tests/privacy.test.tsx
@@ -119,11 +116,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nt4h/mobile test -- tests/flow.test.tsx
@@ -138,11 +133,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nt4h/mobile test
@@ -158,11 +151,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nt4h/mobile exec playwright install --with-deps chromium

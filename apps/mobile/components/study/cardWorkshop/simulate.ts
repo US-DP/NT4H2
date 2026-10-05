@@ -140,7 +140,6 @@ function makeState(opts: SimOptions, player: PlayerState): GameState {
     eventLog: [],
     rngState: { seed: opts.seed, state: 0 },
     monotonicCounter: 0,
-    orcFortitudeBonus: 0,
     marketCostModifier: 0,
     ignoreCoinRewards: false,
     ignoreGloryRewards: false,
@@ -173,6 +172,8 @@ function describeEvent(ev: GameEvent, t: TFunc): SimEventLine {
       return { kind: 'card', text: t('workshop.simPlayed', { name: String(e.cardName ?? e.cardDefinitionId) }) };
     case 'COINS_GAINED':
       return { kind: 'resource', text: t('workshop.simCoins', { amount: num('amount') }) };
+    case 'COINS_LOST':
+      return { kind: 'resource', text: t('workshop.simCoinsLost', { amount: num('amount') }) };
     case 'COINS_STOLEN':
       return { kind: 'resource', text: t('workshop.simStolen', { amount: num('amount') }) };
     case 'GLORY_GAINED':

@@ -6,6 +6,8 @@
  */
 
 import { Platform } from 'react-native';
+import type * as FileSystemNS from 'expo-file-system';
+import type * as SharingNS from 'expo-sharing';
 
 export async function exportTextFile(
   filename: string,
@@ -28,9 +30,9 @@ export async function exportTextFile(
   }
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const FileSystem = require('expo-file-system') as typeof import('expo-file-system');
+    const FileSystem = require('expo-file-system') as typeof FileSystemNS;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const Sharing = require('expo-sharing') as typeof import('expo-sharing');
+    const Sharing = require('expo-sharing') as typeof SharingNS;
     const path = `${FileSystem.cacheDirectory}${filename}`;
     await FileSystem.writeAsStringAsync(path, contents);
     if (!(await Sharing.isAvailableAsync())) return false;

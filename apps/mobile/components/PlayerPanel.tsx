@@ -16,6 +16,10 @@ import { useTranslation } from 'react-i18next';
 import '../lib/i18n';
 import { useGameStore } from '../store/gameStore';
 import { classColor as heroClassColor } from '../lib/classTokens';
+import { useColors, useFs } from '../lib/useTheme';
+import { touchTarget } from '../lib/theme';
+import type { Colors } from '../lib/theme';
+import { capListLabel } from '../lib/capabilities';
 
 interface PlayerPanelProps {
   /** Al pulsar el nombre de un héroe, abre su detalle */
@@ -27,6 +31,9 @@ export function PlayerPanel({ onSelectHero }: PlayerPanelProps) {
   const gameState = useGameStore((s) => s.gameState);
   const catalog = useGameStore((s) => s.catalog);
   const viewerId = useGameStore((s) => s.viewerId);
+  const c = useColors();
+  const fs = useFs();
+  const styles = createStyles(c, fs);
 
   if (!gameState || !catalog) return null;
 
@@ -64,7 +71,9 @@ export function PlayerPanel({ onSelectHero }: PlayerPanelProps) {
                 onPress={() => onSelectHero?.(player.heroId)}
                 disabled={!onSelectHero}
                 accessibilityRole="button"
+                accessibilityState={{ disabled: !onSelectHero }}
                 accessibilityHint={t('hud.heroDetailHint')}
+                style={[styles.heroButton, !onSelectHero && styles.pressableDisabled]}
               >
                 <Text style={styles.heroName} numberOfLines={1}>
                   {heroDef?.name ?? '???'} {onSelectHero ? 'ⓘ' : ''}
@@ -123,7 +132,7 @@ export function PlayerPanel({ onSelectHero }: PlayerPanelProps) {
               {/* UI-084: capacidades del héroe */}
               {capabilities.length > 0 && (
                 <Text style={styles.capabilities}>
-                  {t('hud.capabilitiesLabel', { list: capabilities.join(', ') })}
+                  {t('hud.capabilitiesLabel', { list: capListLabel(t, capabilities) })}
                 </Text>
               )}
             </View>
@@ -134,30 +143,30 @@ export function PlayerPanel({ onSelectHero }: PlayerPanelProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   container: {
     padding: 8,
-    backgroundColor: '#16213e',
+    backgroundColor: c.background,
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderBottomColor: c.border,
   },
   panel: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: c.surface,
     padding: 8,
     borderRadius: 8,
     marginRight: 8,
     minWidth: 180,
     borderWidth: 2,
-    borderColor: '#34495e',
+    borderColor: c.border,
   },
   activePanel: {
-    borderColor: '#f1c40f',
+    borderColor: c.accent,
     borderWidth: 3,
-    backgroundColor: '#2a2a4e',
+    backgroundColor: c.surfaceInteractiveSelected,
   },
   eliminatedPanel: {
     opacity: 0.5,
-    borderColor: '#7f8c8d',
+    borderColor: c.borderDisabled,
   },
   header: {
     flexDirection: 'row',
@@ -165,58 +174,67 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 4,
   },
+  heroButton: {
+    minHeight: touchTarget,
+    minWidth: touchTarget,
+    justifyContent: 'center',
+    flex: 1,
+  },
+  pressableDisabled: {
+    opacity: 0.45,
+  },
   heroName: {
-    color: '#f1c40f',
-    fontSize: 14,
+    color: c.accent,
+    fontSize: fs(14),
     fontWeight: 'bold',
     flex: 1,
   },
   phase: {
-    color: '#3498db',
-    fontSize: 10,
+    color: c.info,
+    fontSize: fs(10),
     fontStyle: 'italic',
     marginBottom: 4,
   },
   activePill: {
-    backgroundColor: 'rgba(241,196,15,0.15)',
+    backgroundColor: c.accent,
     borderRadius: 10,
     paddingHorizontal: 8,
     paddingVertical: 2,
   },
   activeBadge: {
-    color: '#f1c40f',
-    fontSize: 10,
+    color: c.textOnAccent,
+    fontSize: fs(10),
     fontWeight: 'bold',
   },
   eliminatedBadge: {
-    color: '#e74c3c',
-    fontSize: 10,
+    color: c.danger,
+    fontSize: fs(10),
     fontWeight: 'bold',
   },
   stats: {
     gap: 4,
   },
   stat: {
-    color: '#ecf0f1',
-    fontSize: 11,
+    color: c.text,
+    fontSize: fs(11),
   },
   statCritical: {
-    color: '#e74c3c',
+    color: c.danger,
     fontWeight: 'bold',
   },
   statDepleted: {
-    color: '#7f8c8d',
+    color: c.textFaint,
     fontStyle: 'italic',
   },
   connected: {
-    color: '#27ae60',
+    color: c.connectionOnline,
   },
   disconnected: {
-    color: '#e74c3c',
+    color: c.connectionOffline,
   },
   capabilities: {
-    color: '#bdc3c7',
-    fontSize: 10,
+    color: c.textMuted,
+    fontSize: fs(10),
     fontStyle: 'italic',
     marginTop: 2,
   },

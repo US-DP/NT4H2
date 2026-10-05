@@ -100,7 +100,10 @@ describe('Taller: cobertura de tipos de efecto', () => {
       collectTypes((card as { heroAbility?: { effects?: CardEffect[] } }).heroAbility?.effects, used);
       collectTypes((card as { peritia?: { effects?: CardEffect[] } }).peritia?.effects, used);
     }
-    const missing = [...used].filter(t => !constructible.has(t));
+    // CUSTOM_SCENARIO existe en cartas oficiales pero NO es construible
+    // en el editor: su `handler` solo despacha escenarios hardcodeados y
+    // validateContentSet lo rechaza al publicar — no se ofrece.
+    const missing = [...used].filter(t => !constructible.has(t) && t !== 'CUSTOM_SCENARIO');
     expect(missing).toEqual([]);
   });
 
@@ -212,9 +215,12 @@ describe('Taller: round-trip de efectos oficiales', () => {
     expect(eff).toEqual(byId('scenario.umbrous-swamp').effects.find(e => e.type === 'ON_ENEMY_DEFEATED'));
   });
 
-  it('scenario custom — CUSTOM_SCENARIO con handler', () => {
-    const [eff] = buildEffects([action('CUSTOM_SCENARIO', { cardName: 'kalern-mud' })]);
-    expect(eff).toEqual({ type: 'CUSTOM_SCENARIO', handler: 'kalern-mud' });
+  it('CUSTOM_SCENARIO no es construible en el editor (handler sin despacho genérico)', () => {
+    // El motor solo despacha handlers de escenarios oficiales hardcodeados;
+    // publicar una carta del Taller con CUSTOM_SCENARIO la rechaza
+    // validateContentSet — el editor ni siquiera ofrece la acción.
+    const fx = buildEffects([action('CUSTOM_SCENARIO', { cardName: 'kalern-mud' })]);
+    expect(fx).toEqual([]);
   });
 });
 

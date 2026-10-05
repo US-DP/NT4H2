@@ -78,7 +78,7 @@ def main() -> int:
     print(f'Total: {total} LOC en {len(rows)} archivos fuente\n')
     print('Top 20 por LOC:')
     fails, warns = [], []
-    for loc, br, p in rows:
+    for i, (loc, br, p) in enumerate(rows):
         rel = os.path.relpath(p, ROOT)
         density = br / loc if loc else 0
         mark = ''
@@ -88,7 +88,7 @@ def main() -> int:
         elif loc > WARN_LOC or density > WARN_DENSITY:
             mark = '  (warn)' if loc > WARN_LOC else '  (denso)'
             warns.append(rel)
-        if rows.index((loc, br, p)) < 20:
+        if i < 20:
             print(f'  {loc:6}  {br:4}  {density:.2f}  {rel}{mark}')
 
     over_warn = [r for r in rows if r[0] > WARN_LOC]

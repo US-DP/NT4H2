@@ -245,6 +245,28 @@ describe('Taller — validateContentSet', () => {
     expect(res.ok).toBe(false);
     expect(res.errors.some(e => e.includes('profundo'))).toBe(true);
   });
+
+  it('rechaza CUSTOM_SCENARIO en contenido del Taller (handler no interpretable)', () => {
+    const base = loadCatalog();
+    // El motor despacha escenarios por definitionId; el `handler` de un
+    // escenario custom no ejecuta nada — validar como OK sería un no-op
+    // silencioso en partida.
+    const evil = {
+      ...CUSTOM_SET,
+      cards: [
+        {
+          id: 'custom.scenario.handler',
+          name: 'Escenario con handler',
+          type: 'SCENARIO',
+          officialStatus: 'CUSTOM',
+          effects: [{ type: 'CUSTOM_SCENARIO', handler: 'tears-of-aradiel' }],
+        },
+      ],
+    };
+    const res = validateContentSet(evil, base.byId);
+    expect(res.ok).toBe(false);
+    expect(res.errors.some(e => e.includes('CUSTOM_SCENARIO'))).toBe(true);
+  });
 });
 
 describe('Taller — partida real con contenido personalizado', () => {
@@ -388,10 +410,52 @@ describe('Taller — partida real con contenido personalizado', () => {
 
   it('el contenido custom no altera el catálogo oficial base', () => {
     const base = loadCatalog();
-    customCatalog(); // merge produce objeto nuevo
+    const merged = customCatalog(); // merge produce objeto nuevo
     const base2 = loadCatalog();
     expect(stateHash).toBeTruthy();
     expect(base2.byId.has('custom.firebrand')).toBe(false);
     expect(base.byId.size).toBe(base2.byId.size);
+    // Los índices secundarios tampoco deben contaminarse: los Map se
+    // copian pero los arrays internos deben ser objetos nuevos — un push
+    // directo filtraba cartas custom a las salas sin customSets y
+    // acumulaba duplicados a cada merge.
+    for (const cls of base.byClass.keys()) {
+      expect(merged.byClass.get(cls)?.length).toBeGreaterThanOrEqual(base.byClass.get(cls)!.length);
+      expect(base.byClass.get(cls)!.some(c => c.id.startsWith('custom.'))).toBe(false);
+    }
+    for (const t of base.byType.keys()) {
+      expect(base.byType.get(t)!.some(c => c.id.startsWith('custom.'))).toBe(false);
+    }
+    // Un segundo merge no duplica las entradas del catálogo base
+    mergeCustomCards(base2, []);
+    expect(base2.byClass.get('EXPLORER')!.some(c => c.id.startsWith('custom.'))).toBe(false);
+  });
+
+  it('setupGame rechaza un mazo custom con más copias que las impresas', () => {
+    resetInstanceCounter();
+    resetPhaseSeq();
+    const catalog = customCatalog();
+    const cfg = makeConfig('custom-badcopies');
+    // custom.hail-of-arrows tiene copies:1 — pedir 2 debe fallar
+    cfg.customDecks[0].cardDefinitionIds = [
+      ...cfg.customDecks[0].cardDefinitionIds.slice(0, 14),
+      'custom.hail-of-arrows', 'custom.hail-of-arrows',
+    ];
+    const { errors } = setupGame(cfg, catalog);
+    expect(errors.some(e => e.includes('max 1'))).toBe(true);
+  });
+
+  it('setupGame rechaza un mazo custom con cartas de otra clase', () => {
+    resetInstanceCounter();
+    resetPhaseSeq();
+    const catalog = customCatalog();
+    const cfg = makeConfig('custom-badclass');
+    // Héroe EXPLORER con una carta WARRIOR en el mazo custom
+    cfg.customDecks[0].cardDefinitionIds = [
+      ...cfg.customDecks[0].cardDefinitionIds.slice(0, 14),
+      'warrior.shield-charge',
+    ];
+    const { errors } = setupGame(cfg, catalog);
+    expect(errors.some(e => e.includes('incompatible'))).toBe(true);
   });
 });

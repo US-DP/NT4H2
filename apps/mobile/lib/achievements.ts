@@ -3,7 +3,7 @@
  *
  * Las DEFINICIONES viven en `achievements.defs.ts` (datos puros:
  * añadir un logro no exige tocar este archivo — ver
- * docs/logros-y-estadisticas.md §7 para la taxonomía).
+ * docs/LOGROS_Y_ESTADISTICAS.md §7 para la taxonomía).
  *
  * Función pura sobre GameHistoryEntry[]: nada sale del dispositivo.
  * Las entradas antiguas sin los campos nuevos cuentan como 0.

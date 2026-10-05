@@ -9,6 +9,7 @@
  */
 
 import { API_BASE, fetchWithTimeout } from './config';
+import { authFetch } from './auth';
 import { useSettings } from '../store/settingsStore';
 import { loadHistory } from './gameHistory';
 import { evaluateAchievements } from './achievements';
@@ -98,11 +99,15 @@ export async function reportLeaderboardResult(won: boolean): Promise<void> {
   const name = (s.displayName ?? '').trim();
   if (!name) return;
   try {
-    const res = await fetchWithTimeout(`${API_BASE}/stats/leaderboard/`, {
+    // authFetch adjunta el JWT si hay sesión: el backend usa entonces el
+    // display_name de la cuenta, y sin él el informe anónimo chocaba con
+    // el 409 "name belongs to a registered account" para usuarios
+    // registrados que informaban bajo su propio nick.
+    const res = await authFetch('/stats/leaderboard/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, won }),
-    }, 8000);
+    });
     if (res.ok) lbCache = null;
   } catch {
     // best-effort

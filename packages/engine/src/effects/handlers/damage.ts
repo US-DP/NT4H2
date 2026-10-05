@@ -166,6 +166,9 @@ export function registerDamageEffects(registry: EffectRegistry): void {
       type: 'PREVENTION_APPLIED',
       playerId: ctx.activePlayerId,
       amount,
+      // La duración declarada gobierna cuándo caduca la prevención
+      // (antes era un no-op: todo expiraba al fin del ataque de la Horda).
+      duration: eff.duration,
       seq: registry.nextSeq(),
     }];
   });
@@ -178,10 +181,11 @@ export function registerDamageEffects(registry: EffectRegistry): void {
       seq: registry.nextSeq(),
     }];
   });
-  registry.register('CANCEL_ALL_DAMAGE', (_eff, ctx, _state) => {
+  registry.register('CANCEL_ALL_DAMAGE', (eff, ctx, _state) => {
     return [{
       type: 'CANCELLATION_ACTIVATED',
       playerId: ctx.activePlayerId,
+      duration: eff.duration,
       seq: registry.nextSeq(),
     }];
   });
@@ -191,6 +195,9 @@ export function registerDamageEffects(registry: EffectRegistry): void {
     return [{
       type: 'ENEMY_DAMAGE_DISABLED',
       enemyInstanceId: targetId,
+      // Igual que DISABLE_ENEMY_DAMAGE: la duración declarada manda
+      // (PERMANENT sobrevive al primer ataque, etc.).
+      duration: eff.duration,
       seq: registry.nextSeq(),
     }];
   });
@@ -202,6 +209,7 @@ export function registerDamageEffects(registry: EffectRegistry): void {
       type: 'VULNERABILITY_APPLIED',
       enemyInstanceId: targetId,
       bonus,
+      duration: eff.duration,
       seq: registry.nextSeq(),
     }];
   });
@@ -228,12 +236,16 @@ export function registerDamageEffects(registry: EffectRegistry): void {
     const amount = evalValue(eff.modifier, ctx, state);
     const targetId = resolveTarget(eff.target, ctx, state);
     if (!targetId) return [];
+    // sourceId es obligatorio: purgeWhileSourceActive limpia por la carta
+    // que lo creó — sin él un modificador WHILE_SOURCE_ACTIVE quedaba
+    // para siempre al alcanzarse por una ruta anidada (FOR_EACH, etc.).
     return [{
       type: 'MODIFIER_ADDED',
       modifierId: `fort-mod-${registry.nextSeq()}`,
       targetId,
       layer: 'FORTITUDE_MODIFIERS',
       amount,
+      sourceId: ctx.currentCardInstanceId,
       duration: eff.duration,
       seq: registry.nextSeq(),
     }];
@@ -243,7 +255,14 @@ export function registerDamageEffects(registry: EffectRegistry): void {
     const fromIds = resolveHeroTargets(eff.from, ctx, state)
       .filter(id => id !== ctx.activePlayerId);
     if (fromIds.length === 0) return [];
-    const fromPlayerId = fromIds[0];
+    // E-4: un objetivo elegido explícitamente (chosenHeroTarget del comando
+    // o de una REACTION_WINDOW) gana sobre "el primero de la lista" —
+    // con varios héroes, interceptar a playerOrder[0] protegía al jugador
+    // equivocado.
+    const fromPlayerId =
+      ctx.chosenHeroTarget && fromIds.includes(ctx.chosenHeroTarget)
+        ? ctx.chosenHeroTarget
+        : fromIds[0];
     return [{
       type: 'DAMAGE_INTERCEPTED',
       interceptorPlayerId: ctx.activePlayerId,
@@ -254,10 +273,14 @@ export function registerDamageEffects(registry: EffectRegistry): void {
   });
   registry.register('DEAL_DAMAGE_HITS', (eff, ctx, state) => {
     const times = Math.max(0, evalValue(eff.times, ctx, state));
-    const base = evalValue(eff.amount, ctx, state);
+    const baseRaw = evalValue(eff.amount, ctx, state);
     const targetId = resolveTarget(eff.target, ctx, state);
     if (!targetId || times === 0) return [];
     const enemy = state.battlefield.find(e => e.instanceId === targetId);
+    // Mismos modificadores que DEAL_DAMAGE (MODIFY_DAMAGE): antes los
+    // golpes múltiples ignoraban el bonus del jugador por completo.
+    const dmgPlayer = state.players[ctx.activePlayerId];
+    const base = dmgPlayer ? applyDamageModifiers(baseRaw, ctx.currentCardName, dmgPlayer) : baseRaw;
     const events: GameEvent[] = [];
     for (let i = 0; i < times; i++) {
       const mark = markBonusFor(enemy, ctx);
@@ -292,21 +315,31 @@ export function registerDamageEffects(registry: EffectRegistry): void {
     }];
   });
   registry.register('OVERKILL_DAMAGE', (eff, ctx, state) => {
-    const amount = evalValue(eff.amount, ctx, state);
+    // applyDamageModifiers también aquí: el bonus de la carta alimenta
+    // tanto el golpe como el cálculo de exceso (antes el spill se medía
+    // con el daño base sin modificadores — inconsistente con el propio
+    // DAMAGE_DEALT emitido).
+    const dmgPlayer = state.players[ctx.activePlayerId];
+    const rawAmount = evalValue(eff.amount, ctx, state);
+    const amount = dmgPlayer ? applyDamageModifiers(rawAmount, ctx.currentCardName, dmgPlayer) : rawAmount;
     const targetId = resolveTarget(eff.target, ctx, state);
     if (!targetId) return [];
     const enemy = state.battlefield.find(e => e.instanceId === targetId);
     if (!enemy) return [];
     const mark = markBonusFor(enemy, ctx);
+    // E-12: el exceso se mide sobre el daño REAL aplicado al objetivo
+    // primario (base + bonus del enemigo + marcas) — medirlo solo con la
+    // base desperdiciaba el exceso que los bonos generaban.
+    const dealt = amount + getEnemyDamageBonus(enemy) + mark.bonus;
     const events: GameEvent[] = [{
       type: 'DAMAGE_DEALT' as const,
       targetId,
-      amount: amount + getEnemyDamageBonus(enemy) + mark.bonus,
+      amount: dealt,
       sourceCardInstanceId: ctx.currentCardInstanceId,
       seq: registry.nextSeq(),
     }, ...mark.events];
     const remaining = Math.max(0, getEffectiveFortitude(enemy, state) - enemy.wounds);
-    const over = Math.max(0, amount - remaining);
+    const over = Math.max(0, dealt - remaining);
     if (over > 0) {
       const spillId = resolveTarget(eff.spill, ctx, state);
       if (spillId) {
@@ -341,6 +374,7 @@ export function registerDamageEffects(registry: EffectRegistry): void {
       type: 'ARMOR_GRANTED' as const,
       playerId: ctx.activePlayerId,
       amount,
+      duration: eff.duration,
       seq: registry.nextSeq(),
     }];
   });

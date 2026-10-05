@@ -122,17 +122,27 @@ export function processHordeAttackTriggers(
           }
         }
 
-        // Remover la carta persistente (se consume)
-        events.push({
-          type: 'PERSISTENT_CARD_REMOVED',
-          cardInstanceId: persistentCard.instanceId,
-          seq: nextSeq(),
-        });
-        events.push({
-          type: 'CARD_REMOVED_FROM_GAME',
-          cardInstanceId: persistentCard.instanceId,
-          seq: nextSeq(),
-        });
+        // Remover la carta persistente (se consume). Hay que aplicarlas
+        // inline a currentState igual que los efectos internos: el camino
+        // con empate (resolveChoice) usa `state` tal cual, sin re-aplicar
+        // `events` — sin esto la trampa quedaba en juego y re-disparaba
+        // en cada ataque de la Horda, divergiendo del fold del eventLog.
+        const removalEvents: GameEvent[] = [
+          {
+            type: 'PERSISTENT_CARD_REMOVED',
+            cardInstanceId: persistentCard.instanceId,
+            seq: nextSeq(),
+          },
+          {
+            type: 'CARD_REMOVED_FROM_GAME',
+            cardInstanceId: persistentCard.instanceId,
+            seq: nextSeq(),
+          },
+        ];
+        events.push(...removalEvents);
+        for (const rev of removalEvents) {
+          currentState = applyEventInline(currentState, rev);
+        }
       }
     }
   }

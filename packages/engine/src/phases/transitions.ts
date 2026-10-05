@@ -11,6 +11,17 @@
  *   - ATTACK_CHOICE puede ir a MARKET directamente (Evasion)
  *   - PLAYER_ATTACK puede volver a si mismo (mas cartas) o a HORDE_ATTACK (End Attack)
  *   - Si no hay enemigos en campo, PLAYER_ATTACK → BATTLEFIELD_REPLENISHMENT
+ *   - GAME_END_CHECK emite TURN_STARTED (que fija TURN_START via reducer)
+ *     antes de PHASE_CHANGED → ATTACK_CHOICE — la cadena
+ *     GAME_END_CHECK → TURN_START → ATTACK_CHOICE es la real.
+ *   - Un PHASE_CHANGED hacia la MISMA fase es un re-anuncio (p. ej. la
+ *     ventana de reacción re-publica HORDE_ATTACK), no una transición.
+ *
+ * Fases declaradas pero RESERVADAS (nunca se entra por la máquina de
+ * fases — existen en el schema para contrato/i18n):
+ *   - RESOLVING_CARD: las cartas se resuelven inline dentro de
+ *     PLAYER_ATTACK; la elección se modela con pendingChoices.
+ *   - WAITING_FOR_CHOICE: igual — pendingChoices sin fase dedicada.
  */
 
 import type { Phase } from '@nt4h/schema';
@@ -34,6 +45,9 @@ const TRANSITIONS: Record<Phase, Phase[]> = {
 };
 
 export function canTransition(from: Phase, to: Phase): boolean {
+  // Re-anuncio de la misma fase (p. ej. ventana de reacción de
+  // HORDE_ATTACK): no es una transición, siempre permitido.
+  if (from === to) return true;
   return TRANSITIONS[from]?.includes(to) ?? false;
 }
 

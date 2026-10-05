@@ -16,8 +16,9 @@ import { useCustomContent } from '../../lib/customContent';
 import { exportTextFile } from '../../lib/exportSave';
 import { toast } from '../../lib/toast';
 import { loadCatalog } from '@nt4h/catalog';
-import { useColors } from '../../lib/useTheme';
+import { useColors, useFs } from '../../lib/useTheme';
 import { fontSize, type Colors } from '../../lib/theme';
+import { AppNav, useNavSidebarWidth } from '../../components/AppNav';
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -27,7 +28,9 @@ function fmtBytes(n: number): string {
 
 export default function InstalledContentScreen() {
   const c = useColors();
-  const styles = makeStyles(c);
+  const fs = useFs();
+  const styles = makeStyles(c, fs);
+  const navWidth = useNavSidebarWidth();
   const router = useRouter();
   const { t } = useTranslation();
   const sets = useCustomContent((s) => s.sets);
@@ -41,7 +44,11 @@ export default function InstalledContentScreen() {
   const baseSize = catalog.cards.reduce((a, card) => a + JSON.stringify(card).length, 0);
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: c.background }]} contentContainerStyle={styles.content}>
+    <View style={{ flex: 1 }}>
+    <ScrollView
+      style={[styles.container, { backgroundColor: c.background, marginLeft: navWidth }]}
+      contentContainerStyle={styles.content}
+    >
       <View style={styles.headerRow}>
         <Pressable onPress={() => router.back()} accessibilityRole="button" accessibilityLabel={t('misc.back')}
           style={styles.backBtn}>
@@ -77,7 +84,7 @@ export default function InstalledContentScreen() {
             <View style={styles.cardHead}>
               <Package size={18} color={c.info} />
               <Text style={[styles.cardTitle, { color: c.text }]}>{set.name}</Text>
-              <Text style={[styles.status, { color: set.status === 'PUBLISHED' ? c.success ?? c.accent : c.warning }]}>
+              <Text style={[styles.status, { color: set.status === 'PUBLISHED' ? c.success : c.warning }]}>
                 {t(set.status === 'PUBLISHED' ? 'misc.published' : 'misc.draft')}
               </Text>
             </View>
@@ -157,15 +164,17 @@ export default function InstalledContentScreen() {
         );
       })}
     </ScrollView>
+    <AppNav />
+    </View>
   );
 }
 
-const makeStyles = (c: Colors) => StyleSheet.create({
+const makeStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: 16, gap: 10 },
+  content: { padding: 16, gap: 10, paddingBottom: 84 }, // barra inferior de AppNav en móvil
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  backBtn: { padding: 6, minHeight: 44, justifyContent: 'center' },
-  title: { color: c.accent, fontSize: fontSize.section, fontWeight: 'bold' },
+  backBtn: { padding: 6, minWidth: 44, minHeight: 44, justifyContent: 'center' },
+  title: { color: c.accent, fontSize: fs(fontSize.section), fontWeight: 'bold' },
   card: {
     backgroundColor: c.surface,
     borderWidth: 1,
@@ -174,17 +183,17 @@ const makeStyles = (c: Colors) => StyleSheet.create({
     gap: 4,
   },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  cardTitle: { fontSize: fontSize.detail, fontWeight: '700', flex: 1 },
-  status: { fontSize: fontSize.micro, fontWeight: '800', letterSpacing: 0.5 },
-  meta: { color: c.textMuted, fontSize: fontSize.micro },
+  cardTitle: { fontSize: fs(fontSize.detail), fontWeight: '700', flex: 1 },
+  status: { fontSize: fs(fontSize.micro), fontWeight: '800', letterSpacing: 0.5 },
+  meta: { color: c.textMuted, fontSize: fs(fontSize.micro) },
   actions: { flexDirection: 'row', gap: 14, marginTop: 6, flexWrap: 'wrap' },
   actionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    minHeight: 36,
+    minHeight: 44,
     paddingHorizontal: 4,
   },
-  actionText: { color: c.text, fontSize: fontSize.micro, fontWeight: '600' },
+  actionText: { color: c.text, fontSize: fs(fontSize.micro), fontWeight: '600' },
   confirmRow: { flexDirection: 'row', gap: 14 },
 });

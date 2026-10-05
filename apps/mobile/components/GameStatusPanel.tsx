@@ -16,6 +16,7 @@ import { useGameStore } from '../store/gameStore';
 import type { Modifier } from '@nt4h/schema';
 import { fontSize, spacing } from '../lib/theme';
 import { useColors, useFs } from '../lib/useTheme';
+import { capListLabel } from '../lib/capabilities';
 
 export function GameStatusPanel() {
   const { t } = useTranslation();
@@ -46,10 +47,9 @@ export function GameStatusPanel() {
   );
 
   const globalRules: string[] = [];
-  if (gameState.orcFortitudeBonus !== 0)
-    globalRules.push(t('hud.ruleOrcFortitude', {
-      value: `${gameState.orcFortitudeBonus >= 0 ? '+' : ''}${gameState.orcFortitudeBonus}`,
-    }));
+  // (orcFortitudeBonus eliminado del schema: ningún productor lo ponía
+  //  distinto de 0 — el bonus de Roghkiller viaja como Modifier real y
+  //  ya se lista en la sección de modificadores de arriba).
   if (gameState.marketCostModifier !== 0)
     globalRules.push(t('hud.ruleMarketCost', {
       value: `${gameState.marketCostModifier >= 0 ? '+' : ''}${gameState.marketCostModifier}`,
@@ -96,7 +96,7 @@ export function GameStatusPanel() {
           </Text>
           {activePlayer.capabilities.length > 0 && (
             <Text style={{ color: colors.textFaint, fontSize: fs(fontSize.micro) }}>
-              {t('hud.capabilitiesLabel', { list: activePlayer.capabilities.join(', ') })}
+              {t('hud.capabilitiesLabel', { list: capListLabel(t, activePlayer.capabilities) })}
             </Text>
           )}
           {activeListeners.length > 0 && (

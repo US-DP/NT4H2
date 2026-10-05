@@ -137,7 +137,7 @@ export function CardAnatomy() {
             accessibilityState={{ selected: tab === tt.type }}
             accessibilityLabel={t('cardui.anatomy.viewA11y', { type: label })}
           >
-            <Text style={{ color: tab === tt.type ? '#1a1a2e' : c.text, fontSize: fs(fontSize.detail), fontWeight: '700' }}>
+            <Text style={{ color: tab === tt.type ? c.textOnAccent : c.text, fontSize: fs(fontSize.detail), fontWeight: '700' }}>
               {label}
             </Text>
           </Pressable>
@@ -158,10 +158,10 @@ export function CardAnatomy() {
             {parts.filter((p) => p.x !== undefined).map((p, i) => (
               <View
                 key={i}
-                style={[styles.callout, { left: `${(p.x! - 0.035) * 100}%`, top: `${(p.y! - 0.03) * 100}%` }]}
+                style={[styles.callout, { left: `${(p.x! - 0.035) * 100}%`, top: `${(p.y! - 0.03) * 100}%`, backgroundColor: c.accent, borderColor: c.textOnAccent }]}
                 accessibilityLabel={t('cardui.anatomy.calloutA11y', { n: i + 1, label: p.label })}
               >
-                <Text style={styles.calloutText}>{i + 1}</Text>
+                <Text style={[styles.calloutText, { color: c.textOnAccent }]}>{i + 1}</Text>
               </View>
             ))}
           </View>
@@ -173,7 +173,7 @@ export function CardAnatomy() {
               <View key={i} style={styles.partRow}>
                 {p.x !== undefined && (
                   <View style={[styles.calloutInline, { backgroundColor: c.accent }]}>
-                    <Text style={styles.calloutText}>{i + 1}</Text>
+                    <Text style={[styles.calloutText, { color: c.textOnAccent }]}>{i + 1}</Text>
                   </View>
                 )}
                 <View style={{ flex: 1 }}>
@@ -225,7 +225,7 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: '#F4C94F',
+    backgroundColor: '#f1c40f', // sobrescrito inline con c.accent en cada uso
     borderWidth: 2,
     borderColor: '#1a1a2e',
     alignItems: 'center',

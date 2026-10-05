@@ -9,6 +9,7 @@
  */
 
 import { getImagePath, hasFrontImage, type ImageVariant } from '@nt4h/catalog';
+import { assetImageUri } from '../lib/assetImport';
 import i18n from '../lib/i18n';
 
 export interface CardImageResult {
@@ -34,6 +35,24 @@ export function cardImage(
     hasImage,
     showPlaceholder: !hasImage,
   };
+}
+
+// ============================================================================
+// Imágenes del Taller (sourceImage 'asset:<id>')
+//
+// El Taller deja adjuntar una imagen propia (lib/assetImport). Los bytes se
+// guardan en `nt4h.asset/<id>` y la referencia viaja en `sourceImage` de la
+// CardDefinition. cardImage() solo conoce el registro oficial: esta capa
+// delega en el cache síncrono de assetImport (assetImageUri).
+// ============================================================================
+
+/**
+ * Resuelve `card.sourceImage` ('asset:<id>') a un data-URI renderizable.
+ * Síncrono (sin hooks): usa el cache de lib/assetImport; el primer toque
+ * dispara la carga en segundo plano y warmImageAssets() la precalienta.
+ */
+export function customCardImageUri(sourceImage: string | undefined): string | undefined {
+  return assetImageUri(sourceImage);
 }
 
 /**

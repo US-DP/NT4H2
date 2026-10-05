@@ -8,18 +8,29 @@
  * No toca gameState del store — la partida activa queda intacta.
  */
 
-import { createElement, useEffect, useMemo, useState } from 'react';
+import { createElement, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView, Platform } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import { replay, type ReplayEnvelope } from '@nt4h/engine';
+import {
+  replayInit,
+  replayStep,
+  getEffectiveFortitude,
+  setSeq,
+  currentSeq,
+  DeterministicRng,
+  type ReplayEnvelope,
+  type ReplayCursor,
+} from '@nt4h/engine';
 import { loadCatalog } from '@nt4h/catalog';
 import type { GameState } from '@nt4h/schema';
 import { useGameStore, type SavedGame } from '../../store/gameStore';
 import { AppNav, useNavSidebarWidth } from '../../components/AppNav';
 import { NtButton } from '../../components/ui/NtButton';
 import { NtBadge } from '../../components/ui/NtBadge';
+import { EmptyState } from '../../components/EmptyState';
 import { PHASE_LABELS } from '../../lib/phaseLabels';
+import { eventToHistoryEntry } from '../(game)/_shared/eventHistory';
 import { useColors, useFs } from '../../lib/useTheme';
 import { spacing, radius, fontSize } from '../../lib/theme';
 
@@ -29,6 +40,7 @@ export default function ReplayScreen() {
   const fs = useFs();
   const navWidth = useNavSidebarWidth();
   const params = useLocalSearchParams<{ id?: string }>();
+  const router = useRouter();
 
   const savedGames = useGameStore((s) => s.savedGames);
   const loadSavedGames = useGameStore((s) => s.loadSavedGames);
@@ -49,14 +61,52 @@ export default function ReplayScreen() {
   const total = envelope?.commands.length ?? 0;
   useEffect(() => { setStep(0); setPlaying(false); }, [selectedId]);
 
-  // Reconstrucción incremental: replay hasta el comando N (O(n) por paso;
-  // las partidas típicas tienen cientos de comandos — aceptable, y el
-  // useMemo lo evita al re-renderizar por otros motivos).
+  // Reconstrucción incremental con checkpoints: replay desde cero por
+  // cada paso era O(n²) en un visionado completo — aquí solo se calcula
+  // el delta (rng + seq se restauran desde el checkpoint anterior).
   const catalog = useMemo(() => loadCatalog(), []);
+  const replayCtx = useRef<{
+    cursor: ReplayCursor;
+    checkpoints: { state: GameState; rngState: number; seq: number }[];
+    envelope: ReplayEnvelope;
+  } | null>(null);
   const state: GameState | null = useMemo(() => {
     if (!envelope) return null;
     try {
-      return replay({ ...envelope, commands: envelope.commands.slice(0, step) }, catalog);
+      if (!replayCtx.current || replayCtx.current.envelope !== envelope) {
+        const cursor = replayInit(envelope);
+        replayCtx.current = {
+          envelope,
+          cursor,
+          checkpoints: [{
+            state: cursor.state,
+            rngState: cursor.rng.serialize().state,
+            seq: currentSeq(),
+          }],
+        };
+      }
+      const ctx = replayCtx.current;
+      const ck = ctx.checkpoints;
+      const j = Math.min(step, ck.length - 1);
+      const base = ck[j];
+      // Truncar lo que haya más allá del checkpoint base: re-ejecutar
+      // desde él puede divergir si el RNG ya avanzó (ids/seq).
+      ck.length = j + 1;
+      ctx.cursor.state = base.state;
+      ctx.cursor.rng = DeterministicRng.deserialize({
+        seed: envelope.initialState.seed,
+        state: base.rngState,
+      });
+      setSeq(base.seq);
+      for (let i = j; i < step; i++) {
+        const st = replayStep(ctx.cursor, envelope.commands[i], catalog);
+        ck.push({
+          state: st,
+          rngState: ctx.cursor.rng.serialize().state,
+          seq: currentSeq(),
+        });
+      }
+      return ctx.cursor.state;
     } catch {
       return null;
     }
@@ -70,7 +120,27 @@ export default function ReplayScreen() {
   }, [playing, step, total]);
 
   const players = state ? Object.values(state.players) : [];
-  const lastEvents = (state?.eventLog ?? []).slice(-6);
+  // Últimos eventos traducidos con el mismo mapeador que el historial
+  // de la partida en vivo — el replay enseñaba `SCENARIO_EFFECTS_
+  // APPLIED` en crudo (nombres internos SCREAMING_SNAKE del motor).
+  const lastEventLines = useMemo(() => {
+    const log = state?.eventLog ?? [];
+    const defs = new Map<string, string>();
+    for (const e of log) {
+      const ev = e as { cardInstanceId?: string; cardDefinitionId?: string };
+      if (ev.cardInstanceId && ev.cardDefinitionId) {
+        defs.set(ev.cardInstanceId, ev.cardDefinitionId);
+      }
+    }
+    return log.slice(-6).map((e) => {
+      const h = eventToHistoryEntry(
+        e, state?.turnNumber ?? 0, catalog, t, defs);
+      return h
+        ? `#${e.seq} ${h.actor} · ${[h.action, h.card, h.result]
+            .filter(Boolean).join(' — ')}`
+        : `#${e.seq} ${e.type}`;
+    });
+  }, [state, catalog, t]);
 
   return (
     <View style={{ flex: 1 }}>
@@ -87,7 +157,11 @@ export default function ReplayScreen() {
         {!selectedId ? (
           <View style={styles.section}>
             {savedGames.length === 0 && (
-              <Text style={{ color: colors.textMuted }}>{t('replay.none')}</Text>
+              <EmptyState
+                title={t('replay.none')}
+                description={t('replay.noneHint')}
+                primaryAction={{ label: t('replay.ctaPlay'), onPress: () => router.push('/(play)') }}
+              />
             )}
             {savedGames.map((g) => (
               <Pressable
@@ -174,21 +248,21 @@ export default function ReplayScreen() {
                     {state.battlefield.map((e) => (
                       <Text key={e.instanceId} style={{ color: colors.textMuted, fontSize: fs(fontSize.detail) }}>
                         • {catalog.byId.get(e.definitionId)?.name ?? e.definitionId} — {t('replay.enemyLine', {
-                          wounds: e.wounds, fortitude: e.effectiveFortitude ?? e.baseFortitude,
+                          wounds: e.wounds, fortitude: getEffectiveFortitude(e, state),
                         })}
                       </Text>
                     ))}
                   </View>
                 )}
 
-                {lastEvents.length > 0 && (
+                {lastEventLines.length > 0 && (
                   <View style={{ marginTop: spacing.sm }}>
                     <Text style={{ color: colors.accent, fontWeight: '700', fontSize: fs(fontSize.detail) }}>
                       {t('replay.lastEvents')}
                     </Text>
-                    {lastEvents.map((ev, i) => (
+                    {lastEventLines.map((line, i) => (
                       <Text key={i} style={{ color: colors.textMuted, fontSize: fs(fontSize.micro) }}>
-                        #{ev.seq} {ev.type}
+                        {line}
                       </Text>
                     ))}
                   </View>

@@ -1,7 +1,7 @@
 {
   "$schema": "rules-traceability/v2",
   "description": "Matriz de trazabilidad: cada regla/carta → fuente oficial → módulo del motor → pruebas. Generado por scripts/gen_traceability.py; la sección rules se conserva manualmente.",
-  "generated": "2026-09-25T06:19:52+00:00",
+  "generated": "2026-09-28T19:52:06+00:00",
   "rules": [
     {
       "id": "RULE-INITIAL-HAND-4",
@@ -487,14 +487,15 @@
         "section": "Mazo Explorador",
         "catalogFile": "data/official/abilities/explorer.json"
       },
-      "rule": "DRAW_AND_CHECK",
+      "rule": "DRAW_AND_CHECK, PLAY_IMMEDIATELY",
       "engine": {
         "modules": [
           "resolver.ts",
           "effects/registry.ts"
         ],
         "effectTypes": [
-          "DRAW_AND_CHECK"
+          "DRAW_AND_CHECK",
+          "PLAY_IMMEDIATELY"
         ]
       },
       "tests": [
@@ -735,14 +736,15 @@
         "section": "Mazo Guerrero",
         "catalogFile": "data/official/abilities/warrior.json"
       },
-      "rule": "CONDITIONAL",
+      "rule": "CONDITIONAL, DRAW_CARDS",
       "engine": {
         "modules": [
           "resolver.ts",
           "effects/registry.ts"
         ],
         "effectTypes": [
-          "CONDITIONAL"
+          "CONDITIONAL",
+          "DRAW_CARDS"
         ]
       },
       "tests": [
@@ -1095,13 +1097,15 @@
         "section": "Mazo Pícaro",
         "catalogFile": "data/official/abilities/rogue.json"
       },
-      "rule": "LOSE_CARDS, ON_DEFEAT",
+      "rule": "CONDITIONAL, GAIN_COINS, LOSE_CARDS, ON_DEFEAT",
       "engine": {
         "modules": [
           "resolver.ts",
           "effects/registry.ts"
         ],
         "effectTypes": [
+          "CONDITIONAL",
+          "GAIN_COINS",
           "LOSE_CARDS",
           "ON_DEFEAT"
         ]
@@ -1123,13 +1127,15 @@
         "section": "Mazo Pícaro",
         "catalogFile": "data/official/abilities/rogue.json"
       },
-      "rule": "ON_DEFEAT",
+      "rule": "CONDITIONAL, GAIN_COINS, ON_DEFEAT",
       "engine": {
         "modules": [
           "resolver.ts",
           "effects/registry.ts"
         ],
         "effectTypes": [
+          "CONDITIONAL",
+          "GAIN_COINS",
           "ON_DEFEAT"
         ]
       },
@@ -1314,13 +1320,14 @@
         "section": "Mazo Pícaro",
         "catalogFile": "data/official/abilities/rogue.json"
       },
-      "rule": "PLACE_PERSISTENT",
+      "rule": "DEFEAT_ENEMY, PLACE_PERSISTENT",
       "engine": {
         "modules": [
           "resolver.ts",
           "effects/registry.ts"
         ],
         "effectTypes": [
+          "DEFEAT_ENEMY",
           "PLACE_PERSISTENT"
         ]
       },
@@ -2016,17 +2023,19 @@
         "section": "Señores de la Guerra",
         "catalogFile": "data/official/warlords.json"
       },
-      "rule": "carta con valores impresos",
+      "rule": "LOSE_CARDS",
       "engine": {
         "modules": [
           "resolver.ts",
           "effects/registry.ts"
         ],
-        "effectTypes": []
+        "effectTypes": [
+          "LOSE_CARDS"
+        ]
       },
       "tests": [
         "all-cards-usable.test.ts",
-        "warlords.test.ts"
+        "heroes/heroes.test.ts"
       ],
       "status": "VERIFIED",
       "note": "catálogo validado + efectos soportados + usable en motor"
@@ -2042,18 +2051,20 @@
         "section": "Señores de la Guerra",
         "catalogFile": "data/official/warlords.json"
       },
-      "rule": "carta con valores impresos",
+      "rule": "MODIFY_FORTITUDE",
       "engine": {
         "modules": [
           "resolver.ts",
           "effects/registry.ts"
         ],
-        "effectTypes": []
+        "effectTypes": [
+          "MODIFY_FORTITUDE"
+        ]
       },
       "tests": [
         "all-cards-usable.test.ts",
-        "projection-replay-modifiers.test.ts",
-        "warlords.test.ts"
+        "heroes/heroes.test.ts",
+        "projection-replay-modifiers.test.ts"
       ],
       "status": "VERIFIED",
       "note": "catálogo validado + efectos soportados + usable en motor"
@@ -2069,17 +2080,19 @@
         "section": "Señores de la Guerra",
         "catalogFile": "data/official/warlords.json"
       },
-      "rule": "carta con valores impresos",
+      "rule": "RECOVER_CARDS",
       "engine": {
         "modules": [
           "resolver.ts",
           "effects/registry.ts"
         ],
-        "effectTypes": []
+        "effectTypes": [
+          "RECOVER_CARDS"
+        ]
       },
       "tests": [
         "all-cards-usable.test.ts",
-        "warlords.test.ts"
+        "heroes/heroes.test.ts"
       ],
       "status": "VERIFIED",
       "note": "catálogo validado + efectos soportados + usable en motor"
@@ -2095,14 +2108,15 @@
         "section": "Mercado",
         "catalogFile": "data/official/market.json"
       },
-      "rule": "CONDITIONAL",
+      "rule": "CONDITIONAL, RECOVER_THIS_CARD",
       "engine": {
         "modules": [
           "resolver.ts",
           "effects/registry.ts"
         ],
         "effectTypes": [
-          "CONDITIONAL"
+          "CONDITIONAL",
+          "RECOVER_THIS_CARD"
         ]
       },
       "tests": [
@@ -2347,7 +2361,7 @@
       },
       "tests": [
         "all-cards-usable.test.ts",
-        "hero-abilities.test.ts"
+        "heroes/heroes.test.ts"
       ],
       "status": "VERIFIED",
       "note": "catálogo validado + efectos soportados + usable en motor"
@@ -2429,7 +2443,7 @@
       },
       "tests": [
         "all-cards-usable.test.ts",
-        "hero-abilities.test.ts"
+        "heroes/heroes.test.ts"
       ],
       "status": "VERIFIED",
       "note": "catálogo validado + efectos soportados + usable en motor"
@@ -2509,7 +2523,7 @@
       },
       "tests": [
         "all-cards-usable.test.ts",
-        "hero-abilities.test.ts"
+        "heroes/heroes.test.ts"
       ],
       "status": "VERIFIED",
       "note": "catálogo validado + efectos soportados + usable en motor"
@@ -2535,7 +2549,7 @@
       },
       "tests": [
         "all-cards-usable.test.ts",
-        "hero-abilities.test.ts"
+        "heroes/heroes.test.ts"
       ],
       "status": "VERIFIED",
       "note": "catálogo validado + efectos soportados + usable en motor"
@@ -2551,13 +2565,14 @@
         "section": "Escenarios",
         "catalogFile": "data/official/scenarios.json"
       },
-      "rule": "ON_ENEMY_DEFEATED",
+      "rule": "GAIN_COINS, ON_ENEMY_DEFEATED",
       "engine": {
         "modules": [
           "resolver.ts",
           "effects/registry.ts"
         ],
         "effectTypes": [
+          "GAIN_COINS",
           "ON_ENEMY_DEFEATED"
         ]
       },
@@ -2686,13 +2701,14 @@
         "section": "Escenarios",
         "catalogFile": "data/official/scenarios.json"
       },
-      "rule": "ON_ENEMY_DEFEATED",
+      "rule": "GAIN_COINS, ON_ENEMY_DEFEATED",
       "engine": {
         "modules": [
           "resolver.ts",
           "effects/registry.ts"
         ],
         "effectTypes": [
+          "GAIN_COINS",
           "ON_ENEMY_DEFEATED"
         ]
       },
@@ -2779,7 +2795,7 @@
       },
       "tests": [
         "all-cards-usable.test.ts",
-        "scenarios.test.ts"
+        "scenarios/scenarios.test.ts"
       ],
       "status": "VERIFIED",
       "note": "catálogo validado + efectos soportados + usable en motor"
@@ -2808,7 +2824,7 @@
       },
       "tests": [
         "all-cards-usable.test.ts",
-        "scenarios.test.ts"
+        "scenarios/scenarios.test.ts"
       ],
       "status": "VERIFIED",
       "note": "catálogo validado + efectos soportados + usable en motor"

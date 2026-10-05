@@ -49,6 +49,7 @@ import { loadHistory, computeStats, type GameHistoryEntry } from '../../lib/game
 import { pickTextFile } from '../../lib/pickFile';
 import { saveRoomSession } from '../../lib/roomSession';
 import { toast } from '../../lib/toast';
+import { serverErrorText } from '../../lib/serverErrors';
 import { API_BASE, fetchWithTimeout } from '../../lib/config';
 import { authHeaders } from '../../lib/auth';
 import { spacing, radius, fontSize } from '../../lib/theme';
@@ -151,12 +152,16 @@ export default function PlayScreen() {
       ],
       useScenarios: true,
     };
-    newGame({ ...base, seed: `game-${Date.now()}` });
-    router.push('/(game)');
+    // Si el motor rechaza la config (pool vacío, héroe inexistente,
+    // contenido custom sin hidratar) no navegar — la partida quedaría
+    // colgada en la pantalla de selección.
+    if (newGame({ ...base, seed: `game-${Date.now()}` }).ok) {
+      router.push('/(game)');
+    }
   };
 
   const startSoloGame = () => {
-    newGame({
+    const res = newGame({
       mode: 'SOLO',
       playerCount: 1,
       seed: `solo-${Date.now()}`,
@@ -166,7 +171,7 @@ export default function PlayScreen() {
       useScenarios: true,
       soloSupportHeroIds: ['hero.feldon'],
     });
-    router.push('/(game)');
+    if (res.ok) router.push('/(game)');
   };
 
   const createOnlineRoom = async () => {
@@ -232,7 +237,7 @@ export default function PlayScreen() {
           params: { roomId: data.roomId, playerId: hostId },
         });
       } else {
-        toast.show(data?.error ?? t('play.createRoomError'));
+        toast.show(data?.error ? serverErrorText(data.error, t) : t('play.createRoomError'));
         router.push('/(room)');
       }
     } catch {
@@ -453,7 +458,14 @@ export default function PlayScreen() {
                   <IconAction
                     label={`${t('play.toTrash')} ${game.name}`}
                     icon={<Trash2 size={16} color={colors.danger} />}
-                    onPress={() => deleteSavedGame(game.id)}
+                    onPress={() => {
+                      deleteSavedGame(game.id);
+                      // Deshacer: devuelve la partida de la papelera
+                      // (la escritura va encolada tras el delete).
+                      toast.show(t('play.trashedUndo', { name: game.name }), {
+                        action: { label: t('play.undo'), onPress: () => restoreTrashedGame(game.id) },
+                      });
+                    }}
                     colors={colors}
                   />
                 </View>

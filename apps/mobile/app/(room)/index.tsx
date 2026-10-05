@@ -10,11 +10,11 @@
  */
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView, TextInput, Switch, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ScrollView, Switch, ActivityIndicator } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
-import { useForm, Controller } from 'react-hook-form';
+import { useForm, Controller, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useGameStore } from '../../store/gameStore';
@@ -26,9 +26,13 @@ import { API_BASE, WS_BASE, fetchWithTimeout } from '../../lib/config';
 import { authHeaders } from '../../lib/auth';
 import { loadRoomSession, saveRoomSession, clearRoomSession } from '../../lib/roomSession';
 import { NtDialog } from '../../components/ui/NtDialog';
+import { NtButton } from '../../components/ui/NtButton';
+import { NtInput } from '../../components/ui/NtInput';
+import { AppNav, useNavSidebarWidth } from '../../components/AppNav';
 import { useColors, useFs } from '../../lib/useTheme';
-import { fontSize } from '../../lib/theme';
+import { fontSize, touchTarget, type Colors } from '../../lib/theme';
 import { checkCompatibility } from '../../lib/compat';
+import { serverErrorText } from '../../lib/serverErrors';
 import { useCustomContent, customDecks } from '../../lib/customContent';
 import { deckToConfigEntry } from '@nt4h/catalog';
 
@@ -47,6 +51,8 @@ interface PlayerInfo {
   deckId?: string;
   /** Mazo del Taller (customDeckId): si existe, sustituye a deckId. */
   customDeckId?: string;
+  /** Segunda clase en salas MULTICLASS (ej. "warrior.default") */
+  secondDeckId?: string;
   heroFace?: string;
   /** Preparado para iniciar (invitados). Ausente en backends antiguos */
   ready?: boolean;
@@ -76,6 +82,8 @@ export default function RoomScreen() {
   const router = useRouter();
   const colors = useColors();
   const fs = useFs();
+  const styles = createStyles(colors, fs);
+  const navWidth = useNavSidebarWidth();
   const { t } = useTranslation();
   // El token NUNCA viaja por URL (historial, logs, enlaces compartidos):
   // llega por el store o se restaura desde SecureStore (saveRoomSession)
@@ -88,13 +96,20 @@ export default function RoomScreen() {
   const [localRoomId, setLocalRoomId] = useState(roomId ?? '');
   const [room, setRoom] = useState<RoomInfo | null>(null);
   const [playerName, setPlayerName] = useState(t('lobby.player'));
-  // D431: si venimos de crear la sala, ya somos miembros (host) con token
-  const [playerId] = useState(params.playerId || `p-${Date.now()}`);
-  const isCreator = Boolean(useGameStore.getState().online.playerToken);
+  // D431: si venimos de crear la sala, ya somos miembros (host) con token.
+  // playerId es settable: la sesión restaurada (SecureStore) lo fija tras
+  // una recarga — si no, cada request iría con un p-… nuevo y la auth
+  // del token (ligada al playerId original) fallaría en todo.
+  const [playerId, setPlayerId] = useState(params.playerId || `p-${Date.now()}`);
   const [error, setError] = useState('');
   const [showChat, setShowChat] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatDraft, setChatDraft] = useState('');
+  // Clase del mazo ("explorer.default" → etiqueta de clase traducida).
+  const classLabel = (deckId?: string) => {
+    const cls = deckId?.split('.')[0]?.toUpperCase();
+    return cls ? t(`create.classes.${cls}`) : '';
+  };
   // Feedback visible al copiar el código (UI-060)
   const [copied, setCopied] = useState(false);
   const [socket, setSocket] = useState<WebSocket | null>(null);
@@ -106,6 +121,10 @@ export default function RoomScreen() {
   const [joinHeroId, setJoinHeroId] = useState('');
   const [joinDeckClass, setJoinDeckClass] = useState('EXPLORER');
   const [joinHeroFace, setJoinHeroFace] = useState<'FEMALE' | 'MALE'>('FEMALE');
+  // Multiclase: segunda clase del invitado. Se muestra solo cuando la
+  // sala a la que apunta el código es MULTICLASS (preview público).
+  const [joinSecondDeckClass, setJoinSecondDeckClass] = useState('');
+  const [joinPreviewMode, setJoinPreviewMode] = useState<string | null>(null);
   // Mazo del Taller (opcional): sustituye al mazo de clase. Solo se ofrecen
   // mazos cuyas cartas resuelven en el catálogo de la sala (oficial + sets
   // del host) — si no, el runner rechazaría la baraja al iniciar.
@@ -119,10 +138,14 @@ export default function RoomScreen() {
       d.cardEntries.every((e) => knownIds.has(e.cardDefinitionId)));
   }, [catalog, room?.config?.customSets]);
   // D431: token emitido por el backend al unirse — necesario para
-  // autenticar el WebSocket y las acciones (start, estado proyectado)
-  const [playerToken, setPlayerToken] = useState(
-    useGameStore.getState().online.playerToken ?? ''
-  );
+  // autenticar el WebSocket y las acciones (start, estado proyectado).
+  // Solo se hereda del store si corresponde a ESTA sala: un token de otra
+  // sala haría que el auto-load de creador cargara la sala ajena con
+  // credenciales inválidas.
+  const [playerToken, setPlayerToken] = useState(() => {
+    const online = useGameStore.getState().online;
+    return online.roomId === (roomId ?? '') ? (online.playerToken ?? '') : '';
+  });
   const [socketOpen, setSocketOpen] = useState(false);
   // Latencia RTT del socket de lobby (ping cada 15s → pong)
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
@@ -230,6 +253,28 @@ export default function RoomScreen() {
     resolver: zodResolver(joinSchema),
     defaultValues: { roomCode: roomId ?? '', playerName: profileName || t('lobby.player') },
   });
+  // Preview público de la sala al escribir el código (6 chars): solo se
+  // usa para saber si el modo es MULTICLASS y ofrecer la segunda clase —
+  // sin esto el invitado no podía declararla y el roster arrancaba sin
+  // su segunda baraja (auditoría).
+  const joinCodeValue = useWatch({ control, name: 'roomCode' });
+  useEffect(() => {
+    const code = (joinCodeValue ?? '').trim().toUpperCase();
+    if (code.length !== 6) {
+      setJoinPreviewMode(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void fetchWithTimeout(`${API_BASE}/rooms/${encodeURIComponent(code)}/`)
+        .then(async (res) => {
+          const data = await res.json().catch(() => ({}));
+          if (!cancelled) setJoinPreviewMode(res.ok ? (data.mode ?? null) : null);
+        })
+        .catch(() => { if (!cancelled) setJoinPreviewMode(null); });
+    }, 350);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [joinCodeValue]);
 
   // TanStack Query: estado de la sala con caché. El polling cada 5s es SOLO
   // fallback: cuando el WebSocket está abierto las actualizaciones llegan por
@@ -260,11 +305,15 @@ export default function RoomScreen() {
   // P0: el WS se autentica con un ticket efímero (un solo uso, ~60s),
   // no con el token de larga vida — evita que el token quede en URLs,
   // logs de proxy, historiales o capturas de diagnóstico.
-  const connect = useCallback(async (token: string) => {
+  const connect = useCallback(async (token: string, rid?: string) => {
+    // rid explícito: tras join, setLocalRoomId aún no se ha aplicado y
+    // la closure vería '' (ws-ticket a /api/rooms//ws-ticket/ → 404).
+    const room = rid ?? localRoomId;
+    if (!room) return;
     lobbySocketRef.current?.close();
     let ticket: string;
     try {
-      const res = await fetchWithTimeout(`${API_BASE}/rooms/${localRoomId}/ws-ticket/`, {
+      const res = await fetchWithTimeout(`${API_BASE}/rooms/${room}/ws-ticket/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ playerId, playerToken: token }),
@@ -275,7 +324,7 @@ export default function RoomScreen() {
       setError(t('lobby.errWsAuth'));
       return;
     }
-    const ws = new WebSocket(`${WS_BASE}/game/${localRoomId}/?ticket=${encodeURIComponent(ticket)}`);
+    const ws = new WebSocket(`${WS_BASE}/game/${room}/?ticket=${encodeURIComponent(ticket)}`);
     lobbySocketRef.current = ws;
     lastMsgAtRef.current = Date.now();
     ws.onopen = () => {
@@ -286,7 +335,7 @@ export default function RoomScreen() {
     ws.onclose = () => setSocketOpen(false);
     ws.onmessage = (event) => {
       lastMsgAtRef.current = Date.now();
-      let msg: { type?: string; sender?: string; text?: string; timestamp?: number; command?: string; playerId?: string; ready?: boolean; roomRevision?: number };
+      let msg: { type?: string; sender?: string; text?: string; timestamp?: number; command?: string; playerId?: string; ready?: boolean; roomRevision?: number; revision?: number };
       try {
         msg = JSON.parse(event.data);
       } catch {
@@ -301,15 +350,18 @@ export default function RoomScreen() {
         return;
       }
       // Anti-stale: descartar broadcasts con revisión más antigua que la
-      // última vista completa aplicada (p. ej. un kick WS vs un poll REST)
-      if (typeof msg.roomRevision === 'number') {
-        if (msg.roomRevision <= lastRevisionRef.current) return;
-        lastRevisionRef.current = msg.roomRevision;
+      // última vista completa aplicada (p. ej. un kick WS vs un poll REST).
+      // Los mensajes de lobby usan roomRevision; los de partida (consumer)
+      // usan revision — mismo contador de la sesión en ambos casos.
+      const msgRevision = msg.roomRevision ?? msg.revision;
+      if (typeof msgRevision === 'number') {
+        if (msgRevision <= lastRevisionRef.current) return;
+        lastRevisionRef.current = msgRevision;
       }
       if (msg.type === 'chat.message') {
         // Eco del servidor: si lleva un clientMessageId nuestro ya está en
         // pantalla (envío optimista) — no duplicar
-        const m = msg as { clientMessageId?: string; messageId?: string; seq?: number };
+        const m = msg as { clientMessageId?: string; messageId?: string; seq?: number; meta?: ChatMessage['meta'] };
         if (m.clientMessageId && sentCmidsRef.current.has(m.clientMessageId)) return;
         const chat: ChatMessage = {
           id: m.messageId ?? `chat-${Date.now()}`,
@@ -317,8 +369,19 @@ export default function RoomScreen() {
           text: msg.text ?? '',
           type: 'USER',
           timestamp: msg.timestamp ?? Date.now(),
+          ...(m.meta ? { meta: m.meta } : {}),
         };
         setChatMessages((prev) => [...prev, chat]);
+      } else if (msg.type === 'room.player_connected' || msg.type === 'room.player_disconnected') {
+        // Broadcast de presencia del consumer: sin esto el badge
+        // Conectado/Desconectado solo se actualizaba por polling.
+        const connected = msg.type === 'room.player_connected';
+        setRoom((prev) => prev ? {
+          ...prev,
+          players: prev.players.map((p) =>
+            p.playerId === msg.playerId ? { ...p, connected } : p
+          ),
+        } : prev);
       } else if (msg.type === 'room.player_ready') {
         // Broadcast del backend: actualizar el flag sin esperar al polling
         setRoom((prev) => prev ? {
@@ -327,17 +390,6 @@ export default function RoomScreen() {
             p.playerId === msg.playerId ? { ...p, ready: msg.ready === true } : p
           ),
         } : prev);
-      } else if (msg.type === 'game.command') {
-        setChatMessages((prev) => [
-          ...prev,
-          {
-            id: `cmd-${Date.now()}`,
-            sender: t('lobby.system'),
-            text: t('lobby.sysCommand', { command: msg.command ?? '', playerId: msg.playerId ?? '' }),
-            type: 'SYSTEM',
-            timestamp: Date.now(),
-          },
-        ]);
       } else if (msg.type === 'room.player_kicked') {
         // D440: expulsión — fuera del roster y veto persistente (kicked_ids)
         const kickedName = roomRef.current?.players.find((p) => p.playerId === msg.playerId)?.name ?? msg.playerId ?? t('lobby.player');
@@ -381,6 +433,13 @@ export default function RoomScreen() {
         if (msg.playerId === playerId) {
           toast.show(t('lobby.youAreHost'));
         }
+      } else if (msg.type === 'room.player_unkicked') {
+        // El host levantó el veto — el polling está desactivado con el
+        // socket abierto, así que hay que quitar el id en caliente.
+        setRoom((prev) => prev ? {
+          ...prev,
+          kickedIds: (prev.kickedIds ?? []).filter((k) => k !== msg.playerId),
+        } : prev);
       } else if (msg.type === 'room.closed') {
         // El anfitrión cerró la sala — desmontar y limpiar sesión
         setRoom(null);
@@ -431,15 +490,19 @@ export default function RoomScreen() {
       const saved = await loadRoomSession();
       if (saved && saved.roomId === localRoomId) {
         setPlayerToken(saved.playerToken);
+        // El token está ligado a este playerId en el backend — sin esto,
+        // ws-ticket/ready/leave/start irían firmados con el p-… aleatorio.
+        setPlayerId(saved.playerId);
         setConnectionMode('online', saved.roomId, saved.playerId, saved.playerToken);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [localRoomId]);
 
-  // D431: el creador ya es miembro (host) — cargar la sala y conectar sin join
+  // D431: el creador (o un miembro con sesión restaurada) ya tiene token —
+  // cargar la sala y conectar sin pasar por join.
   useEffect(() => {
-    if (!isCreator || !localRoomId || !playerToken) return;
+    if (!localRoomId || !playerToken) return;
     void (async () => {
       try {
         const res = await fetchWithTimeout(`${API_BASE}/rooms/${localRoomId}/`);
@@ -485,6 +548,14 @@ export default function RoomScreen() {
           heroId: joinHeroId,
           heroFace: joinHeroFace,
           deckId: `${joinDeckClass.toLowerCase()}.default`,
+          // Multiclase: la segunda clase es obligatoria en el roster —
+          // distinta de la primera por regla (create.validation.secondClassDistinct).
+          ...(joinPreviewMode === 'MULTICLASS' ? (() => {
+            const cls = joinSecondDeckClass && joinSecondDeckClass !== joinDeckClass
+              ? joinSecondDeckClass
+              : (['EXPLORER', 'WARRIOR', 'MAGE', 'ROGUE'] as const).find((c) => c !== joinDeckClass);
+            return cls ? { secondDeckId: `${cls.toLowerCase()}.default` } : {};
+          })() : {}),
           // Mazo del Taller: el snapshot viaja en el join y el backend lo
           // registra en session.config.customDecks para el runner.
           ...(joinCustomDeckId ? (() => {
@@ -504,9 +575,9 @@ export default function RoomScreen() {
       const token = data.authToken ?? '';
       setPlayerToken(token);
       void saveRoomSession({ roomId: code, playerId, playerToken: token });
-      void connect(token);
+      void connect(token, code);
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('lobby.errGeneric'));
+      setError(e instanceof Error ? serverErrorText(e.message, t) : t('lobby.errGeneric'));
     } finally {
       setJoining(false);
     }
@@ -542,7 +613,7 @@ export default function RoomScreen() {
         router.push('/(game)');
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('lobby.errGeneric'));
+      setError(e instanceof Error ? serverErrorText(e.message, t) : t('lobby.errGeneric'));
     } finally {
       setStarting(false);
     }
@@ -566,7 +637,7 @@ export default function RoomScreen() {
       if (!res.ok) throw new Error(data.error || t('lobby.errKick'));
       applyRoomState(data.room);
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('lobby.errGeneric'));
+      setError(e instanceof Error ? serverErrorText(e.message, t) : t('lobby.errGeneric'));
     } finally {
       setKicking(false);
     }
@@ -585,7 +656,7 @@ export default function RoomScreen() {
       applyRoomState(data.room);
       toast.show(t('room.unkicked'));
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('lobby.errGeneric'));
+      setError(e instanceof Error ? serverErrorText(e.message, t) : t('lobby.errGeneric'));
     }
   };
 
@@ -605,7 +676,7 @@ export default function RoomScreen() {
       applyRoomState(data.room);
       toast.show(t('room.hostTransferred'));
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('lobby.errGeneric'));
+      setError(e instanceof Error ? serverErrorText(e.message, t) : t('lobby.errGeneric'));
     } finally {
       setTransferring(false);
     }
@@ -627,9 +698,12 @@ export default function RoomScreen() {
         throw new Error(data.error || t('lobby.errClose'));
       }
       void clearRoomSession();
+      // Limpiar la identidad online del store: un token residual haría que
+      // otra sala la tomara por membresía existente (auto-load de creador).
+      useGameStore.getState().disconnectOnline();
       router.push('/');
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('lobby.errGeneric'));
+      setError(e instanceof Error ? serverErrorText(e.message, t) : t('lobby.errGeneric'));
     } finally {
       setClosing(false);
     }
@@ -649,10 +723,12 @@ export default function RoomScreen() {
         throw new Error(data.error || t('lobby.errGeneric'));
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : t('lobby.errGeneric'));
+      setError(e instanceof Error ? serverErrorText(e.message, t) : t('lobby.errGeneric'));
       return;
     }
     void clearRoomSession();
+    // Limpiar la identidad online del store (token ligado a esta sala).
+    useGameStore.getState().disconnectOnline();
     router.push('/');
   };
 
@@ -724,15 +800,21 @@ export default function RoomScreen() {
     if (room) checkCatalogCompat(room);
   };
 
-  const sendChat = (text: string) => {
+  const sendChat = (text: string, meta?: { kind: 'ping'; target?: string }) => {
     const trimmed = text.trim();
     if (!trimmed) return;
-    if (socket && socket.readyState === WebSocket.OPEN) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      // Socket caído (polling): no vaciar el borrador — el mensaje se
+      // perdería en silencio sin feedback.
+      setError(t('lobby.errChatOffline'));
+      return;
+    }
+    {
       // El servidor asigna sender/tipo/seq/timestamp; el cliente solo envía
-      // texto + clientMessageId (idempotencia ante reintentos)
+      // texto + clientMessageId (idempotencia ante reintentos) + meta ping
       const cmid = `cmid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       sentCmidsRef.current.add(cmid);
-      socket.send(JSON.stringify({ type: 'chat.message', clientMessageId: cmid, text: trimmed }));
+      socket.send(JSON.stringify({ type: 'chat.message', clientMessageId: cmid, text: trimmed, ...(meta ? { meta } : {}) }));
       // Eco optimista: se muestra ya; el broadcast con este cmid se ignora
       setChatMessages((prev) => [
         ...prev,
@@ -742,6 +824,7 @@ export default function RoomScreen() {
           text: trimmed,
           type: 'USER',
           timestamp: Date.now(),
+          ...(meta ? { meta } : {}),
         },
       ]);
     }
@@ -773,7 +856,7 @@ export default function RoomScreen() {
         ...prev,
         players: prev.players.map((p) => p.playerId === playerId ? { ...p, ready: !next } : p),
       } : prev);
-      setError(e instanceof Error ? e.message : t('lobby.errGeneric'));
+      setError(e instanceof Error ? serverErrorText(e.message, t) : t('lobby.errGeneric'));
     } finally {
       setReadyPending(false);
     }
@@ -791,39 +874,43 @@ export default function RoomScreen() {
 
   if (!room) {
     return (
-      <ScrollView style={styles.container}>
+      <View style={styles.screen}>
+        <ScrollView
+          style={styles.container}
+          contentContainerStyle={{ marginLeft: navWidth, paddingBottom: 80 }}
+        >
         <Text style={styles.title}>{t('room.joinTitle')}</Text>
         <Controller
           control={control}
           name="roomCode"
           render={({ field: { value, onChange } }) => (
-            <TextInput
-              style={[styles.input, errors.roomCode && styles.inputError]}
-              value={value}
-              onChangeText={onChange}
-              placeholder={t('room.codePlaceholder')}
-              placeholderTextColor="#777"
-              autoCapitalize="characters"
-              accessibilityLabel={t('room.codePlaceholder')}
-            />
+            <View style={styles.fieldWrap}>
+              <NtInput
+                label={t('room.codePlaceholder')}
+                value={value}
+                onChangeText={onChange}
+                placeholder={t('room.codePlaceholder')}
+                error={errors.roomCode?.message}
+                autoCapitalize="characters"
+              />
+            </View>
           )}
         />
-        {errors.roomCode && <Text style={styles.error}>{errors.roomCode.message}</Text>}
         <Controller
           control={control}
           name="playerName"
           render={({ field: { value, onChange } }) => (
-            <TextInput
-              style={[styles.input, errors.playerName && styles.inputError]}
-              value={value}
-              onChangeText={onChange}
-              placeholder={t('lobby.namePlaceholder')}
-              placeholderTextColor="#777"
-              accessibilityLabel={t('room.yourName')}
-            />
+            <View style={styles.fieldWrap}>
+              <NtInput
+                label={t('room.yourName')}
+                value={value}
+                onChangeText={onChange}
+                placeholder={t('lobby.namePlaceholder')}
+                error={errors.playerName?.message}
+              />
+            </View>
           )}
         />
-        {errors.playerName && <Text style={styles.error}>{errors.playerName.message}</Text>}
         {/* Héroe + clase + cara del invitado: el roster del motor se
             construye con la elección de cada miembro al iniciar */}
         <Text style={[styles.sectionTitle, { color: colors.info, fontSize: fs(fontSize.body) }]}>
@@ -860,6 +947,29 @@ export default function RoomScreen() {
             </Pressable>
           ))}
         </View>
+        {joinPreviewMode === 'MULTICLASS' && (
+          <>
+            <Text style={[styles.sectionTitle, { color: colors.info, fontSize: fs(fontSize.body) }]}>
+              {t('lobby.pickSecondClass')}
+            </Text>
+            <View style={styles.chipRow}>
+              {(['EXPLORER', 'WARRIOR', 'MAGE', 'ROGUE'] as const)
+                .filter((cls) => cls !== joinDeckClass)
+                .map((cls) => (
+                  <Pressable
+                    key={cls}
+                    style={[styles.chip, joinSecondDeckClass === cls && styles.chipSelected]}
+                    onPress={() => setJoinSecondDeckClass(cls)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: joinSecondDeckClass === cls }}
+                    accessibilityLabel={t(`create.classes.${cls}`)}
+                  >
+                    <Text style={styles.chipText}>{t(`create.classes.${cls}`)}</Text>
+                  </Pressable>
+                ))}
+            </View>
+          </>
+        )}
         {eligibleCustomDecks.length > 0 && (
           <>
             <Text style={[styles.sectionTitle, { color: colors.info, fontSize: fs(fontSize.body) }]}>
@@ -890,6 +1000,9 @@ export default function RoomScreen() {
             </View>
           </>
         )}
+        <Text style={[styles.sectionTitle, { color: colors.info, fontSize: fs(fontSize.body) }]}>
+          {t('create.heroes.face')}
+        </Text>
         <View style={styles.chipRow}>
           {(['FEMALE', 'MALE'] as const).map((face) => (
             <Pressable
@@ -915,23 +1028,34 @@ export default function RoomScreen() {
           accessibilityState={{ disabled: joining }}
         >
           {joining
-            ? <ActivityIndicator color="#fff" />
+            ? <ActivityIndicator color={colors.text} />
             : <Text style={styles.buttonText}>{t('room.join')}</Text>}
         </Pressable>
-        <Pressable style={[styles.button, styles.secondaryButton]} onPress={() => router.push('/')} accessibilityRole="button">
-          <Text style={styles.buttonText}>{t('room.back')}</Text>
-        </Pressable>
-      </ScrollView>
+        <View style={styles.btnWrap}>
+          <NtButton label={t('room.back')} variant="secondary" onPress={() => router.push('/')} />
+        </View>
+        </ScrollView>
+        <AppNav />
+      </View>
     );
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.roomContent}>
+    <View style={styles.screen}>
+      <ScrollView style={styles.container} contentContainerStyle={[styles.roomContent, { marginLeft: navWidth }]}>
       <Text style={[styles.title, { color: colors.accent, fontSize: fs(24) }]}>{t('room.title', { id: room.roomId })}</Text>
       <Text style={[styles.meta, { color: colors.textMuted, fontSize: fs(fontSize.detail) }]}>
-        {t('room.meta', { mode: room.mode, status: room.status })}
+        {/* mode/status llegan como enums crudos (STANDARD, WAITING…);
+            las claves room.mode.X / room.status.X los traducen,
+            con fallback al valor original */}
+        {t('room.meta', {
+          mode: t(`room.mode.${room.mode}`) === `room.mode.${room.mode}`
+            ? room.mode : t(`room.mode.${room.mode}`),
+          status: t(`room.status.${room.status}`) === `room.status.${room.status}`
+            ? room.status : t(`room.status.${room.status}`),
+        })}
       </Text>
-      <Text style={[styles.meta, { color: socketOpen ? colors.textMuted : colors.warning ?? '#f39c12', fontSize: fs(fontSize.micro) }]}>
+      <Text style={[styles.meta, { color: socketOpen ? colors.textMuted : colors.warning, fontSize: fs(fontSize.micro) }]}>
         {socketOpen
           ? t('room.live', { lat: latencyMs != null ? ` · ${latencyMs} ms` : '' })
           : t('room.polling')}
@@ -946,24 +1070,24 @@ export default function RoomScreen() {
         </View>
       ) : null}
 
+      <View style={styles.btnWrap}>
+        <NtButton
+          label={copied ? t('room.copied') : t('room.copyCode')}
+          variant="secondary"
+          onPress={copyRoomCode}
+          accessibilityLabel={t('room.copyCode')}
+        />
+      </View>
       <Pressable
-        style={[styles.copyButton, copied && styles.copyButtonDone]}
-        onPress={copyRoomCode}
+        onPress={copyRoomLink}
         accessibilityRole="button"
-        accessibilityLabel={t('room.copyCode')}
+        accessibilityLabel={t('room.copyLink')}
+        style={styles.copyLinkBtn}
       >
-        <Text style={styles.buttonText}>{copied ? t('room.copied') : t('room.copyCode')}</Text>
+        <Text style={[styles.copyLinkText, { fontSize: fs(fontSize.detail) }]}>
+          {t('room.copyLink')}
+        </Text>
       </Pressable>
-              <Pressable
-                onPress={copyRoomLink}
-                accessibilityRole="button"
-                accessibilityLabel={t('room.copyLink')}
-                style={styles.copyLinkBtn}
-              >
-                <Text style={[styles.copyLinkText, { fontSize: fs(fontSize.detail) }]}>
-                  {t('room.copyLink')}
-                </Text>
-              </Pressable>
 
       <Text style={[styles.sectionTitle, { color: colors.info, fontSize: fs(fontSize.body) }]}>
         {t('room.players', { n: room.players.length, max: room.maxPlayers })}
@@ -976,6 +1100,13 @@ export default function RoomScreen() {
               {p.isHost ? t('lobby.hostSuffix') : ''}
               {p.playerId === playerId ? t('lobby.youSuffix') : ''}
               {p.heroId ? ` — ${catalog?.byId.get(p.heroId)?.name ?? p.heroId}` : ''}
+              {p.customDeckId
+                ? ` · ${t('lobby.workshopDeck')}`
+                : p.deckId
+                  ? ` · ${classLabel(p.deckId)}`
+                  : ''}
+              {p.secondDeckId ? ` + ${classLabel(p.secondDeckId)}` : ''}
+              {p.heroFace ? ` ${p.heroFace === 'FEMALE' ? '♀' : '♂'}` : ''}
             </Text>
             <View style={styles.playerStatusCol}>
               <Text style={[styles.playerStatus, { fontSize: fs(fontSize.detail) }, p.connected ? styles.connected : styles.disconnected]}>
@@ -1006,7 +1137,7 @@ export default function RoomScreen() {
       {/* Expulsados: el host puede levantar el veto (expulsión accidental) */}
       {isHost && room.status === 'WAITING' && (room.kickedIds?.length ?? 0) > 0 && (
         <View style={styles.playerList}>
-          <Text style={[styles.sectionTitle, { color: colors.warning ?? '#f39c12', fontSize: fs(fontSize.detail) }]}>
+          <Text style={[styles.sectionTitle, { color: colors.warning, fontSize: fs(fontSize.detail) }]}>
             {t('room.kickedTitle')}
           </Text>
           {room.kickedIds!.map((kid) => (
@@ -1040,14 +1171,14 @@ export default function RoomScreen() {
               {/* El snapshot de sets viaja en la config de la sala: instalar
                   directamente desde el anfitrión sin exportar/importar JSON */}
               {(room.config?.customSets?.length ?? 0) > 0 && (
-                <Pressable
-                  style={[styles.button, styles.secondaryButton]}
-                  onPress={installHostSets}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('room.installHostSets')}
-                >
-                  <Text style={styles.buttonText}>{t('room.installHostSets')}</Text>
-                </Pressable>
+                <View style={styles.btnWrap}>
+                  <NtButton
+                    label={t('room.installHostSets')}
+                    variant="secondary"
+                    onPress={installHostSets}
+                    accessibilityLabel={t('room.installHostSets')}
+                  />
+                </View>
               )}
             </View>
           )}
@@ -1068,15 +1199,15 @@ export default function RoomScreen() {
           )}
           {/* Abandonar limpio: /leave/ quita al invitado del roster */}
           {!isHost && me && (
-            <Pressable
-              style={[styles.button, styles.secondaryButton, { marginTop: 8 }]}
-              onPress={() => void leaveRoom()}
-              accessibilityRole="button"
-              accessibilityLabel={t('room.leaveRoom')}
-              accessibilityHint={t('room.leaveRoomA11y')}
-            >
-              <Text style={styles.buttonText}>{t('room.leaveRoom')}</Text>
-            </Pressable>
+            <View style={styles.btnWrap}>
+              <NtButton
+                label={t('room.leaveRoom')}
+                variant="secondary"
+                onPress={() => void leaveRoom()}
+                accessibilityLabel={t('room.leaveRoom')}
+                accessibilityHint={t('room.leaveRoomA11y')}
+              />
+            </View>
           )}
           {isHost ? (
             <>
@@ -1090,7 +1221,7 @@ export default function RoomScreen() {
                 accessibilityHint={notReadyCount > 0 ? t('lobby.notReadyHint', { n: notReadyCount }) : undefined}
               >
                 {starting
-                  ? <ActivityIndicator color="#1a1a2e" />
+                  ? <ActivityIndicator color={colors.textOnAccent} />
                   : <Text style={[styles.buttonText, styles.startButtonText]}>{t('room.startGame')}</Text>}
               </Pressable>
               {notReadyCount > 0 && (
@@ -1099,15 +1230,15 @@ export default function RoomScreen() {
                 </Text>
               )}
               {/* P2: el host puede cerrar la sala para todos */}
-              <Pressable
-                style={[styles.button, styles.secondaryButton, { marginTop: 8 }]}
-                onPress={() => setShowCloseConfirm(true)}
-                accessibilityRole="button"
-                accessibilityLabel={t('room.closeRoom')}
-                accessibilityHint={t('lobby.closeRoomHint')}
-              >
-                <Text style={styles.buttonText}>{t('room.closeRoom')}</Text>
-              </Pressable>
+              <View style={styles.btnWrap}>
+                <NtButton
+                  label={t('room.closeRoom')}
+                  variant="secondary"
+                  onPress={() => setShowCloseConfirm(true)}
+                  accessibilityLabel={t('room.closeRoom')}
+                  accessibilityHint={t('lobby.closeRoomHint')}
+                />
+              </View>
             </>
           ) : (
             /* Para invitados, estado de espera en vez de botón muerto (UI-063) */
@@ -1123,16 +1254,14 @@ export default function RoomScreen() {
 
       {/* Partida en curso: reingreso del miembro o espectador */}
       {room.status === 'PLAYING' && (
-        <Pressable
-          style={[styles.button, me ? styles.startButton : styles.secondaryButton]}
-          onPress={() => void (me ? enterGame() : spectate())}
-          accessibilityRole="button"
-          accessibilityLabel={me ? t('room.enterGame') : t('room.spectate')}
-        >
-          <Text style={styles.buttonText}>
-            {me ? t('room.enterGame') : t('room.spectate')}
-          </Text>
-        </Pressable>
+        <View style={styles.btnWrap}>
+          <NtButton
+            label={me ? t('room.enterGame') : t('room.spectate')}
+            variant={me ? 'primary' : 'secondary'}
+            onPress={() => void (me ? enterGame() : spectate())}
+            accessibilityLabel={me ? t('room.enterGame') : t('room.spectate')}
+          />
+        </View>
       )}
 
       <View style={styles.chatToggleRow}>
@@ -1157,13 +1286,9 @@ export default function RoomScreen() {
         />
       )}
 
-      <Pressable
-        style={[styles.button, styles.secondaryButton]}
-        onPress={() => router.push('/')}
-        accessibilityRole="button"
-      >
-        <Text style={styles.buttonText}>{t('room.back')}</Text>
-      </Pressable>
+      <View style={styles.btnWrap}>
+        <NtButton label={t('room.back')} variant="secondary" onPress={() => router.push('/')} />
+      </View>
 
       {/* Menú de moderación del host: transferir o expulsar (ambas con
           confirmación implícita en el diálogo) */}
@@ -1210,11 +1335,16 @@ export default function RoomScreen() {
           },
         ]}
       />
-    </ScrollView>
+      </ScrollView>
+      <AppNav />
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
+  screen: {
+    flex: 1,
+  },
   container: {
     flex: 1,
     padding: 16,
@@ -1223,73 +1353,57 @@ const styles = StyleSheet.create({
     maxWidth: 560,
     width: '100%',
     alignSelf: 'center',
+    paddingBottom: 80, // barra inferior de AppNav en móvil
   },
   title: {
-    color: '#f1c40f',
-    fontSize: 24,
+    color: c.accent,
+    fontSize: fs(24),
     fontWeight: 'bold',
     marginBottom: 8,
   },
   meta: {
-    color: '#7f8c8d',
-    fontSize: 12,
+    color: c.textFaint,
+    fontSize: fs(12),
     marginBottom: 12,
   },
-  input: {
-    backgroundColor: '#2c3e50',
-    color: '#ecf0f1',
-    padding: 10,
-    borderRadius: 6,
+  fieldWrap: {
     marginBottom: 12,
   },
-  inputError: {
-    borderWidth: 1,
-    borderColor: '#e74c3c',
-    marginBottom: 4,
+  btnWrap: {
+    marginBottom: 8,
+    marginTop: 4,
   },
   button: {
-    backgroundColor: '#27ae60',
+    backgroundColor: c.success,
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
     marginBottom: 8,
-    minHeight: 44,
+    minHeight: touchTarget,
     justifyContent: 'center',
   },
   buttonDisabled: {
-    opacity: 0.6,
-  },
-  secondaryButton: {
-    backgroundColor: '#555',
+    opacity: 0.45,
   },
   buttonText: {
-    color: '#fff',
-    fontSize: 14,
+    color: c.text,
+    fontSize: fs(14),
     fontWeight: 'bold',
   },
   error: {
-    color: '#e74c3c',
+    color: c.danger,
+    fontSize: fs(13),
     marginBottom: 8,
   },
-  copyButtonDone: {
-    backgroundColor: '#27ae60',
-  },
-  copyButton: {
-    backgroundColor: '#2980b9',
-    padding: 10,
-    borderRadius: 6,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
   sectionTitle: {
-    color: '#3498db',
-    fontSize: 14,
+    color: c.info,
+    fontSize: fs(14),
     fontWeight: 'bold',
     marginTop: 12,
     marginBottom: 8,
   },
   heroPickList: {
-    maxHeight: 48,
+    maxHeight: 56,
     marginBottom: 8,
   },
   chipRow: {
@@ -1298,21 +1412,21 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   chip: {
-    backgroundColor: '#2c3e50',
+    backgroundColor: c.surface,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 16,
     marginRight: 8,
     marginBottom: 6,
-    minHeight: 36,
+    minHeight: touchTarget,
     justifyContent: 'center',
   },
   chipSelected: {
-    backgroundColor: '#27ae60',
+    backgroundColor: c.success,
   },
   chipText: {
-    color: '#ecf0f1',
-    fontSize: 12,
+    color: c.text,
+    fontSize: fs(12),
   },
   playerList: {
     maxHeight: 200,
@@ -1320,23 +1434,23 @@ const styles = StyleSheet.create({
   playerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    backgroundColor: '#1a1a2e',
+    backgroundColor: c.surface,
     padding: 10,
     borderRadius: 6,
     marginBottom: 6,
   },
   playerName: {
-    color: '#ecf0f1',
-    fontSize: 13,
+    color: c.text,
+    fontSize: fs(13),
   },
   playerStatus: {
-    fontSize: 12,
+    fontSize: fs(12),
   },
   connected: {
-    color: '#27ae60',
+    color: c.success,
   },
   pending: {
-    color: '#f39c12',
+    color: c.warning,
   },
   playerStatusCol: {
     alignItems: 'flex-end',
@@ -1348,19 +1462,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#3B82F6',
+    borderColor: c.info,
     alignSelf: 'center',
+    minHeight: touchTarget,
+    justifyContent: 'center',
   },
-  copyLinkText: { color: '#3B82F6', fontWeight: '600' },
+  copyLinkText: { color: c.info, fontWeight: '600' },
   kickButton: {
     paddingHorizontal: 10,
-    minWidth: 40,
-    minHeight: 40,
+    minWidth: touchTarget,
+    minHeight: touchTarget,
     justifyContent: 'center',
     alignItems: 'center',
   },
   readyButton: {
-    backgroundColor: '#2980b9',
+    backgroundColor: c.info,
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
@@ -1369,17 +1485,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   readyButtonActive: {
-    backgroundColor: '#27ae60',
+    backgroundColor: c.success,
   },
   waitingHint: {
     textAlign: 'center',
     marginTop: 6,
   },
   disconnected: {
-    color: '#e74c3c',
+    color: c.danger,
   },
   startButton: {
-    backgroundColor: '#f1c40f',
+    backgroundColor: c.accent,
     padding: 14,
     borderRadius: 8,
     alignItems: 'center',
@@ -1388,11 +1504,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   startButtonDisabled: {
-    backgroundColor: '#8a7712',
+    backgroundColor: c.accentDim,
     opacity: 0.6,
   },
   startButtonText: {
-    color: '#1a1a2e',
+    color: c.textOnAccent,
   },
   waitingHost: {
     flexDirection: 'row',

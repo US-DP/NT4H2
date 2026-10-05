@@ -1,0 +1,36 @@
+name: docs
+
+on:
+  pull_request:
+    paths:
+      - "**/*.md"
+      - ".github/workflows/docs-ci.yml"
+      - ".markdownlint-cli2.jsonc"
+  push:
+    branches: [main]
+    paths:
+      - "**/*.md"
+
+permissions:
+  contents: read
+
+jobs:
+  markdownlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DavidAnson/markdownlint-cli2-action@v20
+        with:
+          globs: "**/*.md"
+
+  links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lycheeverse/lychee-action@v2
+        with:
+          args: >-
+            --verbose --no-progress --exclude-loopback --exclude-mail
+            --max-concurrency 8 --accept 200,204,206,429
+            "**/*.md"
+          fail: true

@@ -6,11 +6,12 @@
  */
 
 import { Platform } from 'react-native';
+import type * as HapticsNS from 'expo-haptics';
 import { useSettings } from '../store/settingsStore';
 
 const isNative = Platform.OS !== 'web';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const haptics = () => require('expo-haptics') as typeof import('expo-haptics');
+const haptics = () => require('expo-haptics') as typeof HapticsNS;
 
 function enabled(): boolean {
   const s = useSettings.getState();

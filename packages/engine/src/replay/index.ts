@@ -82,44 +82,72 @@ export function createSnapshot(
   };
 }
 
+/** Contexto de replay incremental: el cursor de la UI de replay. */
+export interface ReplayCursor {
+  state: GameState;
+  rng: DeterministicRng;
+  registry: EffectRegistry;
+}
+
 /**
- * Reconstruir una partida desde un ReplayEnvelope.
- * Reproduce exactamente el mismo estado final.
+ * Inicializar un replay incremental: fija los contadores globales
+ * (seq/instanceId) como hace replay() y devuelve el cursor.
  */
-export function replay(envelope: ReplayEnvelope, catalog?: CatalogLoadResult): GameState {
+export function replayInit(envelope: ReplayEnvelope): ReplayCursor {
   const snapshot = envelope.initialState;
-  // Restaurar los contadores globales para que los eventos del replay lleven
-  // los mismos seq que la partida original (replay bit-idéntico)
   if (snapshot.seq !== undefined) {
     setSeq(snapshot.seq);
   } else {
     resetSeq();
   }
   resetInstanceCounter();
-  let state = snapshot.state;
-  const rng = DeterministicRng.deserialize({
-    seed: snapshot.seed,
-    state: snapshot.rngState,
-  });
-  const registry = new EffectRegistry();
-  registerCoreEffects(registry);
+  return {
+    state: snapshot.state,
+    rng: DeterministicRng.deserialize({
+      seed: snapshot.seed,
+      state: snapshot.rngState,
+    }),
+    registry: (() => {
+      const r = new EffectRegistry();
+      registerCoreEffects(r);
+      return r;
+    })(),
+  };
+}
 
-  for (const cmd of envelope.commands) {
-    // actorId preserva al actor real (pericias reactivas de jugadores no
-    // activos, pujas de líder) — sin él el replay divergiría del online.
-    const result = execute(state, cmd, rng, registry, catalog, cmd.actorId);
-    if (!result.accepted) {
-      // En replay, los comandos rechazados se ignoran
-      continue;
-    }
-    state = result.newState;
-    // Ejecutar fases automáticas tras cada comando (D343)
-    if (catalog) {
-      state = processPhases(state, rng, catalog).state;
-    }
+/**
+ * Un paso de replay: ejecuta el comando N sobre el cursor y las fases
+ * automáticas. La UI de replay lo encadena paso a paso (checkpoints)
+ * en vez de replay() desde cero por cada step — O(n) por salto en vez
+ * de O(n²) para un visionado completo.
+ */
+export function replayStep(
+  cursor: ReplayCursor,
+  cmd: Command,
+  catalog?: CatalogLoadResult,
+): GameState {
+  // actorId preserva al actor real (pericias reactivas de jugadores no
+  // activos, pujas de líder) — sin él el replay divergiría del online.
+  const result = execute(cursor.state, cmd, cursor.rng, cursor.registry, catalog, cmd.actorId);
+  if (!result.accepted) return cursor.state;
+  cursor.state = result.newState;
+  // Ejecutar fases automáticas tras cada comando (D343)
+  if (catalog) {
+    cursor.state = processPhases(cursor.state, cursor.rng, catalog).state;
   }
+  return cursor.state;
+}
 
-  return state;
+/**
+ * Reconstruir una partida desde un ReplayEnvelope.
+ * Reproduce exactamente el mismo estado final.
+ */
+export function replay(envelope: ReplayEnvelope, catalog?: CatalogLoadResult): GameState {
+  const cursor = replayInit(envelope);
+  for (const cmd of envelope.commands) {
+    replayStep(cursor, cmd, catalog);
+  }
+  return cursor.state;
 }
 
 /**
@@ -190,7 +218,12 @@ function stableStringify(value: unknown): string {
     return stableStringify(entries);
   }
 
-  const keys = Object.keys(value).sort();
+  // Claves con valor undefined se omiten (semántica JSON.stringify): el
+  // estado vivo puede llevar propiedades opcionales explícitas que el
+  // snapshot serializado pierde — sin esto el hash divergía al recargar.
+  const keys = Object.keys(value)
+    .filter(k => (value as Record<string, unknown>)[k] !== undefined)
+    .sort();
   const pairs = keys.map(k => JSON.stringify(k) + ':' + stableStringify((value as Record<string, unknown>)[k]));
   return '{' + pairs.join(',') + '}';
 }

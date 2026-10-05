@@ -1,15 +1,11 @@
 """URL configuration for NT4H backend."""
 
+import os
+
+from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
-from rest_framework.routers import DefaultRouter
 
-from content.views import (
-    CardDefinitionViewSet,
-    CardVersionViewSet,
-    card_by_id,
-    import_card,
-)
 from game.views import (
     close_room,
     create_room,
@@ -19,9 +15,9 @@ from game.views import (
     leaderboard,
     leave_room,
     list_rooms,
+    metrics,
     room_engine_state,
     room_state,
-    room_sync,
     set_ready,
     skip_turn,
     start_room,
@@ -32,21 +28,15 @@ from game.views import (
     ws_ticket,
 )
 
-# DRF router for content CRUD
-router = DefaultRouter()
-router.register(r"cards", CardDefinitionViewSet, basename="card-definition")
-router.register(r"card-versions", CardVersionViewSet, basename="card-version")
-
 urlpatterns = [
-    path("admin/", admin.site.urls),
     # Cuentas/identidad JWT (Fase 1): auth + me + players públicos
     path("api/v1/", include("accounts.urls")),
     path("api/health/", health_check, name="health"),
+    path("api/metrics/", metrics, name="metrics"),
     path("api/rooms/", create_room, name="create-room"),
     path("api/rooms/list/", list_rooms, name="list-rooms"),
     path("api/rooms/<str:room_id>/", room_state, name="room-state"),
     path("api/rooms/<str:room_id>/engine/", room_engine_state, name="room-engine-state"),
-    path("api/rooms/<str:room_id>/sync/", room_sync, name="room-sync"),
     path("api/rooms/<str:room_id>/join/", join_room, name="join-room"),
     path("api/rooms/<str:room_id>/leave/", leave_room, name="leave-room"),
     path("api/rooms/<str:room_id>/ready/", set_ready, name="set-ready"),
@@ -61,9 +51,11 @@ urlpatterns = [
     path("api/stats/report/", stats_report, name="stats-report"),
     path("api/stats/community/", stats_community, name="stats-community"),
     path("api/stats/leaderboard/", leaderboard, name="stats-leaderboard"),
-    # Content custom endpoints (must be BEFORE router to avoid being matched as detail views)
-    path("api/cards/by-id/<str:card_id>/", card_by_id, name="card-by-id"),
-    path("api/cards/import/", import_card, name="card-import"),
-    # Content CRUD (DRF router)
-    path("api/", include(router.urls)),
 ]
+
+# El admin solo se monta en DEBUG, o en producción tras un path secreto
+# configurable con ADMIN_URL (p. ej. ADMIN_URL=gestion-x9k2): reduce la
+# superficie de brute-force del panel de administración.
+_admin_path = os.environ.get("ADMIN_URL", "admin" if settings.DEBUG else "")
+if _admin_path:
+    urlpatterns.insert(0, path(f"{_admin_path.strip('/')}/", admin.site.urls))

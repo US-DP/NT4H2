@@ -1,9 +1,9 @@
-/**
+﻿/**
  * Estilos de la pantalla de partida. Extraido de app/(game)/index.tsx.
  */
 
 import { StyleSheet } from 'react-native';
-import { spacing, type Colors } from '../../lib/theme';
+import { spacing, type Colors } from '../../../lib/theme';
 
 export const createStyles = (c: Colors) => StyleSheet.create({
   container: {

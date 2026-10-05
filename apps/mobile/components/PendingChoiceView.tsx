@@ -3,6 +3,8 @@
  *
  * Cubre:
  * - SELECT_CARDS_FOR_LEADER: puja de Líder (1-2 cartas de la mano) — usa CHOOSE_LEADER_CARDS
+ * - turn-start-* (CONFIRM sin opciones): efecto opcional del escenario —
+ *   usa ACCEPT_TURN_START_EFFECT (Sí/No), nunca RESOLVE_CHOICE
  * - REACTION_WINDOW: usar pericia reactiva o pasar (Valèrys, Lisavette)
  * - CONFIRM: confirmaciones con opciones textuales (ej: Portal de Ulthar)
  * - SELECT_ENEMY / SELECT_HERO: elegir objetivo entre opciones
@@ -18,6 +20,8 @@ import { useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useGameStore } from '../store/gameStore';
+import { touchTarget, type Colors } from '../lib/theme';
+import { useColors, useFs } from '../lib/useTheme';
 
 export function PendingChoiceView() {
   const { t } = useTranslation();
@@ -26,7 +30,15 @@ export function PendingChoiceView() {
   const viewerId = useGameStore((s) => s.viewerId);
   const resolvePendingChoice = useGameStore((s) => s.resolvePendingChoice);
   const chooseLeaderCards = useGameStore((s) => s.chooseLeaderCards);
+  const acceptTurnStartEffect = useGameStore((s) => s.acceptTurnStartEffect);
+  const handOverTo = useGameStore((s) => s.handOverTo);
+  const connectionMode = useGameStore((s) => s.connectionMode);
   const [selected, setSelected] = useState<string[]>([]);
+  const c = useColors();
+  const fs = useFs();
+  // Sin useMemo: el renderer ligero de tests invoca el componente
+  // directamente y los hooks de React lanzan fuera de un render real.
+  const styles = createStyles(c, fs);
 
   if (!gameState || !catalog) return null;
 
@@ -44,6 +56,50 @@ export function PendingChoiceView() {
     return (
       <View style={styles.container} accessibilityRole="alert">
         <Text style={styles.waitingText}>{t('panels.choiceWaiting', { decider })}</Text>
+        {connectionMode !== 'online' && (
+          // M-6: hot-seat — la elección ajena bloqueaba la mesa sin forma de
+          // entregar el dispositivo; ahora el viewer puede cedérselo al
+          // decisor con transición de privacidad.
+          <Pressable
+            style={styles.secondaryButton}
+            onPress={() => handOverTo(foreign.playerId)}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.privacy.passDevice')}
+          >
+            <Text style={styles.buttonText}>
+              {t('panels.choiceHandOver', { decider })}
+            </Text>
+          </Pressable>
+        )}
+      </View>
+    );
+  }
+
+  // Efecto opcional de inicio de turno del escenario (Montañas de Ur,
+  // Puerto de Eque…): se responde con ACCEPT_TURN_START_EFFECT, no con
+  // RESOLVE_CHOICE — el motor rechaza RESOLVE_CHOICE sobre turn-start-*.
+  if (choice.choiceId.startsWith('turn-start-')) {
+    return (
+      <View style={styles.container} accessibilityRole="alert">
+        <Text style={styles.title}>{choice.prompt}</Text>
+        <View style={styles.row}>
+          <Pressable
+            style={styles.primaryButton}
+            onPress={() => acceptTurnStartEffect(true)}
+            accessibilityRole="button"
+            accessibilityLabel={t('panels.yes')}
+          >
+            <Text style={[styles.buttonText, styles.primaryButtonText]}>{t('panels.yes')}</Text>
+          </Pressable>
+          <Pressable
+            style={styles.secondaryButton}
+            onPress={() => acceptTurnStartEffect(false)}
+            accessibilityRole="button"
+            accessibilityLabel={t('panels.no')}
+          >
+            <Text style={styles.buttonText}>{t('panels.no')}</Text>
+          </Pressable>
+        </View>
       </View>
     );
   }
@@ -189,7 +245,7 @@ export function PendingChoiceView() {
             accessibilityRole="button"
             accessibilityLabel={t('panels.pendingUseAbility')}
           >
-            <Text style={styles.buttonText}>{t('panels.pendingUseAbility')}</Text>
+            <Text style={[styles.buttonText, styles.primaryButtonText]}>{t('panels.pendingUseAbility')}</Text>
           </Pressable>
           <Pressable
             style={styles.secondaryButton}
@@ -218,7 +274,7 @@ export function PendingChoiceView() {
               accessibilityRole="button"
               accessibilityLabel={optionLabel(opt)}
             >
-              <Text style={styles.buttonText}>{optionLabel(opt)}</Text>
+              <Text style={[styles.buttonText, styles.primaryButtonText]}>{optionLabel(opt)}</Text>
             </Pressable>
           ))}
         </View>
@@ -265,7 +321,7 @@ export function PendingChoiceView() {
         accessibilityState={{ disabled: !canConfirm }}
         accessibilityLabel={t('panels.pendingConfirmA11y')}
       >
-        <Text style={styles.buttonText}>
+        <Text style={[styles.buttonText, canConfirm && styles.primaryButtonText]}>
           {isLeaderBid
             ? t('panels.pendingBid', { selected: selected.length, max: choice.maxSelections })
             : t('panels.pendingConfirm', { selected: selected.length, max: choice.maxSelections })}
@@ -275,29 +331,29 @@ export function PendingChoiceView() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   container: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: c.surface,
     borderWidth: 2,
-    borderColor: '#f1c40f',
+    borderColor: c.accent,
     borderRadius: 10,
     padding: 14,
     margin: 8,
   },
   title: {
-    color: '#f1c40f',
-    fontSize: 15,
+    color: c.accent,
+    fontSize: fs(15),
     fontWeight: 'bold',
     marginBottom: 4,
   },
   subtitle: {
-    color: '#bdc3c7',
-    fontSize: 12,
+    color: c.textMuted,
+    fontSize: fs(12),
     marginBottom: 10,
   },
   waitingText: {
-    color: '#bdc3c7',
-    fontSize: 13,
+    color: c.textMuted,
+    fontSize: fs(13),
     fontStyle: 'italic',
     textAlign: 'center',
     paddingVertical: 6,
@@ -307,25 +363,27 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   option: {
-    backgroundColor: '#2c3e50',
+    backgroundColor: c.surfaceInteractive,
     borderRadius: 8,
     padding: 10,
     marginRight: 8,
     marginBottom: 6,
     borderWidth: 1,
-    borderColor: '#34495e',
+    borderColor: c.border,
     minWidth: 110,
+    minHeight: touchTarget,
+    justifyContent: 'center',
   },
   optionSelected: {
-    borderColor: '#f1c40f',
-    backgroundColor: '#3d3d1f',
+    borderColor: c.accent,
+    backgroundColor: c.surfaceInteractiveSelected,
   },
   optionText: {
-    color: '#ecf0f1',
-    fontSize: 12,
+    color: c.text,
+    fontSize: fs(12),
   },
   optionTextSelected: {
-    color: '#f1c40f',
+    color: c.accent,
     fontWeight: 'bold',
   },
   row: {
@@ -334,26 +392,33 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   primaryButton: {
-    backgroundColor: '#27ae60',
+    backgroundColor: c.accent,
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
     minWidth: 120,
+    minHeight: touchTarget,
   },
   secondaryButton: {
-    backgroundColor: '#555',
+    backgroundColor: c.border,
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
     minWidth: 100,
+    minHeight: touchTarget,
   },
   buttonDisabled: {
-    backgroundColor: '#555',
+    backgroundColor: c.surfaceDisabled,
     opacity: 0.5,
   },
   buttonText: {
-    color: '#fff',
-    fontSize: 13,
+    color: c.text,
+    fontSize: fs(13),
     fontWeight: 'bold',
+  },
+  primaryButtonText: {
+    color: c.textOnAccent,
   },
 });

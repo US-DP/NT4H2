@@ -29,8 +29,10 @@ vi.mock('../store/gameStore', () => ({
 
 // El renderer ligero no soporta hooks: useState devuelve el estado
 // inicial y un setter no-op. Suficiente para pruebas de render estático.
+import type * as ReactNS from 'react';
+
 vi.mock('react', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('react')>();
+  const mod = await importOriginal<typeof ReactNS>();
   return { ...mod, useState: (init: unknown) => [init, () => undefined] };
 });
 
@@ -102,7 +104,7 @@ function makeGameState(overrides: Partial<GameState> = {}): GameState {
     },
     battlefield: [makeEnemy()], market: [], scenario: null, scenarioDeck: [],
     hordeDeck: [], rngState: '', ignoreGloryRewards: false, ignoreCoinRewards: false,
-    marketCostModifier: 0, orcFortitudeBonus: 0, ...overrides,
+    marketCostModifier: 0, ...overrides,
   } as GameState;
 }
 

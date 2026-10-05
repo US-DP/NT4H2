@@ -9,6 +9,7 @@ import {
   useCustomContent,
 } from '../../lib/customContent';
 import i18n from '../../lib/i18n';
+import { engineReasonFromText } from '../../lib/engineReasons';
 import { prefetchCardImages } from '../../lib/prefetch.js';
 import { useCollection } from '../collectionStore.js';
 import { useSettings } from '../settingsStore.js';
@@ -20,6 +21,7 @@ import {
 import {
   DeterministicRng,
   EffectRegistry,
+  currentSeq,
   evaluateCommand,
   execute,
   processPhases,
@@ -27,6 +29,8 @@ import {
   resetInstanceCounter,
   resetPhaseSeq,
   resetResolveSeq,
+  resetSeq,
+  setSeq,
   setupGame,
   startFirstTurn,
 } from '@nt4h/engine';
@@ -35,25 +39,36 @@ import type {
   GameConfig,
 } from '@nt4h/schema';
 
-type Actions = Pick<GameStore, 'initCatalog'|'newGame'|'playCard'|'endAttack'|'startEvasion'|'toggleEvasionCard'|'cancelEvasion'|'evasion'|'buyCard'|'endTurn'|'undoLastCommand'|'playHeroAbility'|'checkCardPlayable'|'checkMarketCardBuyable'|'resolvePendingChoice'|'chooseLeaderCards'>;
+type Actions = Pick<GameStore, 'initCatalog'|'newGame'|'playCard'|'endAttack'|'startEvasion'|'toggleEvasionCard'|'cancelEvasion'|'evasion'|'buyCard'|'endTurn'|'undoLastCommand'|'playHeroAbility'|'checkCardPlayable'|'checkMarketCardBuyable'|'resolvePendingChoice'|'chooseLeaderCards'|'acceptTurnStartEffect'|'swapStartingCards'|'openSupportDeck'|'buySupportCard'|'toggleSwapMode'|'toggleSwapCard'>;
 
 export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', never]], [], Actions> = (set, get) => ({
-  initCatalog: () => {
-    // Conjuntos del Taller (persistidos) → se fusionan al catálogo al cargar
-    void useCustomContent.getState().init().then(() => {
-      const merged = loadCatalogWithCustom();
-      set((state) => { state.catalog = merged; });
-      void prefetchCardImages(merged);
-    });
+  initCatalog: async () => {
     const catalog = loadCatalog();
     set((state) => {
       state.catalog = catalog;
     });
     // Precargar PNGs en segundo plano — la primera partida no espera descargas
     void prefetchCardImages(catalog);
+    try {
+      // Conjuntos del Taller (persistidos) → se fusionan al catálogo.
+      // Await: quien cree una partida con contenido custom necesita que
+      // esta promesa haya resuelto (antes el merge llegaba tarde y un
+      // customDeckId resolvía contra el catálogo oficial → setup error).
+      await useCustomContent.getState().init();
+      const merged = loadCatalogWithCustom();
+      set((state) => { state.catalog = merged; });
+      void prefetchCardImages(merged);
+    } catch {
+      // Init rechazado (storage corrupto etc.): el catálogo oficial ya
+      // está cargado — solo se pierde el Taller.
+      console.warn('useCustomContent.init failed — catálogo oficial en uso');
+    }
   },
 
   newGame: (config: GameConfig) => {
+    // Una sesión online viva seguiría pisando gameState con cada
+    // broadcast command_result → cortar antes de crear la partida local.
+    if (get().connectionMode === 'online') get().disconnectOnline();
     let catalog = get().catalog ?? loadCatalogWithCustom();
     // Si algún héroe usa un mazo personalizado, resolver su snapshot ahora
     // y fusionar el catálogo con los conjuntos del Taller.
@@ -66,6 +81,15 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
     if (usesCustom || get().catalog === null) {
       catalog = loadCatalogWithCustom();
     }
+    const customState = useCustomContent.getState();
+    // La hidratación del Taller es async: una config con mazos/pools
+    // custom ejecutada antes de init() resolvería contra el catálogo
+    // oficial y fallaría con "unknown id" — rechazar con motivo claro.
+    if (usesCustom && !customState.loaded) {
+      const errors = [i18n.t('common.msg.customNotLoaded')];
+      set((state) => { state.ui.message = errors[0]; });
+      return { ok: false, errors };
+    }
     let resolvedConfig = config;
     if (usesCustom) {
       resolvedConfig = {
@@ -76,13 +100,40 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
           .map(deckToConfigEntry),
       };
     }
-    // Partida rápida: recordar la última configuración usada
-    useSettings.getState().set({ lastGameConfig: config });
+    // Pools ausentes = whitelist oficial EXPLÍCITA (paridad con la ruta
+    // online de (play)/index.tsx): el default del motor usa todo
+    // catalog.byType, que tras la fusión incluye las cartas del Taller —
+    // sin esto una partida "oficial" con sets instalados se contaminaba.
+    if (customState.sets.length > 0) {
+      const official = loadCatalog();
+      const officialIds = (tp: string) => (official.byType.get(tp) ?? []).map(c => c.id);
+      resolvedConfig = {
+        ...resolvedConfig,
+        hordeCardIds: config.hordeCardIds?.length ? config.hordeCardIds : officialIds('HORDE'),
+        warlordIds: config.warlordIds?.length ? config.warlordIds : officialIds('WARLORD'),
+        marketCardIds: config.marketCardIds?.length ? config.marketCardIds : officialIds('MARKET'),
+        ...(config.useScenarios && !config.scenarioIds?.length
+          ? { scenarioIds: officialIds('SCENARIO') }
+          : {}),
+      };
+    }
     resetInstanceCounter();
     resetPhaseSeq();
     resetResolveSeq();
 
     const result = setupGame(resolvedConfig, catalog);
+
+    // setupGame acumula errores sin lanzar (héroes inexistentes, pools
+    // vacíos, mazos inválidos) — instalar el estado parcial igualmente
+    // dejaba la partida colgada en INITIAL_PLAYER_SELECTION. Misma
+    // política que el runner: rechazar y mostrar los motivos.
+    if (result.errors.length > 0) {
+      set((state) => { state.ui.message = i18n.t('common.msg.newGameFailed'); });
+      return { ok: false, errors: result.errors };
+    }
+    // Partida rápida: recordar la última configuración usada (solo si
+    // arrancó — una config rota no debe repetirse por "partida rápida").
+    useSettings.getState().set({ lastGameConfig: config });
 
     // Colección: las cartas que entran en juego quedan "descubiertas"
     // (héroe elegido + cartas de su(s) mazo(s) + escenarios usados).
@@ -120,12 +171,14 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
       state.catalog = catalog;
       state.initialConfig = config;
       state.initialCommands = [];
-      // Punto cero del rewind local: estado tras setup+primer turno y el
-      // RNG en ese instante (los comandos aún no se han registrado).
+      // Punto cero del rewind local: estado tras setup+primer turno, el
+      // RNG y el seq global en ese instante (los comandos aún no se han
+      // registrado). El seq también es el del snapshot del save (§51.12).
       state.undoBase = {
         state: structuredClone(turnResult.state),
         rngState: result.rng.serialize().state,
         seed: config.seed,
+        seq: currentSeq(),
       };
       // En puja pendiente, el primer viewer es el primer jugador sin pujar
       state.viewerId = hasPendingBids
@@ -135,7 +188,16 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
         ? i18n.t('common.msg.leaderBid')
         : i18n.t('common.msg.gameStarted', { id: turnResult.state.activePlayerId });
       state.ui.privacyScreen = config.playerCount > 1;
+      // Un modo de selección del juego anterior no debe arrastrarse
+      // (los instanceIds ya no existen en la nueva partida — y con
+      // resetInstanceCounter pueden reciclarse y apuntar a otra carta,
+      // p.ej. Enter jugando una selección que el usuario nunca hizo)
+      state.ui.evasionSelection = null;
+      state.ui.swapSelection = null;
+      state.ui.selectedCardInstanceId = null;
+      state.ui.selectedEnemyInstanceId = null;
     });
+    return { ok: true, errors: [] };
   },
 
   playCard: (cardInstanceId: string, targetEnemyId?: string) => {
@@ -164,7 +226,7 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
     const result = execute(gameState, cmd, rng, registry, catalog);
     if (!result.accepted) {
       set((state) => {
-        state.ui.message = result.reason ?? i18n.t('common.msg.playFailed');
+        state.ui.message = engineReasonFromText(i18n.t, result.reason) ?? i18n.t('common.msg.playFailed');
         state.ui.selectedCardInstanceId = null;
       });
       return;
@@ -199,7 +261,7 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
     const execResult = execute(gameState, cmd, rng, registry, catalog);
     if (!execResult.accepted) {
       set((state) => {
-        state.ui.message = execResult.reason ?? i18n.t('common.msg.endAttackFailed');
+        state.ui.message = engineReasonFromText(i18n.t, execResult.reason) ?? i18n.t('common.msg.endAttackFailed');
       });
       return;
     }
@@ -256,7 +318,7 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
     const execResult = execute(gameState, cmd, rng, registry, catalog);
     if (!execResult.accepted) {
       set((state) => {
-        state.ui.message = execResult.reason ?? i18n.t('common.msg.evadeFailed');
+        state.ui.message = engineReasonFromText(i18n.t, execResult.reason) ?? i18n.t('common.msg.evadeFailed');
       });
       return;
     }
@@ -288,7 +350,7 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
     const result = execute(gameState, cmd, rng, registry, get().catalog ?? undefined);
     if (!result.accepted) {
       set((state) => {
-        state.ui.message = result.reason ?? i18n.t('common.msg.buyFailed');
+        state.ui.message = engineReasonFromText(i18n.t, result.reason) ?? i18n.t('common.msg.buyFailed');
       });
       return;
     }
@@ -326,7 +388,7 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
     const execResult = execute(gameState, cmd, rng, registry, get().catalog ?? undefined);
     if (!execResult.accepted) {
       set((state) => {
-        state.ui.message = execResult.reason ?? i18n.t('common.msg.endTurnFailed');
+        state.ui.message = engineReasonFromText(i18n.t, execResult.reason) ?? i18n.t('common.msg.endTurnFailed');
       });
       return;
     }
@@ -360,15 +422,28 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
       seed: undoBase.seed,
       state: undoBase.rngState,
     });
+    // Restaurar los contadores globales al punto del snapshot: sin esto el
+    // rewind genera instanceIds/seqs a partir del contador vivo y diverge
+    // del run original (mismo tratamiento que loadGame/replayInit).
+    if (typeof undoBase.seq === 'number') setSeq(undoBase.seq);
+    else resetSeq();
+    resetInstanceCounter();
     const registry = new EffectRegistry();
     registerCoreEffects(registry);
     // structuredClone: si execute() mutara el estado de entrada, la base
     // del undo quedaría protegida para deshacer varios pasos seguidos.
     let restored = structuredClone(undoBase.state);
+    // Contar rechazos como loadGame: si el catálogo/reglas cambiaron
+    // desde que se jugó, un comando rechazado deja el estado divergido —
+    // truncar initialCommands encima amplificaría la divergencia en los
+    // siguientes undos sin que el jugador lo supiera.
+    let rejected = 0;
     for (const cmd of cmds) {
       const r = execute(restored, cmd, rng, registry, catalog, cmd.actorId);
       if (r.accepted) {
         restored = processPhases(r.newState, rng, catalog).state;
+      } else {
+        rejected += 1;
       }
     }
 
@@ -380,7 +455,15 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
       state.ui.selectedCardInstanceId = null;
       state.ui.selectedEnemyInstanceId = null;
       state.ui.evasionSelection = null;
-      state.ui.message = i18n.t('gm.undoDone');
+      // Hot-seat: el turno rebobinado puede ser de otro jugador — el
+      // viewer debe seguir al nuevo activo o los comandos siguientes
+      // actuarían con el actorId equivocado.
+      state.viewerId = restored.activePlayerId;
+      state.ui.privacyScreen =
+        (state.initialConfig?.playerCount ?? 1) > 1;
+      state.ui.message = rejected > 0
+        ? i18n.t('gm.undoRejected', { count: rejected })
+        : i18n.t('gm.undoDone');
     });
   },
 
@@ -406,7 +489,7 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
     const result = execute(gameState, cmd, rng, registry, get().catalog ?? undefined, actorId);
     if (!result.accepted) {
       set((state) => {
-        state.ui.message = result.reason ?? i18n.t('common.msg.abilityFailed');
+        state.ui.message = engineReasonFromText(i18n.t, result.reason) ?? i18n.t('common.msg.abilityFailed');
       });
       return;
     }
@@ -438,7 +521,7 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
     if (!player) return { ok: false, reason: 'Jugador no encontrado' };
     const cmd: Command = { type: 'PLAY_CARD', cid: newCid('check'), cardInstanceId };
     const evalResult = evaluateCommand(gameState, player.playerId, cmd, catalog);
-    return { ok: evalResult.legal, reason: evalResult.reason, reasonCode: evalResult.reasonCode };
+    return { ok: evalResult.legal, reason: evalResult.reason, reasonCode: evalResult.reasonCode, costs: evalResult.costs };
   },
 
   checkMarketCardBuyable: (marketCardInstanceId: string) => {
@@ -451,7 +534,7 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
     if (!player) return { ok: false, reason: 'Jugador no encontrado' };
     const cmd: Command = { type: 'BUY_CARD', cid: newCid('check-buy'), marketCardInstanceId };
     const evalResult = evaluateCommand(gameState, player.playerId, cmd, catalog);
-    return { ok: evalResult.legal, reason: evalResult.reason, reasonCode: evalResult.reasonCode };
+    return { ok: evalResult.legal, reason: evalResult.reason, reasonCode: evalResult.reasonCode, costs: evalResult.costs };
   },
 
   resolvePendingChoice: (choiceId: string, selectedIds: string[]) => {
@@ -470,7 +553,7 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
     const result = execute(gameState, cmd, rng, registry, catalog ?? undefined, actorId);
     if (!result.accepted) {
       set((state) => {
-        state.ui.message = i18n.t('common.msg.choiceRejected', { reason: result.reason ?? i18n.t('common.msg.reasonUnknown') });
+        state.ui.message = i18n.t('common.msg.choiceRejected', { reason: engineReasonFromText(i18n.t, result.reason) ?? i18n.t('common.msg.reasonUnknown') });
       });
       return;
     }
@@ -502,7 +585,7 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
     const result = execute(gameState, cmd, rng, registry, catalog ?? undefined, actorId);
     if (!result.accepted) {
       set((state) => {
-        state.ui.message = i18n.t('common.msg.bidRejected', { reason: result.reason ?? i18n.t('common.msg.reasonUnknown') });
+        state.ui.message = i18n.t('common.msg.bidRejected', { reason: engineReasonFromText(i18n.t, result.reason) ?? i18n.t('common.msg.reasonUnknown') });
       });
       return;
     }
@@ -520,6 +603,146 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
         state.viewerId = finalState.activePlayerId;
         state.ui.privacyScreen = true;
       }
+    });
+  },
+
+  acceptTurnStartEffect: (accepted: boolean) => {
+    const { gameState, rng, registry, catalog, connectionMode, viewerId } = get();
+    if (!gameState || !rng || !registry) return;
+
+    if (connectionMode === 'online') {
+      get().sendOnlineCommand({ type: 'ACCEPT_TURN_START_EFFECT', accepted });
+      return;
+    }
+
+    const actorId = viewerId ?? gameState.activePlayerId;
+    const cmd: Command = { type: 'ACCEPT_TURN_START_EFFECT', cid: newCid('cmd'), actorId, accepted };
+    const result = execute(gameState, cmd, rng, registry, catalog ?? undefined, actorId);
+    if (!result.accepted) {
+      set((state) => {
+        state.ui.message = i18n.t('common.msg.choiceRejected', { reason: engineReasonFromText(i18n.t, result.reason) ?? i18n.t('common.msg.reasonUnknown') });
+      });
+      return;
+    }
+    const finalState = catalog
+      ? processPhases(result.newState, rng, catalog).state
+      : result.newState;
+    set((state) => {
+      state.gameState = finalState;
+      state.initialCommands.push(cmd);
+    });
+  },
+
+  toggleSwapMode: () => {
+    set((state) => {
+      state.ui.swapSelection = state.ui.swapSelection === null ? [] : null;
+      state.ui.selectedCardInstanceId = null;
+      state.ui.selectedEnemyInstanceId = null;
+    });
+  },
+
+  toggleSwapCard: (cardInstanceId: string) => {
+    set((state) => {
+      const sel = state.ui.swapSelection;
+      if (sel === null) return;
+      if (sel.includes(cardInstanceId)) {
+        state.ui.swapSelection = sel.filter((id) => id !== cardInstanceId);
+      } else if (sel.length < 2) {
+        // spec §4.1: máximo 2 cartas
+        state.ui.swapSelection = [...sel, cardInstanceId];
+      }
+    });
+  },
+
+  swapStartingCards: (cardInstanceIds: string[]) => {
+    const { gameState, rng, registry, catalog, connectionMode, viewerId } = get();
+    if (!gameState || !rng || !registry || cardInstanceIds.length === 0) return;
+
+    set((state) => { state.ui.swapSelection = null; });
+
+    if (connectionMode === 'online') {
+      get().sendOnlineCommand({ type: 'SWAP_STARTING_CARDS', cardInstanceIds });
+      return;
+    }
+
+    const actorId = viewerId ?? gameState.activePlayerId;
+    const cmd: Command = { type: 'SWAP_STARTING_CARDS', cid: newCid('cmd'), actorId, cardInstanceIds };
+    const result = execute(gameState, cmd, rng, registry, catalog ?? undefined, actorId);
+    if (!result.accepted) {
+      set((state) => {
+        state.ui.message = i18n.t('common.msg.choiceRejected', { reason: engineReasonFromText(i18n.t, result.reason) ?? i18n.t('common.msg.reasonUnknown') });
+      });
+      return;
+    }
+    const finalState = catalog
+      ? processPhases(result.newState, rng, catalog).state
+      : result.newState;
+    set((state) => {
+      state.gameState = finalState;
+      state.initialCommands.push(cmd);
+    });
+  },
+
+  openSupportDeck: (supportDeckIndex: number) => {
+    const { gameState, rng, registry, catalog, connectionMode, viewerId } = get();
+    if (!gameState || !rng || !registry) return;
+
+    if (connectionMode === 'online') {
+      get().sendOnlineCommand({ type: 'OPEN_SUPPORT_DECK', supportDeckIndex });
+      return;
+    }
+
+    const actorId = viewerId ?? gameState.activePlayerId;
+    const cmd: Command = { type: 'OPEN_SUPPORT_DECK', cid: newCid('cmd'), actorId, supportDeckIndex };
+    const result = execute(gameState, cmd, rng, registry, catalog ?? undefined, actorId);
+    if (!result.accepted) {
+      set((state) => {
+        state.ui.message = i18n.t('common.msg.choiceRejected', { reason: engineReasonFromText(i18n.t, result.reason) ?? i18n.t('common.msg.reasonUnknown') });
+      });
+      return;
+    }
+    const finalState = catalog
+      ? processPhases(result.newState, rng, catalog).state
+      : result.newState;
+    set((state) => {
+      state.gameState = finalState;
+      state.initialCommands.push(cmd);
+    });
+  },
+
+  buySupportCard: (supportDeckIndex: number, paymentType: 'GLORY' | 'COINS') => {
+    const { gameState, rng, registry, catalog, connectionMode, viewerId } = get();
+    if (!gameState || !rng || !registry) return;
+
+    const actorId = viewerId ?? gameState.activePlayerId;
+    // Desestructuración por clave computada: equivalente a players[actorId]
+    // sin el acceso dinámico que security/detect-object-injection marca.
+    const { [actorId]: player } = gameState.players;
+    // Pago exacto declarado (el motor exige amount === coste)
+    const drawn = player?.supportCardsDrawnThisTurn ?? 0;
+    const payment = paymentType === 'GLORY'
+      ? { type: 'GLORY' as const, amount: 2 + drawn }
+      : { type: 'COINS' as const, amount: 5 + drawn * 2 };
+
+    if (connectionMode === 'online') {
+      get().sendOnlineCommand({ type: 'BUY_SUPPORT_CARD', supportDeckIndex, payment });
+      return;
+    }
+
+    const cmd: Command = { type: 'BUY_SUPPORT_CARD', cid: newCid('cmd'), actorId, supportDeckIndex, payment };
+    const result = execute(gameState, cmd, rng, registry, catalog ?? undefined, actorId);
+    if (!result.accepted) {
+      set((state) => {
+        state.ui.message = i18n.t('common.msg.choiceRejected', { reason: engineReasonFromText(i18n.t, result.reason) ?? i18n.t('common.msg.reasonUnknown') });
+      });
+      return;
+    }
+    const finalState = catalog
+      ? processPhases(result.newState, rng, catalog).state
+      : result.newState;
+    set((state) => {
+      state.gameState = finalState;
+      state.initialCommands.push(cmd);
     });
   },
 });

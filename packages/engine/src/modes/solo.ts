@@ -114,9 +114,9 @@ export function openSupportDeck(
   }
 
   events.push({
-    type: 'COINS_GAINED',
+    type: 'COINS_LOST',
     playerId,
-    amount: -cost,
+    amount: cost,
     seq: nextSeq(),
   });
   // D434: evento explicito para que el replay restaure supportDecksOpened
@@ -134,7 +134,7 @@ export function openSupportDeck(
         ...state.players,
         [playerId]: {
           ...player,
-          // D350: No pre-descontar coins; el evento COINS_GAINED negativo ya aplica el descuento
+          // D350: No pre-descontar coins; el evento COINS_LOST ya aplica el descuento
           supportDecksOpened: openedCount + 1,
         },
       },
@@ -192,9 +192,9 @@ export function buySupportCard(
       return { state, events, error: `Not enough glory (need ${gloryCost})` };
     }
     events.push({
-      type: 'GLORY_GAINED',
+      type: 'GLORY_LOST',
       playerId,
-      amount: -gloryCost,
+      amount: gloryCost,
       seq: nextSeq(),
     });
   } else {
@@ -205,9 +205,9 @@ export function buySupportCard(
       return { state, events, error: `Not enough coins (need ${coinsCost})` };
     }
     events.push({
-      type: 'COINS_GAINED',
+      type: 'COINS_LOST',
       playerId,
-      amount: -coinsCost,
+      amount: coinsCost,
       seq: nextSeq(),
     });
   }
@@ -223,8 +223,8 @@ export function buySupportCard(
     seq: nextSeq(),
   });
 
-  // D350: No pre-descontar glory/coins aquí; los eventos GLORY_GAINED/COINS_GAINED
-  // negativos ya aplican el descuento via applyEvent.
+  // D350: No pre-descontar glory/coins aquí; los eventos GLORY_LOST/COINS_LOST
+  // ya aplican el descuento via applyEvent.
   return {
     state: {
       ...state,
@@ -366,12 +366,24 @@ export function swapStartingCards(
     }
   }
 
+  // Spec §4.1: el cambio inicial es una sola vez — el flag viaja en un
+  // evento para que el fold del eventLog reproduzca la misma legalidad.
+  if (cardInstanceIds.length > 0) {
+    events.push({ type: 'STARTING_CARDS_SWAPPED', playerId, seq: nextSeq() });
+  }
+
   return {
     state: {
       ...state,
       players: {
         ...state.players,
-        [playerId]: { ...player, hand: newHand, abilityDeck: newDeck },
+        [playerId]: {
+          ...player,
+          hand: newHand,
+          abilityDeck: newDeck,
+          // El evento STARTING_CARDS_SWAPPED lo fija también en el fold
+          startingSwapUsed: cardInstanceIds.length > 0 ? true : player.startingSwapUsed,
+        },
       },
     },
     events,
@@ -407,7 +419,6 @@ function createEmptyState(): GameState {
     marketCostModifier: 0,
     ignoreCoinRewards: false,
     ignoreGloryRewards: false,
-    orcFortitudeBonus: 0,
   };
 }
 

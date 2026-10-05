@@ -17,7 +17,7 @@ import type { DeterministicRng } from '../rng/index.js';
 import type { EffectRegistry } from './registry.js';
 import type { CatalogLoadResult } from '@nt4h/catalog';
 import { MAX_CHAIN_DEPTH } from '../triggers/index.js';
-import { getEnemyDamageBonus } from '../modifiers/index.js';
+import { getEnemyDamageBonus, getEffectiveFortitude } from '../modifiers/index.js';
 import { evalValue } from './registry.js';
 import { nextSeq } from '../seq.js';
 import {
@@ -148,14 +148,16 @@ export function resolveRapidShot(
   const drawnDef = catalog.byId.get(drawnCard.definitionId);
 
   // Evento de robo: CARDS_DRAWN para el mazo propio; CARD_MOVED para el mazo
-  // de Apoyo (CARDS_DRAWN solo busca en abilityDeck al re-aplicar el evento)
+  // de Apoyo (CARDS_DRAWN solo busca en abilityDeck al re-aplicar el evento).
+  // from=SUPPORT_DECK + supportDeckIndex: el eventLog dice la verdad.
   if (drawsFromSupport) {
     events.push({
       type: 'CARD_MOVED',
       cardInstanceId: drawnCard.instanceId,
-      from: 'ABILITY_DECK' as Zone,
+      from: 'SUPPORT_DECK' as Zone,
       to: 'HAND' as Zone,
       playerId: player.playerId,
+      supportDeckIndex: supportIdx,
   seq: nextSeq(),
     });
   } else {
@@ -251,8 +253,16 @@ export function resolveRapidShot(
       seq: nextSeq(),
     });
 
+    // Igual que resolveCard: si la carta define su daño por efectos
+    // (SPLIT/ALL/TO_HERO/TO_OTHER_HEROES), el printedAttack no va al
+    // objetivo único — se aplicaría dos veces.
+    const drawnHasSpecialDamage = drawnDef.effects.some(
+      e => e.type === 'DEAL_DAMAGE_SPLIT' || e.type === 'DEAL_DAMAGE_ALL_ENEMIES'
+        || e.type === 'DEAL_DAMAGE_TO_HERO' || e.type === 'DEAL_DAMAGE_TO_OTHER_HEROES'
+    );
+
     // Dano impreso de la carta robada
-    if (drawnDef.printedAttack && drawnDef.printedAttack > 0 && drawnTargetEnemyId) {
+    if (drawnDef.printedAttack && drawnDef.printedAttack > 0 && drawnTargetEnemyId && !drawnHasSpecialDamage) {
       let damage = drawnDef.printedAttack;
       damage = applyDamageModifiers(damage, drawnDef.name, currentState.players[player.playerId]);
       // Aplicar vulnerabilidad del enemigo (DAMAGE_BONUS)
@@ -286,6 +296,57 @@ export function resolveRapidShot(
         currentState = emitEnemyDefeated(
           currentState, drawnTargetEnemyId, player.playerId, enemiesDefeated, events, catalog, ctx,
         );
+      }
+    }
+
+    // Efectos declarativos de la carta jugada por la cadena: antes se
+    // ignoraban todos los que no fueran el daño impreso — una carta del
+    // Taller con DEAL_DAMAGE_ALL_ENEMIES perdía su efecto de área.
+    // ON_DEFEAT va aparte (condicionado a la derrota del objetivo);
+    // ON_HORDE_ATTACK es un disparador diferido; DRAW_AND_CHECK lo
+    // maneja la recursión de más abajo.
+    const drawnPassive = drawnDef.effects.filter(
+      e => e.type !== 'DRAW_AND_CHECK' && e.type !== 'ON_DEFEAT' && e.type !== 'ON_HORDE_ATTACK'
+    );
+    if (drawnPassive.length > 0) {
+      const playCtx: ResolutionContext = {
+        ...ctx,
+        currentCardId: drawnCard.definitionId,
+        currentCardName: drawnDef.name,
+        currentCardInstanceId: drawnCard.instanceId,
+        selectedEnemyId: drawnTargetEnemyId ?? ctx.selectedEnemyId,
+      };
+      const chainEff = executeEffectChain(
+        drawnPassive, playCtx, currentState, rng, registry, catalog, depth + 1,
+      );
+      events.push(...chainEff.events);
+      currentState = chainEff.state;
+      // Derrotas producidas por efectos de área/daño del Taller
+      for (const ev of chainEff.events) {
+        if (ev.type === 'DAMAGE_DEALT') {
+          const tgt = currentState.battlefield.find(e => e.instanceId === ev.targetId);
+          if (tgt && tgt.wounds >= getEffectiveFortitude(tgt, currentState)) {
+            currentState = emitEnemyDefeated(
+              currentState, tgt.instanceId, player.playerId, enemiesDefeated, events, catalog, ctx,
+            );
+          }
+        }
+      }
+    }
+
+    // ON_DEFEAT de la carta robada: si el daño impreso tumbó al objetivo
+    if (
+      drawnTargetEnemyId
+      && !currentState.battlefield.some(e => e.instanceId === drawnTargetEnemyId)
+    ) {
+      for (const effect of drawnDef.effects) {
+        if (effect.type === 'ON_DEFEAT') {
+          const onDefeatEvents = executeEffectChain(
+            effect.effects, ctx, currentState, rng, registry, catalog, depth + 1,
+          );
+          events.push(...onDefeatEvents.events);
+          currentState = onDefeatEvents.state;
+        }
       }
     }
 
@@ -324,7 +385,9 @@ export function resolveRapidShot(
       events.push(...chainResult.events);
       currentState = chainResult.state;
       additionalCardsPlayed.push(...chainResult.additionalCardsPlayed);
-      enemiesDefeated.push(...chainResult.enemiesDefeated);
+      // La subcadena hereda nuestra lista y la devuelve completa — solo
+      // añadir la cola nueva para no duplicar los ya contados.
+      enemiesDefeated.push(...chainResult.enemiesDefeated.slice(enemiesDefeated.length));
       // Propagar eleccion pendiente de la subcadena (Beleth-Il)
       if (chainResult.pendingChoice) {
         return { events, state: currentState, additionalCardsPlayed, enemiesDefeated, pendingChoice: chainResult.pendingChoice };
@@ -353,17 +416,19 @@ export function resolveRapidShot(
     // No coincidencia: la carta robada va al FONDO del mazo del que salio
     // (especificacion: Disparo Rapido - carta fallida al fondo del mazo).
     // D434: si salio del mazo de Apoyo, vuelve al mazo de Apoyo (spec §4.4).
+    // La zona/índice reales van en el evento — el fold no adivina.
+    const p = currentState.players[player.playerId];
+    const backToSupport = drawsFromSupport && supportIdx !== null && supportIdx !== undefined;
     events.push({
       type: 'CARD_MOVED',
       cardInstanceId: drawnCard.instanceId,
       from: 'HAND',
-      to: 'ABILITY_DECK',
+      to: backToSupport ? 'SUPPORT_DECK' : 'ABILITY_DECK',
       playerId: player.playerId,
+      ...(backToSupport ? { supportDeckIndex: supportIdx } : {}),
   seq: nextSeq(),
     });
     // Actualizar estado: remover de mano, anadir al fondo del mazo origen
-    const p = currentState.players[player.playerId];
-    const backToSupport = drawsFromSupport && supportIdx !== null && supportIdx !== undefined;
     currentState = {
       ...currentState,
       players: {
@@ -374,7 +439,7 @@ export function resolveRapidShot(
           ...(backToSupport
             ? {
                 supportDecks: (p.supportDecks ?? []).map(
-                  (d, i) => i === supportIdx ? [...d, { ...drawnCard, zone: 'ABILITY_DECK' as Zone }] : d,
+                  (d, i) => i === supportIdx ? [...d, { ...drawnCard, zone: 'SUPPORT_DECK' as Zone }] : d,
                 ),
               }
             : {

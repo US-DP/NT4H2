@@ -8,7 +8,9 @@
 import { useState } from 'react';
 import { Modal, View, Text, TextInput, Pressable, StyleSheet } from 'react-native';
 import { useTranslation } from 'react-i18next';
-import { colors, spacing, radius, fontSize } from '../lib/theme';
+import { spacing, radius, fontSize } from '../lib/theme';
+import type { Colors } from '../lib/theme';
+import { useColors, useFs } from '../lib/useTheme';
 
 interface SaveGameModalProps {
   visible: boolean;
@@ -18,6 +20,11 @@ interface SaveGameModalProps {
 
 export function SaveGameModal({ visible, onSave, onCancel }: SaveGameModalProps) {
   const { t } = useTranslation();
+  const c = useColors();
+  const fs = useFs();
+  // Sin useMemo: el renderer ligero de tests invoca los componentes
+  // directamente y los hooks de React lanzan fuera de un render real.
+  const styles = createStyles(c, fs);
   const [name, setName] = useState('');
 
   const close = () => {
@@ -40,7 +47,7 @@ export function SaveGameModal({ visible, onSave, onCancel }: SaveGameModalProps)
             value={name}
             onChangeText={setName}
             placeholder={t('panels.saveNamePlaceholder')}
-            placeholderTextColor="#777"
+            placeholderTextColor={c.textFaint}
             accessibilityLabel={t('panels.saveNamePlaceholder')}
           />
           <View style={styles.modalActions}>
@@ -65,29 +72,29 @@ export function SaveGameModal({ visible, onSave, onCancel }: SaveGameModalProps)
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: c.overlayStrong,
     justifyContent: 'center',
     alignItems: 'center',
   },
   modalContent: {
-    backgroundColor: colors.surfaceRaised,
+    backgroundColor: c.surfaceRaised,
     borderRadius: radius.md,
     padding: spacing.xl,
     width: '80%',
     maxWidth: 340,
   },
   modalTitle: {
-    color: colors.text,
-    fontSize: fontSize.section,
+    color: c.text,
+    fontSize: fs(fontSize.section),
     fontWeight: 'bold',
     marginBottom: spacing.md,
   },
   modalInput: {
-    backgroundColor: colors.surface,
-    color: colors.text,
+    backgroundColor: c.surface,
+    color: c.text,
     padding: spacing.md,
     borderRadius: radius.sm,
     marginBottom: spacing.lg,
@@ -99,17 +106,19 @@ const styles = StyleSheet.create({
   modalButton: {
     flex: 1,
     padding: spacing.md,
+    minHeight: 44,
+    justifyContent: 'center',
     borderRadius: radius.sm,
     alignItems: 'center',
   },
   modalButtonCancel: {
-    backgroundColor: colors.surface,
+    backgroundColor: c.surface,
   },
   modalButtonOk: {
-    backgroundColor: colors.success,
+    backgroundColor: c.success,
   },
   modalButtonText: {
-    color: colors.text,
+    color: c.text,
     fontWeight: 'bold',
   },
 });

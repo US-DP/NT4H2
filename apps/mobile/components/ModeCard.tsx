@@ -3,7 +3,7 @@
  * Compartida entre Inicio y la pantalla Jugar.
  */
 
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { fontSize, radius, spacing } from '../lib/theme';
 import { useColors, useFs } from '../lib/useTheme';
@@ -27,6 +27,7 @@ export function ModeCard({ icon, title, meta, description, onPress, loading }: M
       disabled={loading}
       accessibilityRole="button"
       accessibilityLabel={t('panels.modeCardA11y', { title, meta, description })}
+      accessibilityState={{ busy: !!loading }}
       style={({ pressed }) => [
         styles.modeCard,
         {
@@ -37,7 +38,9 @@ export function ModeCard({ icon, title, meta, description, onPress, loading }: M
         loading && { opacity: 0.6 },
       ]}
     >
-      <View style={[styles.modeIcon, { backgroundColor: colors.surfaceRaised }]}>{icon}</View>
+      <View style={[styles.modeIcon, { backgroundColor: colors.surfaceRaised }]}>
+        {loading ? <ActivityIndicator size="small" color={colors.accent} /> : icon}
+      </View>
       <Text style={[styles.modeTitle, { color: colors.text, fontSize: fs(fontSize.section) }]}>
         {title}
       </Text>

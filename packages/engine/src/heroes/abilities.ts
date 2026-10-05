@@ -19,10 +19,15 @@ import type {
   GameState,
   GameEvent,
   PendingChoice,
+  ResolutionContext,
+  CardEffect,
 } from '@nt4h/schema';
 import type { DeterministicRng } from '../rng/index.js';
 import { nextSeq, resetSeq } from '../seq.js';
 import type { CatalogLoadResult } from '@nt4h/catalog';
+import { EffectRegistry, registerCoreEffects } from '../effects/registry.js';
+import { executeEffectChain } from '../effects/resolver.js';
+import { getEffectiveFortitude } from '../modifiers/index.js';
 
 // D426: alias por compatibilidad — resetSeq ahora es global (§51.12)
 export function resetAbilitySeq(): void {
@@ -109,6 +114,18 @@ export function useHeroAbility(
     return { events: [], state, pendingChoice: null };
   }
 
+  // Héroes sin implementación hardcodeada solo ejecutan los efectos
+  // declarativos de `heroAbility.effects` del catálogo (Taller). Si no hay
+  // ninguno, la pericia no existe → no consumir el uso ni emitir el evento.
+  const HARDCODED_HEROES = new Set([
+    'hero.aranel', 'hero.neddia', 'hero.idril',
+    'hero.valerys', 'hero.lisavette',
+  ]);
+  const declarativeEffects: CardEffect[] = heroDef.heroAbility?.effects ?? [];
+  if (!HARDCODED_HEROES.has(heroId) && declarativeEffects.length === 0) {
+    return { events: [], state, pendingChoice: null };
+  }
+
   // Evento: pericia usada
   events.push({
     type: 'HERO_ABILITY_USED',
@@ -137,23 +154,11 @@ export function useHeroAbility(
     case 'hero.neddia':
       return neddiaAbility(newState, playerId, events, catalog);
 
-    case 'hero.taheral':
-      // Taheral se activa durante Evasion, no directamente
-      return { events, state: newState, pendingChoice: null };
-
     case 'hero.idril':
       return idrilAbility(newState, playerId, events);
 
     case 'hero.valerys':
       return valerysAbility(newState, playerId, targetId, events);
-
-    case 'hero.feldon':
-      // Feldon es pasiva (se aplica durante HORDE_ATTACK)
-      return { events, state: newState, pendingChoice: null };
-
-    case 'hero.beleth-il':
-      // Beleth-Il es pasiva (se aplica durante Disparo Rapido)
-      return { events, state: newState, pendingChoice: null };
 
     case 'hero.lisavette':
       // Lisavette: pasiva — durante ataque de Horda a otro heroe,
@@ -162,8 +167,33 @@ export function useHeroAbility(
       // (la verificacion de escudos se hace antes de consumir el uso)
       return lisavetteAbility(newState, playerId, targetId, targetEnemyId, events);
 
-    default:
-      return { events, state: newState, pendingChoice: null };
+    default: {
+      // Taller: ejecutar los efectos declarativos del catálogo a través
+      // del registry genérico (pre-check arriba garantiza que existen).
+      const reg = new EffectRegistry();
+      registerCoreEffects(reg);
+      const ctx: ResolutionContext = {
+        activePlayerId: playerId,
+        currentCardId: heroDef.id,
+        currentCardName: heroDef.name,
+        currentCardInstanceId: `ability-${playerId}`,
+        selectedEnemyId: targetEnemyId ?? null,
+        cardsPlayedThisTurn: player.cardsPlayedThisTurn,
+        cardsPlayedAgainstEnemy: player.cardsPlayedAgainstEnemy,
+        drawnCardInstanceId: null,
+        sourceZone: 'HAND',
+        enemiesDefeatedThisResolution: [],
+        depth: 0,
+      };
+      const chain = executeEffectChain(
+        declarativeEffects, ctx, newState, _rng, reg, catalog, 0,
+      );
+      return {
+        events: [...events, ...chain.events],
+        state: chain.state,
+        pendingChoice: null,
+      };
+    }
   }
 }
 
@@ -355,7 +385,9 @@ function lisavetteAbility(
   // Paso 2: Con héroe objetivo pero sin enemigo objetivo → pedir SELECT_ENEMY
   if (!targetEnemyId) {
     const enemies = state.battlefield
-      .filter(e => e.wounds < (e.effectiveFortitude ?? e.baseFortitude))
+      // getEffectiveFortitude (base+mods): el campo materializado no se
+      // actualiza durante la partida real — leerlo ignoraba modificadores.
+      .filter(e => e.wounds < getEffectiveFortitude(e, state))
       .map(e => e.instanceId);
     const choice: PendingChoice = {
       choiceId: `lisavette-enemy-${playerId}-${nextSeq()}`,

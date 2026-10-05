@@ -12,7 +12,6 @@ export default defineConfig({
     alias: {
       'react-native': resolve(__dirname, 'tests/mocks/react-native.ts'),
       'expo-router': resolve(__dirname, 'tests/mocks/expo-router.ts'),
-      'expo-status-bar': resolve(__dirname, 'tests/mocks/expo-status-bar.ts'),
       'expo-image': resolve(__dirname, 'tests/mocks/expo-image.ts'),
       'react-is': resolve(__dirname, 'tests/mocks/react-is.ts'),
       'react-native-reanimated': resolve(__dirname, 'tests/mocks/reanimated.ts'),
@@ -25,7 +24,6 @@ export default defineConfig({
       'react-i18next': resolve(__dirname, 'tests/mocks/react-i18next.ts'),
       'lucide-react-native': resolve(__dirname, 'tests/mocks/lucide-react-native.ts'),
       'react-native-unistyles': resolve(__dirname, 'tests/mocks/unistyles.ts'),
-      'moti': resolve(__dirname, 'tests/mocks/moti.ts'),
       '@gorhom/bottom-sheet': resolve(__dirname, 'tests/mocks/bottom-sheet.ts'),
       'expo-audio': resolve(__dirname, 'tests/mocks/expo-audio.ts'),
     },

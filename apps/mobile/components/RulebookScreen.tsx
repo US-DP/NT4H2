@@ -15,6 +15,7 @@ import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import '../lib/i18n';
 import { HelpButton } from './HelpButton';
+import { KeywordTooltip } from './KeywordTooltip';
 import { Tutorial } from './Tutorial';
 import {
   RULES, BASE_CHAPTERS, SOLO_ITEMS, MULTI_ITEMS, QUICKREF_IDS,
@@ -23,6 +24,8 @@ import {
 import { GuidedSetup } from './GuidedSetup';
 import { CardAnatomy } from './CardAnatomy';
 import { useColors, useFontScale, useFontFamily } from '../lib/useTheme';
+import { type Colors } from '../lib/theme';
+import { MaybeAppNav, useNavSidebarWidthSafe } from './AppNav';
 import { CATALOG_VERSION } from '@nt4h/catalog';
 import { RULESET_VERSION } from '@nt4h/engine';
 
@@ -53,6 +56,8 @@ export function RulebookScreen({ initialRule }: { initialRule?: string }) {
   const router = useRouter();
   const c = useColors();
   const fs = useFontScale();
+  const styles = createStyles(c);
+  const navWidth = useNavSidebarWidthSafe();
   const fontFamily = useFontFamily();
   const { width } = useWindowDimensions();
   const wide = width >= 960;
@@ -60,6 +65,7 @@ export function RulebookScreen({ initialRule }: { initialRule?: string }) {
 
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState<TabId>('base');
+  const [kwTip, setKwTip] = useState<string | null>(null);
   const [selected, setSelected] = useState<string>('intro');
   const [expandedChapter, setExpandedChapter] = useState<string>('ch-intro');
   const [showTutorial, setShowTutorial] = useState(false);
@@ -216,7 +222,11 @@ export function RulebookScreen({ initialRule }: { initialRule?: string }) {
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: c.background }]}>
+    <View style={{ flex: 1 }}>
+    <View style={[
+      styles.container,
+      { backgroundColor: c.background, marginLeft: navWidth, paddingBottom: navWidth ? 16 : 72 },
+    ]}>
       {/* Cabecera */}
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
@@ -281,7 +291,7 @@ export function RulebookScreen({ initialRule }: { initialRule?: string }) {
                 <Text style={[
                   styles.tabText,
                   { color: c.textMuted, fontSize: 13 * fs },
-                  tab === tabId && { color: '#1a1a2e' },
+                  tab === tabId && { color: c.textOnAccent },
                 ]}>
                   {t(`book.tabs.${tabId}`)}
                 </Text>
@@ -379,7 +389,7 @@ export function RulebookScreen({ initialRule }: { initialRule?: string }) {
                           <Pressable
                             key={r.id}
                             onPress={() => openRule(r.id)}
-                            style={{ paddingVertical: 5 }}
+                            style={{ paddingVertical: 5, minHeight: 44, justifyContent: 'center' }}
                             accessibilityRole="button"
                             accessibilityLabel={t('book.openTitleA11y', { title: r.title })}
                           >
@@ -403,8 +413,9 @@ export function RulebookScreen({ initialRule }: { initialRule?: string }) {
                   <Pressable
                     onPress={() => goTo(-1)}
                     disabled={selectedIdx <= 0}
-                    style={[styles.navButton, { borderColor: c.border }, selectedIdx <= 0 && { opacity: 0.4 }]}
+                    style={[styles.navButton, { borderColor: c.border }, selectedIdx <= 0 && { opacity: 0.45 }]}
                     accessibilityRole="button"
+                    accessibilityState={{ disabled: selectedIdx <= 0 }}
                     accessibilityLabel={t('book.prevA11y')}
                   >
                     <Text style={{ color: c.text, fontSize: 13 * fs }}>{t('book.prev')}</Text>
@@ -415,8 +426,9 @@ export function RulebookScreen({ initialRule }: { initialRule?: string }) {
                   <Pressable
                     onPress={() => goTo(1)}
                     disabled={selectedIdx >= flatItems.length - 1}
-                    style={[styles.navButton, { borderColor: c.border }, selectedIdx >= flatItems.length - 1 && { opacity: 0.4 }]}
+                    style={[styles.navButton, { borderColor: c.border }, selectedIdx >= flatItems.length - 1 && { opacity: 0.45 }]}
                     accessibilityRole="button"
+                    accessibilityState={{ disabled: selectedIdx >= flatItems.length - 1 }}
                     accessibilityLabel={t('book.nextA11y')}
                   >
                     <Text style={{ color: c.text, fontSize: 13 * fs }}>{t('book.next')}</Text>
@@ -433,11 +445,29 @@ export function RulebookScreen({ initialRule }: { initialRule?: string }) {
                 {t('book.inThisSection')}
               </Text>
               <View style={{ flexWrap: 'wrap', flexDirection: 'row', gap: 6, marginBottom: 12 }}>
-                {selectedRule.keywords.slice(0, 6).map((k) => (
-                  <View key={k} style={[styles.keywordChip, { borderColor: c.border }]}>
-                    <Text style={{ color: c.textMuted, fontSize: 11 * fs }}>{k}</Text>
-                  </View>
-                ))}
+                {selectedRule.keywords.slice(0, 6).map((k) => {
+                  // UI-224: tocar una palabra clave muestra dónde más
+                  // aparece — antes los chips eran texto muerto y
+                  // KeywordTooltip un componente sin uso.
+                  const sharing = RULES.filter(
+                    (r) => r.id !== selectedRule.id && r.keywords.includes(k),
+                  ).slice(0, 4);
+                  return (
+                    <KeywordTooltip
+                      key={k}
+                      keyword={k}
+                      description={sharing.length
+                        ? t('book.keywordRelated', { sections: sharing.map((r) => r.title).join(' · ') })
+                        : t('book.keywordNone')}
+                      visible={kwTip === k}
+                      onToggle={(v) => setKwTip(v ? k : null)}
+                    >
+                      <View style={[styles.keywordChip, { borderColor: c.border }]}>
+                        <Text style={{ color: c.textMuted, fontSize: 11 * fs }}>{k}</Text>
+                      </View>
+                    </KeywordTooltip>
+                  );
+                })}
               </View>
               {related.length > 0 && (
                 <>
@@ -448,7 +478,7 @@ export function RulebookScreen({ initialRule }: { initialRule?: string }) {
                     <Pressable
                       key={r.id}
                       onPress={() => openRule(r.id)}
-                      style={{ paddingVertical: 5 }}
+                      style={{ paddingVertical: 5, minHeight: 44, justifyContent: 'center' }}
                       accessibilityRole="button"
                     >
                       <Text style={{ color: c.info, fontSize: 12 * fs }}>{r.title}</Text>
@@ -484,7 +514,7 @@ export function RulebookScreen({ initialRule }: { initialRule?: string }) {
                 onPress={() => setDrawerOpen(false)}
                 accessibilityRole="button"
                 accessibilityLabel={t('book.closeIndexA11y')}
-                hitSlop={10}
+                style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}
               >
                 <Text style={{ color: c.info, fontSize: 14 * fs }}>{t('book.close')}</Text>
               </Pressable>
@@ -511,24 +541,34 @@ export function RulebookScreen({ initialRule }: { initialRule?: string }) {
         }}
       />
     </View>
+    <MaybeAppNav />
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors) => StyleSheet.create({
   container: { flex: 1, padding: 16 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 },
   title: { fontWeight: '800' },
-  input: { padding: 12, borderRadius: 8, borderWidth: 1, marginBottom: 8 },
-  quickLinks: { flexDirection: 'row', marginBottom: 10 },
+  input: { padding: 12, borderRadius: 8, borderWidth: 1, marginBottom: 8, minHeight: 44 },
+  // flexGrow:0: en web el ScrollView ocupaba todo el alto libre del
+  // layout (hueco de ~200px entre los chips y las pestañas).
+  quickLinks: { flexDirection: 'row', marginBottom: 10, flexGrow: 0 },
   quickChip: {
     borderWidth: 1,
     borderRadius: 16,
     paddingHorizontal: 12,
     paddingVertical: 6,
     marginRight: 8,
+    minHeight: 44,
+    justifyContent: 'center',
+    // alignSelf: sin esto el ScrollView horizontal estira el chip a todo
+    // el alto disponible en web (los accesos rápidos se veían como
+    // tarjetas enormes vacías en vez de pills).
+    alignSelf: 'flex-start',
   },
   tabs: { flexDirection: 'row', gap: 8, marginBottom: 4, flexWrap: 'wrap' },
-  tab: { paddingVertical: 7, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1 },
+  tab: { paddingVertical: 7, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, minHeight: 44, justifyContent: 'center' },
   tabText: { fontWeight: '600' },
   body: { flex: 1, flexDirection: 'row', gap: 12 },
   index: {
@@ -552,7 +592,7 @@ const styles = StyleSheet.create({
   drawerButton: {
     paddingVertical: 4,
     paddingHorizontal: 4,
-    minHeight: 32,
+    minHeight: 44,
     justifyContent: 'center',
   },
   drawerOverlay: {
@@ -570,7 +610,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: c.overlayScrim,
   },
   drawerPanel: {
     width: '82%',
@@ -598,6 +638,7 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     paddingHorizontal: 6,
     borderRadius: 6,
+    minHeight: 44,
   },
   indexItem: {
     paddingVertical: 5,
@@ -605,6 +646,8 @@ const styles = StyleSheet.create({
     paddingRight: 6,
     borderLeftWidth: 3,
     borderLeftColor: 'transparent',
+    minHeight: 44,
+    justifyContent: 'center',
   },
   content: { flex: 1, paddingHorizontal: 4 },
   resultRow: {
@@ -634,14 +677,16 @@ const styles = StyleSheet.create({
     marginTop: 20,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#3B405B',
+    borderTopColor: c.divider,
   },
   navButton: {
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 8,
+    minHeight: 44,
+    justifyContent: 'center',
   },
-  backButton: { padding: 12, borderRadius: 8, alignItems: 'center', marginTop: 8 },
-  backText: { color: '#fff', fontWeight: 'bold' },
+  backButton: { padding: 12, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginTop: 8, minHeight: 44 },
+  backText: { color: c.text, fontWeight: 'bold' },
 });

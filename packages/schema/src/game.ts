@@ -3,7 +3,7 @@
  * El estado es un snapshot inmutable; los eventos son hechos inmutables.
  */
 
-import type { CapabilityIcon, Zone, Reward, CardEffect, ContentSet } from './card.js';
+import type { CapabilityIcon, Zone, Reward, CardEffect, ContentSet, EffectDuration } from './card.js';
 
 // ============================================================================
 // Fases del juego
@@ -48,6 +48,9 @@ export interface CardInstance {
   name?: string;
   /** Para cartas persistentes (Trampa), el disparador que las activa */
   persistentTrigger?: string;
+  /** Auras continuas del escenario activo (MODIFY_FORTITUDE ALL_ENEMIES):
+   *  applyEntryAuras las aplica a cada enemigo que entra al campo. */
+  auraModifiers?: Modifier[];
 }
 
 // ============================================================================
@@ -73,7 +76,6 @@ export interface Modifier {
   targetId?: string; // enemigo o jugador especifico
   filter?: { name?: string };
   scope?: 'THIS_TURN' | 'NEXT_CARD';
-  conditionMet?: boolean;
 }
 
 // ============================================================================
@@ -84,7 +86,8 @@ export interface EnemyState {
   instanceId: string;
   definitionId: string;
   baseFortitude: number;
-  effectiveFortitude?: number; // Calculado por applyModifiers
+  // (effectiveFortitude eliminado: caché stale — la fuente de verdad es
+  //  getEffectiveFortitude(base + modifiers), calculado al vuelo)
   wounds: number;
   reward: Reward | null; // null = no revelado
   modifiers: Modifier[];
@@ -93,6 +96,10 @@ export interface EnemyState {
   specialIcons: string[];
   /** Enemigos cuyo dano esta deshabilitado este turno */
   damageDisabled: boolean;
+  /** Duracion declarada del disable (DISABLE_ENEMY_DAMAGE.duration).
+   *  Ausente en estados antiguos → se asume 'HORDE_ATTACK' (limpieza al
+   *  final del ataque de la Horda, comportamiento previo). */
+  damageDisabledDuration?: EffectDuration;
   /** Estados aplicados (Marca, Veneno, Aturdimiento…). Ids libres del Taller;
    *  el motor da semántica a 'mark' (+N daño y se consume), 'stun' (salta el
    *  próximo ataque de la Horda) y 'poison' (tick de daño en la Horda). */
@@ -128,11 +135,18 @@ export interface PlayerState {
   trophies: string[]; // instanceIds de enemigos derrotados
   shields: number;
   prevention: number; // dano prevenido pendiente
+  /** Duración declarada del efecto que creó la prevención
+   *  (PREVENT_DAMAGE.duration). undefined = 'HORDE_ATTACK' (legacy). */
+  preventionExpiry?: EffectDuration;
   /** Armadura (GRANT_ARMOR): reduce CADA instancia de daño en N hasta fin de turno */
   armor: number;
+  /** Duración declarada del GRANT_ARMOR. undefined = 'UNTIL_END_OF_TURN' (legacy). */
+  armorExpiry?: EffectDuration;
   /** Bloqueo (BLOCK_NEXT_DAMAGE): cancela hasta N del PRÓXIMO daño recibido */
   blockNext?: number;
   damageCancellation: boolean; // Aura Protectora
+  /** Duración declarada del CANCEL_ALL_DAMAGE. undefined = 'HORDE_ATTACK' (legacy). */
+  cancelExpiry?: EffectDuration;
   /** playerId del heroe que intercepta el dano de este ataque (Valerys) */
   interceptedBy: string | null;
   /** D370: Cartas pujadas para la elección de Líder (instanceIds) */
@@ -163,6 +177,8 @@ export interface PlayerState {
   /** Decisión de la Pericia de Feldon para el ataque de Horda en curso
    *  (spec §6.8: 1 uso discrecional). undefined = aún no preguntado */
   feldonDecision?: 'HALVE' | 'DECLINE';
+  /** El cambio de cartas iniciales (spec §4.1) ya se usó — una sola vez */
+  startingSwapUsed?: boolean;
 }
 
 // ============================================================================
@@ -194,12 +210,14 @@ export interface GameState {
   rngState: { seed: string; state: number };
   /** Modificador global de coste de mercado (Mercado de Lotharion) */
   marketCostModifier: number;
+  /** Ledger sourceId → delta de los modificadores de coste activos:
+   *  permite revertir el escalar cuando su fuente (enemigo/carta)
+   *  abandona el campo. Ausente en partidas antiguas. */
+  marketCostSources?: Record<string, number>;
   /** Indica si el escenario actual ignora recompensas de monedas (Planicie de Skaarg) */
   ignoreCoinRewards: boolean;
   /** Indica si el escenario actual ignora Gloria de recompensas (Ruinas de Brunmar) */
   ignoreGloryRewards: boolean;
-  /** Bonus de fortaleza a orcos (Roghkiller) */
-  orcFortitudeBonus: number;
   /** Número de cartas descartadas en la evasión actual (temporal, para EVASION_DISCARDED_COUNT) */
   evasionDiscardedCount?: number;
   /** Variables de partida del Taller (SET_VARIABLE scope GAME) */
@@ -372,9 +390,10 @@ export type GameEvent =
   | { type: 'GLORY_GAINED'; playerId: string; amount: number; seq: number }
   | { type: 'GLORY_LOST'; playerId: string; amount: number; seq: number }
   | { type: 'COINS_GAINED'; playerId: string; amount: number; seq: number }
+  | { type: 'COINS_LOST'; playerId: string; amount: number; seq: number }
   | { type: 'COINS_STOLEN'; fromPlayerId: string; toPlayerId: string; amount: number; seq: number }
   | { type: 'WOUND_HEALED'; playerId: string; amount: number; seq: number }
-  | { type: 'CARD_MOVED'; cardInstanceId: string; from: Zone; to: Zone; seq: number; toPlayerId?: string; playerId?: string }
+  | { type: 'CARD_MOVED'; cardInstanceId: string; from: Zone; to: Zone; seq: number; toPlayerId?: string; playerId?: string; supportDeckIndex?: number }
   | { type: 'HORDE_DECK_REORDERED'; newOrder: string[]; seq: number }
   | { type: 'CARD_REMOVED_FROM_GAME'; cardInstanceId: string; seq: number }
   | { type: 'HORDE_ATTACKED'; playerId: string; totalDamage: number; seq: number }
@@ -388,8 +407,8 @@ export type GameEvent =
   | { type: 'TURN_ENDED'; playerId: string; seq: number }
   | { type: 'PHASE_CHANGED'; phase: Phase; seq: number }
   | { type: 'HERO_ABILITY_USED'; playerId: string; usesRemaining: number; seq: number }
-  | { type: 'PREVENTION_APPLIED'; playerId: string; amount: number; seq: number }
-  | { type: 'ENEMY_DAMAGE_DISABLED'; enemyInstanceId: string; seq: number }
+  | { type: 'PREVENTION_APPLIED'; playerId: string; amount: number; duration?: EffectDuration; seq: number }
+  | { type: 'ENEMY_DAMAGE_DISABLED'; enemyInstanceId: string; duration?: EffectDuration; seq: number }
   | { type: 'MODIFIER_ADDED'; modifierId: string; targetId: string; layer: string; amount?: number; sourceId?: string; duration?: string; filter?: { name?: string }; scope?: 'THIS_TURN' | 'NEXT_CARD'; seq: number }
   | { type: 'MODIFIER_EXPIRED'; modifierId: string; seq: number }
   | { type: 'HERO_WOUNDED'; playerId: string; woundCount: number; seq: number }
@@ -400,22 +419,23 @@ export type GameEvent =
   | { type: 'EVASION_PERFORMED'; playerId: string; discardedCardInstanceIds: string[]; seq: number }
   | { type: 'LEADER_DETERMINED'; playerId: string; seq: number }
   | { type: 'LEADER_TIE_BREAK'; tiedPlayerIds: string[]; winnerId: string; method: 'AGE' | 'RANDOM_SEEDED'; seq: number }
-  | { type: 'VULNERABILITY_APPLIED'; enemyInstanceId: string; bonus: number; seq: number }
+  | { type: 'VULNERABILITY_APPLIED'; enemyInstanceId: string; bonus: number; duration?: EffectDuration; seq: number }
   | { type: 'SHIELD_PLACED'; playerId: string; amount: number; seq: number }
-  | { type: 'SHIELD_TRANSFERRED'; fromPlayerId: string; toPlayerId: string; amount: number; targetEnemyId?: string; seq: number }
-  | { type: 'CANCELLATION_ACTIVATED'; playerId: string; seq: number }
+  // (SHIELD_TRANSFERRED eliminado: nunca hubo un productor — la carta de
+  //  Lisavette se implementa vía ENEMY_DAMAGE_DISABLED + COINS_STOLEN)
+  | { type: 'CANCELLATION_ACTIVATED'; playerId: string; duration?: EffectDuration; seq: number }
   | { type: 'PERSISTENT_CARD_PLACED'; playerId: string; cardInstanceId: string; cardDefinitionId: string; trigger: string; seq: number }
   | { type: 'PERSISTENT_CARD_REMOVED'; cardInstanceId: string; seq: number }
   | { type: 'ENEMY_SWAPPED'; oldEnemyInstanceId: string; newEnemyInstanceId: string; newEnemyDefinitionId: string; newEnemyFortitude: number; newEnemyReward: Reward | null; newEnemyIsOrc: boolean; newEnemyIsWarlord: boolean; newEnemySpecialIcons: string[]; seq: number }
   | { type: 'ENEMY_RETURNED_TO_HORDE'; enemyInstanceId: string; position: 'BOTTOM' | 'TOP'; seq: number }
   | { type: 'DAMAGE_INTERCEPTED'; interceptorPlayerId: string; originalTargetPlayerId: string; amount: number; seq: number }
-  | { type: 'CARDS_REVEALED_TO_PLAYER'; playerId: string; cardInstanceIds: string[]; deck: 'HORDE' | 'ABILITY' | 'MARKET'; seq: number }
+  | { type: 'CARDS_REVEALED_TO_PLAYER'; playerId: string; cardInstanceIds: string[]; deck: 'HORDE'; seq: number }
   | { type: 'SUPPORT_DECK_OPENED'; playerId: string; supportDeckIndex: number; seq: number }
   | { type: 'RESOLUTION_HALTED'; cardInstanceId?: string; reason: string; seq: number }
   // Extensiones del Taller (fase 1+)
   | { type: 'STATUS_APPLIED'; enemyInstanceId: string; status: string; stacks: number; duration?: 'PERMANENT' | 'UNTIL_END_OF_TURN'; seq: number }
   | { type: 'STATUS_REMOVED'; enemyInstanceId: string; status: string; seq: number }
-  | { type: 'ARMOR_GRANTED'; playerId: string; amount: number; seq: number }
+  | { type: 'ARMOR_GRANTED'; playerId: string; amount: number; duration?: EffectDuration; seq: number }
   | { type: 'HORDE_CARD_DISCARDED'; cardInstanceId: string; seq: number }
   | { type: 'ENEMY_SPAWNED'; enemyInstanceId: string; enemyDefinitionId: string; enemyFortitude: number; enemyReward: Reward | null; enemyIsOrc: boolean; enemyIsWarlord: boolean; enemySpecialIcons: string[]; seq: number }
   // Extensiones del Taller (fase 2)
@@ -428,4 +448,28 @@ export type GameEvent =
   // determinista que el camino directo (event sourcing §51.12)
   | { type: 'EFFECTS_EXPIRED'; scope: 'HORDE_ATTACK_END' | 'RESTORATION' | 'TURN_END'; seq: number }
   | { type: 'PENDING_CHOICES_REMOVED'; choiceIds: string[]; seq: number }
-  | { type: 'TROPHY_REMOVED'; playerId: string; trophyInstanceId: string; seq: number };
+  // La creación de elecciones se hace por mutación directa en comandos y
+  // fases; el diff de frontera la documenta con este evento para que el
+  // fold del eventLog las reconstruya (E-2). Idempotente por choiceId.
+  | { type: 'PENDING_CHOICE_CREATED'; choice: PendingChoice; seq: number }
+  | { type: 'TROPHY_REMOVED'; playerId: string; trophyInstanceId: string; seq: number }
+  | { type: 'STARTING_CARDS_SWAPPED'; playerId: string; seq: number }
+  // Efectos continuos de un escenario con los deltas ya resueltos: el
+  // fold del eventLog reproduce la misma mutación que el camino directo
+  // (applyScenarioEffects) — §51.12.
+  | {
+      type: 'SCENARIO_EFFECTS_APPLIED';
+      scenarioInstanceId: string;
+      definitionId: string;
+      ignoreCoinRewards: boolean;
+      ignoreGloryRewards: boolean;
+      marketCostDelta: number;
+      auraModifiers?: Modifier[];
+      seq: number
+    }
+  // Puja de líder: las cartas elegidas quedan registradas para el fold
+  // (antes solo se mutaban en player.leaderBidCards sin evento).
+  | { type: 'LEADER_BID_CARDS'; playerId: string; cardInstanceIds: string[]; seq: number }
+  // Decisión opt-in de Feldon ante la Horda (HALVE/DECLINE) — también se
+  // registraba por mutación directa y el fold la perdía.
+  | { type: 'FELDON_DECISION'; playerId: string; decision: 'HALVE' | 'DECLINE'; seq: number };

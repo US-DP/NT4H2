@@ -90,6 +90,7 @@ export function registerControlEffects(registry: EffectRegistry): void {
     return [{
       type: 'ENEMY_DAMAGE_DISABLED',
       enemyInstanceId: targetId,
+      duration: eff.duration,
       seq: registry.nextSeq(),
     }];
   });

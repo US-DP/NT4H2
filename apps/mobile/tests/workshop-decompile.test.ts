@@ -57,6 +57,9 @@ describe('Taller → decompilador de cartas del catálogo', () => {
   it('cada carta: recompilar la zona principal reproduce los efectos', () => {
     for (const card of catalog.byId.values()) {
       if ((card.effects?.length ?? 0) === 0) continue;
+      // CUSTOM_SCENARIO no es editable: su handler es un dispatch nativo
+      // del motor — el nodo existe solo como documentación del mapeo.
+      if (card.effects!.every(e => e.type === 'CUSTOM_SCENARIO')) continue;
       const dec = decompileCard(card);
       const rebuilt = buildEffects(dec.nodes);
       expect(canon(rebuilt), `${card.id} (${card.name})`).toEqual(canon(card.effects));

@@ -6,7 +6,7 @@ import { resetPhaseSeq } from '../src/phases/engine.js';
 import { loadCatalog } from '@nt4h/catalog';
 import { projectForPlayer, projectEventsForPlayer } from '../src/projection/index.js';
 import { createSnapshot, replay, replayFromSnapshot, stateHash, createReplay, ENGINE_VERSION } from '../src/replay/index.js';
-import { applyModifiers, effectiveFortitude, effectiveDamage, effectiveHordeDamage, effectiveEnemyDamage, expireModifiers, MODIFIER_LAYERS } from '../src/modifiers/index.js';
+import { getEffectiveFortitude, effectiveDamage, effectiveHordeDamage, effectiveEnemyDamage, expireModifiers, MODIFIER_LAYERS } from '../src/modifiers/index.js';
 import { execute } from '../src/commands/execute.js';
 import type { GameState, GameEvent, Command } from '@nt4h/schema';
 
@@ -264,14 +264,9 @@ describe('Modifiers — capas de modificadores', () => {
     ]);
   });
 
-  it('applyModifiers no rompe el estado', () => {
-    const modified = applyModifiers(state);
-    expect(modified.battlefield.length).toBe(state.battlefield.length);
-  });
-
-  it('effectiveFortitude calcula la fortaleza efectiva', () => {
+  it('getEffectiveFortitude calcula la fortaleza efectiva', () => {
     const enemy = state.battlefield[0];
-    const fortitude = effectiveFortitude(enemy, state);
+    const fortitude = getEffectiveFortitude(enemy, state);
     expect(fortitude).toBe(enemy.baseFortitude);
   });
 

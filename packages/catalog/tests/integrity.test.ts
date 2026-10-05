@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import { loadCatalog } from '../src/loader.js';
 import { getCardImages, countReadyForGame } from '../src/images.js';
-import { EFFECT_REGISTRY, validateEffectSources } from '../src/effects.js';
+import { EFFECT_REGISTRY, validateEffectSources, validateDirectExecuteEffects } from '../src/effects.js';
 import type { CardEffect } from '@nt4h/schema';
 
 const catalog = loadCatalog();
@@ -91,6 +91,13 @@ describe('Integridad semántica del catálogo', () => {
         }
         const errs = validateEffectSources(c.type, effects ?? []);
         expect(errs, `${c.id}.${where}: ${errs.join(' | ')}`).toEqual([]);
+        // heroAbility/peritia se ejecutan directas contra el registry:
+        // un efecto que solo se intercepta en raíz de carta sería un
+        // no-op silencioso en partida.
+        if (where !== 'effects') {
+          const derrs = validateDirectExecuteEffects(effects ?? []);
+          expect(derrs, `${c.id}.${where}: ${derrs.join(' | ')}`).toEqual([]);
+        }
       }
     }
   });

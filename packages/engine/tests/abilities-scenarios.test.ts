@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { DeterministicRng } from '../src/rng/index.js';
 import { useHeroAbility, resetAbilitySeq } from '../src/heroes/abilities.js';
 import { applyScenarioEffects, clearScenarioEffects, onEnemyDefeated, onTurnStart, executeTurnStartEffect, resetScenarioSeq } from '../src/scenarios/index.js';
@@ -12,7 +12,7 @@ import { makeCard, makeEnemy } from './fixtures/builders.js';
 import { computeHordeAttackBreakdown } from '../src/analysis/hordeBreakdown.js';
 import type { GameState, Zone } from '@nt4h/schema';
 
-describe('HeroAbilities â€” Pericias de heroes', () => {
+describe('HeroAbilities — Pericias de heroes', () => {
   let catalog: ReturnType<typeof loadCatalog>;
   let rng: DeterministicRng;
 
@@ -66,8 +66,8 @@ describe('HeroAbilities â€” Pericias de heroes', () => {
 
   it('usa la Pericia de Valerys (interceptar dano)', () => {
     const state = makeState('hero.valerys');
-    // D434: Val¨rys solo intercepta el da±o del h©roe que se enfrenta a la
-    // Horda â€” el jugador activo debe ser el objetivo 'p2'
+    // D434: Valérys solo intercepta el daño del héroe que se enfrenta a la
+    // Horda — el jugador activo debe ser el objetivo 'p2'
     state.activePlayerId = 'p2';
     const result = useHeroAbility(state, 'p1', rng, catalog, 'p2');
 
@@ -101,6 +101,8 @@ describe('HeroAbilities â€” Pericias de heroes', () => {
     const state = makeState('hero.taheral');
     state.phase = 'ATTACK_CHOICE';
     state.activePlayerId = 'p1';
+    // Las pujas de líder del setup ya estarían resueltas en flujo real
+    state.pendingChoices = [];
     const reg = new EffectRegistry();
     registerCoreEffects(reg);
     const discarded = state.players.p1.hand.slice(0, 2).map(c => c.instanceId);
@@ -125,6 +127,7 @@ describe('HeroAbilities â€” Pericias de heroes', () => {
     const state = makeState('hero.taheral');
     state.phase = 'ATTACK_CHOICE';
     state.activePlayerId = 'p1';
+    state.pendingChoices = [];
     const reg = new EffectRegistry();
     registerCoreEffects(reg);
     const discarded = state.players.p1.hand.slice(0, 2).map(c => c.instanceId);
@@ -175,7 +178,7 @@ describe('HeroAbilities â€” Pericias de heroes', () => {
     );
     expect(res.events.some(e => e.type === 'HERO_ABILITY_USED')).toBe(true);
     const after = processPhases(res.newState, rng, catalog);
-    // 4 de da±o â†’ mitad = 2 cartas perdidas
+    // 4 de daño → mitad = 2 cartas perdidas
     const lost = after.events.find(e => e.type === 'CARDS_LOST');
     expect(lost && lost.type === 'CARDS_LOST' ? lost.cardInstanceIds.length : 0).toBe(2);
   });
@@ -260,7 +263,7 @@ describe('HeroAbilities â€” Pericias de heroes', () => {
   });
 });
 
-describe('Scenarios â€” efectos de escenario', () => {
+describe('Scenarios — efectos de escenario', () => {
   let catalog: ReturnType<typeof loadCatalog>;
 
   beforeEach(() => {
@@ -310,7 +313,7 @@ describe('Scenarios â€” efectos de escenario', () => {
   it('limpiar efectos de Ruinas de Brunmar restaura fortaleza', () => {
     const state = makeState();
     const applied = applyScenarioEffects(state, 'scenario.brunmar-ruins', catalog);
-    const cleared = clearScenarioEffects(applied.state, 'scenario.brunmar-ruins');
+    const cleared = clearScenarioEffects(applied.state, 'scenario.brunmar-ruins', catalog);
     expect(cleared.state.ignoreGloryRewards).toBe(false);
   });
 
@@ -323,7 +326,7 @@ describe('Scenarios â€” efectos de escenario', () => {
     }
   });
 
-  it('Pantano Umbr­o da 1 moneda extra si fortaleza >= 3', () => {
+  it('Pantano Umbrío da 1 moneda extra si fortaleza >= 3', () => {
     const state = makeState();
     const events = onEnemyDefeated(state, 'scenario.umbrous-swamp', 'p1', 3);
     expect(events).toHaveLength(1);
@@ -332,13 +335,13 @@ describe('Scenarios â€” efectos de escenario', () => {
     }
   });
 
-  it('Pantano Umbr­o no da moneda extra si fortaleza < 3', () => {
+  it('Pantano Umbrío no da moneda extra si fortaleza < 3', () => {
     const state = makeState();
     const events = onEnemyDefeated(state, 'scenario.umbrous-swamp', 'p1', 2);
     expect(events).toEqual([]);
   });
 
-  it('Monta±as de Ur tiene efecto opcional de inicio de turno', () => {
+  it('Montañas de Ur tiene efecto opcional de inicio de turno', () => {
     const state = makeState();
     const effect = onTurnStart(state, 'scenario.ur-mountains');
     expect(effect).not.toBeNull();
@@ -386,7 +389,7 @@ describe('Scenarios â€” efectos de escenario', () => {
 });
 
 
-describe('computeHordeAttackBreakdown — paridad con el motor (UI-160..164)', () => {
+describe('computeHordeAttackBreakdown → paridad con el motor (UI-160..164)', () => {
   let catalog: ReturnType<typeof loadCatalog>;
   let rng: DeterministicRng;
 

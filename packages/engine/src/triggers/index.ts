@@ -70,7 +70,11 @@ export class EventBus {
     this.processing = true;
     this.depth = 0;
 
-    while (this.queue.length > 0) {
+    // try/finally: un throw (MAX_EVENT_DEPTH, error de handler) dejaba
+    // `processing=true` para siempre y el bus entero envenenado — los
+    // emits posteriores encolaban eventos que ya nadie procesaba.
+    try {
+      while (this.queue.length > 0) {
       this.depth++;
       if (this.depth > MAX_EVENT_DEPTH) {
         throw new Error(
@@ -79,6 +83,12 @@ export class EventBus {
       }
 
       const event = this.queue.shift()!;
+      // Guard antes del predicate: un emit() anterior a setState() se
+      // evaluaba con `this.currentState!` (TypeError dentro del filtro).
+      // `continue` drena la cola: sin estado los eventos no pueden
+      // evaluarse y dejarlos encolados los dispararía sobre un estado
+      // futuro equivocado.
+      if (!this.currentState) continue;
       const triggered = this.listeners
         .filter(l => l.eventType === event.type)
         .filter(l => l.predicate(event, this.currentState!))
@@ -111,9 +121,10 @@ export class EventBus {
           }
         }
       }
+      }
+    } finally {
+      this.processing = false;
     }
-
-    this.processing = false;
   }
 
   private currentState: GameState | null = null;

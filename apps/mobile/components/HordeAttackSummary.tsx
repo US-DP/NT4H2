@@ -12,6 +12,8 @@ import { View, Text, Pressable, StyleSheet, Modal } from 'react-native';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import '../lib/i18n';
+import { useColors, useFs } from '../lib/useTheme';
+import type { Colors } from '../lib/theme';
 
 export interface EnemyContribution {
   enemyName: string;
@@ -40,6 +42,11 @@ export function HordeAttackSummary({
   onClose,
 }: HordeAttackSummaryProps) {
   const { t } = useTranslation();
+  const c = useColors();
+  const fs = useFs();
+  // Sin useMemo: el renderer ligero de tests invoca los componentes
+  // directamente y los hooks de React lanzan fuera de un render real.
+  const styles = createStyles(c, fs);
   const [showDetails, setShowDetails] = useState(false);
 
   return (
@@ -72,7 +79,11 @@ export function HordeAttackSummary({
           </View>
 
           {/* Ampliar cálculo (UI-162) */}
-          <Pressable onPress={() => setShowDetails(!showDetails)} style={styles.detailToggle}>
+          <Pressable
+            onPress={() => setShowDetails(!showDetails)}
+            style={styles.detailToggle}
+            accessibilityRole="button"
+          >
             <Text style={styles.detailText}>
               {showDetails ? t('hud.hideDetails') : t('hud.showCalcDetails')}
             </Text>
@@ -103,24 +114,24 @@ export function HordeAttackSummary({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
+    backgroundColor: c.overlayStrong,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 16,
   },
   dialog: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: c.surface,
     borderRadius: 12,
     padding: 20,
     width: '100%',
     maxWidth: 450,
   },
   title: {
-    color: '#e74c3c',
-    fontSize: 18,
+    color: c.danger,
+    fontSize: fs(18),
     fontWeight: 'bold',
     marginBottom: 12,
     textAlign: 'center',
@@ -132,46 +143,49 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     padding: 6,
-    backgroundColor: '#2c3e50',
+    backgroundColor: c.surfaceRaised,
     borderRadius: 4,
     marginBottom: 4,
   },
   enemyName: {
-    color: '#ecf0f1',
-    fontSize: 12,
+    color: c.text,
+    fontSize: fs(12),
   },
   enemyDamage: {
-    color: '#f1c40f',
-    fontSize: 12,
+    color: c.accent,
+    fontSize: fs(12),
     fontWeight: 'bold',
   },
   totals: {
-    backgroundColor: '#2c3e50',
+    backgroundColor: c.surfaceRaised,
     padding: 10,
     borderRadius: 6,
     marginBottom: 12,
   },
   totalLine: {
-    color: '#bdc3c7',
-    fontSize: 13,
+    color: c.textMuted,
+    fontSize: fs(13),
     marginBottom: 2,
   },
   finalLine: {
-    color: '#e74c3c',
-    fontSize: 16,
+    color: c.danger,
+    fontSize: fs(16),
     fontWeight: 'bold',
     marginTop: 4,
   },
   detailToggle: {
     alignSelf: 'center',
     marginBottom: 8,
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 8,
   },
   detailText: {
-    color: '#3498db',
-    fontSize: 12,
+    color: c.info,
+    fontSize: fs(12),
   },
   details: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: c.surfaceRaised,
     padding: 8,
     borderRadius: 6,
     marginBottom: 12,
@@ -180,23 +194,25 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   detailName: {
-    color: '#f1c40f',
-    fontSize: 11,
+    color: c.accent,
+    fontSize: fs(11),
     fontWeight: 'bold',
   },
   detailCalc: {
-    color: '#bdc3c7',
-    fontSize: 10,
+    color: c.textMuted,
+    fontSize: fs(10),
   },
   closeButton: {
-    backgroundColor: '#27ae60',
+    backgroundColor: c.success,
     padding: 12,
+    minHeight: 44,
+    justifyContent: 'center',
     borderRadius: 8,
     alignItems: 'center',
   },
   closeButtonText: {
-    color: '#fff',
-    fontSize: 14,
+    color: c.text,
+    fontSize: fs(14),
     fontWeight: 'bold',
   },
 });

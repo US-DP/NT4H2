@@ -10,6 +10,7 @@ import type { DeterministicRng } from '../../rng/index.js';
 import { computeHordeAttackBreakdown } from '../../analysis/hordeBreakdown.js';
 import { applyEvent, mapPlayerState } from '../../events/applyEvent.js';
 import { cleanupHordeAttackEnd, getEffectiveFortitude } from '../../modifiers/index.js';
+import { emitEnemyDefeated } from '../../effects/resolver.js';
 import { nextSeq } from '../../seq.js';
 
 export function processHordeAttack(
@@ -45,19 +46,18 @@ export function processHordeAttack(
       const refreshed = damageBase.battlefield.find(e => e.instanceId === enemy.instanceId);
       if (refreshed && refreshed.wounds >= getEffectiveFortitude(refreshed, damageBase)) {
         defeatedByPoison.add(enemy.instanceId);
-        const defEv: GameEvent = {
-          type: 'ENEMY_DEFEATED',
-          enemyInstanceId: enemy.instanceId,
-          enemyDefinitionId: enemy.definitionId,
-          defeatingPlayerId: state.activePlayerId,
-          reward: {
-            coins: state.ignoreCoinRewards ? 0 : (enemy.reward?.coins ?? 0),
-            glory: state.ignoreGloryRewards ? 0 : (enemy.reward?.glory ?? 0),
-          },
-          seq: nextSeq(),
-        };
-        events.push(defEv);
-        damageBase = applyEvent(damageBase, defEv);
+        // Misma ruta que una derrota normal: emitEnemyDefeated emite
+        // ENEMY_DEFEATED + efectos ON_ENEMY_DEFEATED del escenario +
+        // limpiezas por fuente (aura de Roghkiller). Emitir el evento a
+        // mano aquí dejaba orcos bufados y escenarios sin disparar.
+        damageBase = emitEnemyDefeated(
+          damageBase,
+          enemy.instanceId,
+          state.activePlayerId,
+          [],
+          events,
+          catalog,
+        );
       }
     }
     // 'stun' salta este ataque (el desglose lo ve aún presente → aporta 0)

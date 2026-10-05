@@ -6,7 +6,6 @@
  * - ConnectionStatus (UI-190..195)
  * - ActionHistory (UI-170..174)
  * - ContextualActions (UI-120..124)
- * - ChoiceDialog (UI-130..135)
  * - CardZoom (UI-110..113)
  * - EmptyState (UI-350)
  * - ErrorMessage (UI-354..356)
@@ -44,7 +43,6 @@ import { PhaseIndicator } from '../components/PhaseIndicator';
 import { ConnectionStatus } from '../components/ConnectionStatus';
 import { ActionHistory } from '../components/ActionHistory';
 import { ContextualActions } from '../components/ContextualActions';
-import { ChoiceDialog } from '../components/ChoiceDialog';
 import { CardZoom } from '../components/CardZoom';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorMessage } from '../components/ErrorMessage';
@@ -246,49 +244,8 @@ describe('ContextualActions — UI-120..124', () => {
   });
 });
 
-// ============================================================================
-// ChoiceDialog
-// ============================================================================
-
-describe('ChoiceDialog — UI-130..135', () => {
-  it('muestra instrucción y opciones', () => {
-    const onSelect = vi.fn();
-    const { root } = render(
-      <ChoiceDialog
-        visible={true}
-        source="Disparo Certero"
-        decider="Alejandro"
-        instruction="Selecciona un enemigo."
-        options={[
-          { id: 'e1', label: 'Orco 1' },
-          { id: 'e2', label: 'Orco 2', disabled: true, disabledReason: 'Ya derrotado' },
-        ]}
-        onSelect={onSelect}
-        onClose={vi.fn()}
-      />,
-    );
-    expectText(root, 'Disparo Certero');
-    expectText(root, 'Selecciona un enemigo.');
-    expectText(root, 'Orco 1');
-    expectText(root, 'Orco 2');
-    expectText(root, 'Ya derrotado');
-  });
-
-  it('muestra esperando decisión de otro jugador', () => {
-    const { root } = render(
-      <ChoiceDialog
-        visible={true}
-        source="Turno"
-        decider="Lucía"
-        instruction="Esperando."
-        options={[]}
-        waitingForOther={true}
-        onSelect={vi.fn()}
-      />,
-    );
-    expectText(root, 'Esperando una decisión de Lucía');
-  });
-});
+// (ChoiceDialog retirado: duplicado de PendingChoiceView — ninguna
+//  pantalla lo renderizaba; su cobertura UI-130..135 la da el view real)
 
 // ============================================================================
 // CardZoom
@@ -409,8 +366,9 @@ describe('HeroDetail — UI-084..085', () => {
     } as any);
     const { root } = render(<HeroDetail visible={true} hero={hero} onClose={vi.fn()} />);
     expectText(root, 'Aranel');
-    expectText(root, 'EXPLORER');
-    expectText(root, 'RANGED');
+    // clase y capacidades traducidas (create.classes / cardui.anatomy.caps)
+    expectText(root, 'Explorador');
+    expectText(root, 'Distancia');
   });
 
   it('muestra usos de la pericia', () => {

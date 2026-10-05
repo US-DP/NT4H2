@@ -114,7 +114,8 @@ describe('Evasión — Ficha de un solo uso', () => {
     registerCoreEffects(registry);
     rng = new DeterministicRng('test-integrity-001');
     // Resolver la puja y entrar en ATTACK_CHOICE con p1 activo
-    state = { ...s.state, phase: 'ATTACK_CHOICE', activePlayerId: 'p1' };
+    // (pendingChoices limpias: en flujo real las pujas ya están resueltas)
+    state = { ...s.state, phase: 'ATTACK_CHOICE', activePlayerId: 'p1', pendingChoices: [] };
     // Declinar Feldon para que la Horda no pause tras la evasión
     state = {
       ...state,
@@ -266,7 +267,7 @@ describe('Determinismo y replay', () => {
     registerCoreEffects(registry);
 
     // Ejecutar un comando real y guardar el envelope
-    const cur: GameState = { ...state, phase: 'ATTACK_CHOICE', activePlayerId: 'p1' };
+    const cur: GameState = { ...state, phase: 'ATTACK_CHOICE', activePlayerId: 'p1', pendingChoices: [] };
     const cards = cur.players.p1.hand.slice(0, 2).map(c => c.instanceId);
     const cmd: Command = { type: 'EVASION', cid: 'r1', discardedCardInstanceIds: cards };
 

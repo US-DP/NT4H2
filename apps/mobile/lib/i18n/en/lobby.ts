@@ -39,8 +39,9 @@ export default {
     errReady: 'Could not update',
     /** Generic error when the exception carries no message */
     errGeneric: 'Error',
+  errChatOffline: 'No connection — message not sent',
     /** Log entry: game command received via broadcast */
-    sysCommand: 'Command {{command}} from {{playerId}}',
+    // (sysCommand eliminada: el lobby ya no muestra eco de comandos)
     /** Toast when the user receives the host role */
     youAreHost: 'You are now the host',
     /** Placeholder for the name field when joining a room */
@@ -59,10 +60,14 @@ export default {
     pickHero: 'Choose your hero',
     /** Label for the class (deck) picker when joining a room */
     pickClass: 'Choose your class (deck)',
+    /** Second class picker label in multiclass rooms (join flow) */
+    pickSecondClass: 'Choose your second class',
     pickCustomDeck: 'Or use a Workshop deck',
     classDeck: 'Class deck',
     /** Join-form error: no hero selected */
     errPickHero: 'Pick a hero to play',
+    /** Workshop custom deck label next to the name in the roster */
+    workshopDeck: 'Workshop',
     chat: {
       /** Panel header title */
       title: 'Chat',

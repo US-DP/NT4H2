@@ -9,6 +9,9 @@ import { View, Text, Pressable, StyleSheet, Modal, ScrollView } from 'react-nati
 import { useTranslation } from 'react-i18next';
 import '../lib/i18n';
 import type { CardDefinition } from '@nt4h/schema';
+import { useColors, useFs } from '../lib/useTheme';
+import type { Colors } from '../lib/theme';
+import { capListLabel, classLabel } from '../lib/capabilities';
 
 interface HeroDetailProps {
   visible: boolean;
@@ -20,6 +23,11 @@ interface HeroDetailProps {
 
 export function HeroDetail({ visible, hero, usesRemaining, maxUses, onClose }: HeroDetailProps) {
   const { t } = useTranslation();
+  const c = useColors();
+  const fs = useFs();
+  // Sin useMemo: el renderer ligero de tests invoca los componentes
+  // directamente y los hooks de React lanzan fuera de un render real.
+  const styles = createStyles(c, fs);
   if (!visible || !hero) return null;
 
   const abilityUses = hero.heroAbility?.uses ?? maxUses ?? 0;
@@ -30,12 +38,12 @@ export function HeroDetail({ visible, hero, usesRemaining, maxUses, onClose }: H
       <View style={styles.overlay}>
         <View style={styles.dialog}>
           <Text style={styles.title}>{hero.name}</Text>
-          <Text style={styles.class}>{t('hud.heroClass', { class: hero.heroClass })}</Text>
+          <Text style={styles.class}>{t('hud.heroClass', { class: classLabel(t, hero.heroClass ?? '') })}</Text>
 
           <ScrollView style={styles.content}>
             <Text style={styles.section}>
               {t('hud.capabilitiesLabel', {
-                list: (hero.capabilities ?? []).join(', ') || t('hud.capabilitiesNone'),
+                list: capListLabel(t, hero.capabilities ?? []) || t('hud.capabilitiesNone'),
               })}
             </Text>
 
@@ -76,16 +84,16 @@ function formatEffects(
   return effects.map((e) => e.type).join(', ');
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
+    backgroundColor: c.overlayStrong,
     justifyContent: 'center',
     alignItems: 'center',
     padding: 16,
   },
   dialog: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: c.surface,
     borderRadius: 12,
     padding: 20,
     width: '100%',
@@ -93,14 +101,14 @@ const styles = StyleSheet.create({
     maxHeight: '80%',
   },
   title: {
-    color: '#f1c40f',
-    fontSize: 20,
+    color: c.accent,
+    fontSize: fs(20),
     fontWeight: 'bold',
     marginBottom: 4,
   },
   class: {
-    color: '#bdc3c7',
-    fontSize: 12,
+    color: c.textMuted,
+    fontSize: fs(12),
     marginBottom: 12,
   },
   content: {
@@ -108,40 +116,42 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   section: {
-    color: '#ecf0f1',
-    fontSize: 13,
+    color: c.text,
+    fontSize: fs(13),
     marginBottom: 12,
   },
   ability: {
-    backgroundColor: '#2c3e50',
+    backgroundColor: c.surfaceRaised,
     padding: 12,
     borderRadius: 8,
     marginBottom: 12,
   },
   abilityTitle: {
-    color: '#f1c40f',
-    fontSize: 14,
+    color: c.accent,
+    fontSize: fs(14),
     fontWeight: 'bold',
     marginBottom: 4,
   },
   abilityUses: {
-    color: '#3498db',
-    fontSize: 12,
+    color: c.info,
+    fontSize: fs(12),
     marginBottom: 8,
   },
   abilityDescription: {
-    color: '#ecf0f1',
-    fontSize: 12,
+    color: c.text,
+    fontSize: fs(12),
   },
   closeButton: {
-    backgroundColor: '#2980b9',
+    backgroundColor: c.accent,
     padding: 12,
+    minHeight: 44,
+    justifyContent: 'center',
     borderRadius: 8,
     alignItems: 'center',
   },
   closeButtonText: {
-    color: '#fff',
-    fontSize: 14,
+    color: c.textOnAccent,
+    fontSize: fs(14),
     fontWeight: 'bold',
   },
 });

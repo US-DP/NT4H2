@@ -77,9 +77,9 @@ describe('Solo mode — modo solitario', () => {
     for (const ev of [...openResult.events, ...buyResult.events]) {
       resolvedState = applyEvent(resolvedState, ev);
     }
-    // 6 monedas - 3 (abrir) - 5 (comprar) = -2 → pero solo resta 5 porque abrir resta 3 via evento
-    // Total: 6 - 3 - 5 = -2, pero como no puede quedar negativo, verificamos que se aplicaron ambos descuentos
-    expect(resolvedState.players.p1.coins).toBe(-2); // 6 - 3 - 5 = -2 (descuento via eventos)
+    // 6 monedas - 3 (abrir) - 5 (comprar) → ambos descuentos vía eventos;
+    // COINS_LOST fija en 0: las monedas no pueden quedar negativas.
+    expect(resolvedState.players.p1.coins).toBe(0);
   });
 
   it('no permite comprar carta de Apoyo sin monedas suficientes', () => {

@@ -16,9 +16,11 @@ import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import * as SplashScreen from 'expo-splash-screen';
 import { useGameStore } from '../store/gameStore';
 import { useAuth } from '../store/authStore';
+import { useCollection } from '../store/collectionStore';
 import { useSettings } from '../store/settingsStore';
 import { NtToastHost } from '../components/ui/NtToast';
 import { initMonitoring } from '../lib/monitoring';
+import { resolveColors } from '../lib/theme';
 import { startAmbientMusic, stopAmbientMusic } from '../lib/audio';
 import i18n from '../lib/i18n';
 
@@ -34,6 +36,10 @@ export default function RootLayout() {
   const hydrateSettings = useSettings((s) => s.hydrate);
   const language = useSettings((s) => s.language);
   const highContrast = useSettings((s) => s.highContrast);
+  const colorMode = useSettings((s) => s.colorMode);
+  // Chrome de navegación ligado a la paleta efectiva — con highContrast
+  // el fondo debe ser negro puro, no el literal del tema base.
+  const theme = resolveColors({ highContrast, colorMode });
   // QueryClient por instancia del árbol — caché de llamadas REST (salas, estado)
   const [queryClient] = useState(() => new QueryClient({
     defaultOptions: { queries: { retry: 1, staleTime: 15_000 } },
@@ -48,9 +54,18 @@ export default function RootLayout() {
       try {
         await Promise.race([
           (async () => {
-            initCatalog();
-            await hydrateSettings();
-            await useAuth.getState().hydrate();
+            // initCatalog ahora resuelve tras fusionar el Taller: sin el
+            // await, una partida creada al instante usaba solo el catálogo
+            // oficial y los mazos custom fallaban en el setup.
+            await initCatalog();
+            // La colección se hidrata aquí y no solo al abrir la
+            // biblioteca: newGame escribe 'discovered' y persistir antes
+            // de leer borraba favoritos/ajustes guardados.
+            await Promise.all([
+              hydrateSettings(),
+              useAuth.getState().hydrate(),
+              useCollection.getState().hydrate(),
+            ]);
           })(),
           new Promise<void>((resolve) => setTimeout(resolve, 8000)),
         ]);
@@ -90,9 +105,9 @@ export default function RootLayout() {
     <BottomSheetModalProvider>
     <Stack
       screenOptions={{
-        headerStyle: { backgroundColor: '#0f0f23' },
-        headerTintColor: '#ecf0f1',
-        contentStyle: { backgroundColor: '#0f0f23' },
+        headerStyle: { backgroundColor: theme.surface },
+        headerTintColor: theme.text,
+        contentStyle: { backgroundColor: theme.background },
       }}
     >
       <Stack.Screen name="index" options={{ title: t('misc.screen.index') }} />
@@ -108,6 +123,10 @@ export default function RootLayout() {
       <Stack.Screen name="(room)/index" options={{ title: t('misc.screen.room') }} />
       <Stack.Screen name="(study)/index" options={{ title: t('misc.screen.study') }} />
       <Stack.Screen name="(dev)/showcase" options={{ title: t('misc.screen.showcase') }} />
+      <Stack.Screen name="(replay)/index" options={{ title: t('misc.screen.replay') }} />
+      <Stack.Screen name="(rulebook)/[rule]" options={{ title: t('misc.screen.rulebook') }} />
+      <Stack.Screen name="(study)/[tab]" options={{ title: t('misc.screen.study') }} />
+      <Stack.Screen name="rooms/[code]" options={{ title: t('misc.screen.room') }} />
     </Stack>
     <NtToastHost />
     </BottomSheetModalProvider>

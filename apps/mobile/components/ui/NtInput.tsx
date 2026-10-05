@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { Text, TextInput, View, type TextInputProps } from 'react-native';
 // Side-effect: garantiza StyleSheet.configure antes del create de abajo
 import '../../lib/unistyles';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 interface NtInputProps extends TextInputProps {
   label: string;
@@ -15,13 +15,14 @@ interface NtInputProps extends TextInputProps {
 
 export function NtInput({ label, error, ...rest }: NtInputProps) {
   const [focused, setFocused] = useState(false);
+  const { theme } = useUnistyles();
   styles.useVariants({ focused, hasError: !!error });
   return (
     <View style={styles.wrap}>
       <Text style={styles.label} accessibilityRole="text">{label}</Text>
       <TextInput
         style={styles.input}
-        placeholderTextColor="#6b7280"
+        placeholderTextColor={theme.colors.textFaint}
         onFocus={(e) => { setFocused(true); rest.onFocus?.(e); }}
         onBlur={(e) => { setFocused(false); rest.onBlur?.(e); }}
         accessibilityLabel={label}

@@ -11,7 +11,7 @@
  *     metadato/payload). En nativo se guardan los bytes validados.
  */
 
-import { storageGet, storageSet } from './storage';
+import { storageGet, storageRemove, storageSet } from './storage';
 
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
@@ -84,6 +84,11 @@ function bytesToBase64(bytes: Uint8Array): string {
  * Re-codifica la imagen vía canvas (web) para eliminar EXIF/metadatos.
  * Devuelve bytes PNG limpios, o null si el entorno no soporta canvas.
  */
+/** Tope de dimensiones: un PNG de dimensiones absurdas declaradas es una
+ *  bomba de descompresión para el canvas (los bytes caben bajo 4MiB pero
+ *  decodifican a gigas de píxeles). */
+const MAX_DIMENSION = 8192;
+
 export async function stripImageMetadata(bytes: Uint8Array, mime: ImageMime): Promise<Uint8Array | null> {
   if (typeof document === 'undefined') return null;
   try {
@@ -95,6 +100,11 @@ export async function stripImageMetadata(bytes: Uint8Array, mime: ImageMime): Pr
       img.onerror = () => reject(new Error('decode failed'));
       img.src = url;
     });
+    if (img.naturalWidth > MAX_DIMENSION || img.naturalHeight > MAX_DIMENSION
+      || img.naturalWidth <= 0 || img.naturalHeight <= 0) {
+      URL.revokeObjectURL(url);
+      return null;
+    }
     const canvas = document.createElement('canvas');
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
@@ -123,14 +133,16 @@ export async function importImageAsset(bytes: Uint8Array): Promise<ImportedAsset
   const v = validateImageBytes(bytes);
   if (!v.ok || !v.mime) return { error: v.reason ?? 'invalid' };
   let finalBytes = bytes;
+  let finalMime: ImageMime = v.mime;
   let exifStripped = false;
-  if (v.mime === 'image/jpeg' && v.hasExif) {
-    const clean = await stripImageMetadata(bytes, v.mime);
-    if (clean) { finalBytes = clean; exifStripped = true; }
-  }
+  // Re-codificar SIEMPRE en web: PNG/WebP también pueden llevar chunks de
+  // metadatos (eXIf, tEXt) — no solo JPEG/EXIF. El canvas solo copia
+  // píxeles, así que el resultado es PNG limpio.
+  const clean = await stripImageMetadata(bytes, v.mime);
+  if (clean) { finalBytes = clean; finalMime = 'image/png'; exifStripped = true; }
   const id = `img-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
   await storageSet(`${ASSET_PREFIX}${id}`, bytesToBase64(finalBytes));
-  return { ref: `asset:${id}`, mime: v.mime, exifStripped };
+  return { ref: `asset:${id}`, mime: finalMime, exifStripped };
 }
 
 /** Lee un asset por su referencia 'asset:<id>'. */
@@ -138,4 +150,49 @@ export async function readImageAsset(ref: string): Promise<string | null> {
   if (!ref.startsWith('asset:')) return null;
   const b64 = await storageGet(`${ASSET_PREFIX}${ref.slice(6)}`);
   return b64;
+}
+
+/** Borra un asset por su referencia (no-op si no existe o no es 'asset:'). */
+export async function deleteImageAsset(ref: string): Promise<void> {
+  if (!ref.startsWith('asset:')) return;
+  assetUriCache.delete(ref);
+  await storageRemove(`${ASSET_PREFIX}${ref.slice(6)}`);
+}
+
+// ============================================================================
+// Resolución síncrona de 'asset:<id>' → data-URI (para el render de cartas)
+//
+// Los bytes viven en almacenamiento async; aquí hay un cache en memoria que
+// se rellena perezosamente y se precalienta con warmImageAssets() al cargar
+// los conjuntos custom. Sin React hooks: el renderer ligero de tests invoca
+// los componentes como funciones planas y un hook lanzaría.
+// ============================================================================
+
+const assetUriCache = new Map<string, string | null>();
+
+/**
+ * Devuelve el data-URI si el asset ya está en cache; si no, dispara la
+ * lectura en segundo plano y devuelve undefined hasta el próximo render.
+ */
+export function assetImageUri(ref: string | undefined): string | undefined {
+  if (!ref?.startsWith('asset:')) return undefined;
+  const hit = assetUriCache.get(ref);
+  if (hit !== undefined) return hit ?? undefined;
+  void readImageAsset(ref)
+    .then(b64 => assetUriCache.set(ref, b64 ? `data:image/png;base64,${b64}` : null))
+    .catch(() => assetUriCache.set(ref, null));
+  return undefined;
+}
+
+/** Precalienta el cache de URIs para un lote de refs 'asset:<id>'. */
+export async function warmImageAssets(refs: Iterable<string | undefined>): Promise<void> {
+  await Promise.all([...refs].map(async (ref) => {
+    if (!ref?.startsWith('asset:') || assetUriCache.has(ref)) return;
+    try {
+      const b64 = await readImageAsset(ref);
+      assetUriCache.set(ref, b64 ? `data:image/png;base64,${b64}` : null);
+    } catch {
+      assetUriCache.set(ref, null);
+    }
+  }));
 }

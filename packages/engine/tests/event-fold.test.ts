@@ -246,4 +246,157 @@ describe('Reducers de los nuevos eventos', () => {
     const next = applyEvent(state, { type: 'TROPHY_REMOVED', playerId: 'p1', trophyInstanceId: 't1', seq: 1 });
     expect(next.players.p1.trophies).toEqual(['t2']);
   });
+
+  it('PENDING_CHOICE_CREATED inserta la elección y es idempotente', () => {
+    const choice = {
+      choiceId: 'c1', playerId: 'p1', type: 'CONFIRM' as const,
+      prompt: 'x', options: ['yes', 'no'], minSelections: 1, maxSelections: 1,
+    };
+    const state = makeGameState({ pendingChoices: [] });
+    const next = applyEvent(state, { type: 'PENDING_CHOICE_CREATED', choice, seq: 1 });
+    expect(next.pendingChoices).toEqual([choice]);
+    // Re-aplicar no duplica (la vía viva ya la insertó por mutación)
+    const twice = applyEvent(next, { type: 'PENDING_CHOICE_CREATED', choice, seq: 2 });
+    expect(twice.pendingChoices).toEqual([choice]);
+  });
+});
+
+describe('E-1/E-2 — posición de eventos de oyente y fold de pendingChoices', () => {
+  let registry: EffectRegistry;
+
+  beforeEach(() => {
+    resetInstanceCounter();
+    resetPhaseSeq();
+    resetResolveSeq();
+    registry = new EffectRegistry();
+    registerCoreEffects(registry);
+  });
+
+  it('los eventos de oyente se insertan tras su disparador y el fold reproduce el estado', () => {
+    const setup = setupGame({
+      mode: 'STANDARD',
+      playerCount: 2,
+      seed: 'fold-listener',
+      heroes: [
+        { playerId: 'p1', heroId: 'hero.aranel', heroFace: 'FEMALE', deckId: 'explorer.default' },
+        { playerId: 'p2', heroId: 'hero.feldon', heroFace: 'MALE', deckId: 'warrior.default' },
+      ],
+      useScenarios: false,
+    }, catalog);
+    const turn = startFirstTurn(setup.state, new DeterministicRng('fold-listener'), catalog);
+    const base: GameState = {
+      ...turn.state,
+      // Oyente del Taller: +1 Gloria por cada CARD_PLAYED del dueño
+      listeners: [{
+        id: 'lis-1',
+        playerId: 'p1',
+        trigger: 'CARD_PLAYED',
+        effects: [{ type: 'GAIN_GLORY', amount: 1 } as never],
+      }],
+    };
+    const rng = new DeterministicRng('fold-listener');
+    const p1 = base.players.p1;
+    const card = p1.hand[0];
+    const cmd: Command = {
+      type: 'PLAY_CARD',
+      cardInstanceId: card.instanceId,
+      targetEnemyId: base.battlefield[0]?.instanceId,
+      cid: 'play-1',
+    } as Command;
+    const r = execute(base, cmd, rng, registry, catalog);
+    if (!r.accepted) return; // carta no jugable en esta mano — nada que probar
+
+    const playedIdx = r.events.findIndex(e => e.type === 'CARD_PLAYED');
+    const gloryIdx = r.events.findIndex(e => e.type === 'GLORY_GAINED');
+    expect(playedIdx).toBeGreaterThanOrEqual(0);
+    expect(gloryIdx).toBe(playedIdx + 1);
+
+    // El fold del log emitido reproduce el estado vivo (campos event-sourced)
+    const folded = replayEvents(base, r.events);
+    const norm = (s: GameState) => JSON.parse(normalize(s));
+    expect(norm(folded)).toEqual(norm(r.newState));
+  });
+
+  it('el fold reconstruye pendingChoices creadas durante las fases (E-2)', () => {
+    const setup = setupGame({
+      mode: 'STANDARD',
+      playerCount: 2,
+      seed: 'fold-choices',
+      heroes: [
+        { playerId: 'p1', heroId: 'hero.aranel', heroFace: 'FEMALE', deckId: 'explorer.default' },
+        { playerId: 'p2', heroId: 'hero.feldon', heroFace: 'MALE', deckId: 'warrior.default' },
+      ],
+      useScenarios: false,
+    }, catalog);
+    const turn = startFirstTurn(setup.state, new DeterministicRng('fold-choices'), catalog);
+    // Manos >4 en ambos jugadores: RESTORATION forzará una elección de
+    // descarte al empezar el turno siguiente.
+    const base = turn.state;
+    const players = Object.fromEntries(
+      Object.entries(base.players).map(([pid, p]) => {
+        const extra = p.abilityDeck.slice(0, Math.max(0, 6 - p.hand.length))
+          .map(c => ({ ...c, zone: 'HAND' as const }));
+        return [pid, {
+          ...p,
+          hand: [...p.hand, ...extra],
+          abilityDeck: p.abilityDeck.slice(extra.length),
+        }];
+      }),
+    );
+    const bloated: GameState = { ...base, players };
+    const rng = new DeterministicRng('fold-choices');
+
+    let state = bloated;
+    const events: GameEvent[] = [];
+    for (const cmd of [{ type: 'END_ATTACK', cid: 'e1' } as Command, { type: 'END_TURN', cid: 'e2' } as Command]) {
+      const r = execute(state, cmd, rng, registry, catalog);
+      if (!r.accepted) continue;
+      events.push(...r.events);
+      const phased = processPhases(r.newState, rng, catalog);
+      events.push(...phased.events);
+      state = phased.state;
+    }
+    // Se creó al menos una elección pendiente en vivo
+    expect(state.pendingChoices.length).toBeGreaterThan(0);
+    // …y todas llegaron al eventLog con su evento de creación
+    for (const c of state.pendingChoices) {
+      expect(events.some(e => e.type === 'PENDING_CHOICE_CREATED'
+        && (e as { choice?: { choiceId?: string } }).choice?.choiceId === c.choiceId)).toBe(true);
+    }
+    // El fold reconstruye las elecciones pendientes
+    const folded = replayEvents(bloated, events);
+    expect(folded.pendingChoices).toEqual(state.pendingChoices);
+  });
+
+  it('todo evento emitido queda registrado en eventLog (orden y contenido)', () => {
+    const setup = setupGame({
+      mode: 'STANDARD',
+      playerCount: 2,
+      seed: 'fold-log-complete',
+      heroes: [
+        { playerId: 'p1', heroId: 'hero.aranel', heroFace: 'FEMALE', deckId: 'explorer.default' },
+        { playerId: 'p2', heroId: 'hero.feldon', heroFace: 'MALE', deckId: 'warrior.default' },
+      ],
+      useScenarios: false,
+    }, catalog);
+    const turn = startFirstTurn(setup.state, new DeterministicRng('fold-log-complete'), catalog);
+    const base = turn.state;
+    const rng = new DeterministicRng('fold-log-complete');
+
+    let state = base;
+    const events: GameEvent[] = [];
+    for (const cmd of [
+      { type: 'END_ATTACK', cid: 'l1' } as Command,
+      { type: 'END_TURN', cid: 'l2' } as Command,
+      { type: 'END_ATTACK', cid: 'l3' } as Command,
+    ]) {
+      const r = execute(state, cmd, rng, registry, catalog);
+      if (!r.accepted) continue;
+      events.push(...r.events);
+      const phased = processPhases(r.newState, rng, catalog);
+      events.push(...phased.events);
+      state = phased.state;
+    }
+    expect(state.eventLog.slice(base.eventLog.length)).toEqual(events);
+  });
 });

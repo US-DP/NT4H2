@@ -52,22 +52,13 @@ describe('Catalogo de cartas oficiales', () => {
     expect(scenarios.length).toBe(12);
   });
 
-  it('total de copias = 120', () => {
-    // 60 habilidades + 27 huestes + 3 senores + 14 mercado + 4 heroes + 12 escenarios = 120
-    // Pero heroes son 8 definiciones (4 cartas x 2 caras) con copies=1
-    // 60 + 27 + 3 + 14 + 8 + 12 = 124... pero heroes son 4 cartas fisicas
-    // En el catalogo contamos definiciones, no cartas fisicas
-    // El total de copias debe ser: 60 + 27 + 3 + 14 + 4 + 12 = 120
-    // (heroes: 4 cartas fisicas con 2 caras cada una, copies=1 por definicion)
-    // Como tenemos 8 definiciones de heroe (una por cara), el total sera 124
-    // Ajustamos: las 8 definiciones de heroe representan 4 cartas fisicas
-    const heroCards = catalog.byType.get('HERO') ?? [];
-    const heroPhysical = Math.floor(heroCards.length / 2); // 2 caras por carta
-    const expectedTotal = 60 + 27 + 3 + 14 + heroPhysical + 12;
-    // totalCopies cuenta copies de cada definicion
-    // Para heroes, cada definicion tiene copies=1, pero son 8 definiciones
-    // El total real de cartas fisicas es 120
-    expect(catalog.totalCards).toBeGreaterThanOrEqual(50);
+  it('total de copias coincide con la suma real del catálogo', () => {
+    // totalCopies debe ser exactamente la suma de `copies` por definición —
+    // antes solo se asertaba totalCards >= 50 y el cálculo nunca se verificaba.
+    const expected = catalog.cards.reduce((sum, c) => sum + c.copies, 0);
+    expect(catalog.totalCopies).toBe(expected);
+    expect(expected).toBeGreaterThan(100);
+    expect(catalog.totalCards).toBe(catalog.cards.length);
   });
 
   it('todas las Huestes tienen fortaleza', () => {

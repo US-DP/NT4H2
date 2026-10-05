@@ -25,7 +25,9 @@ interface CollectionState {
   sort: CollectionSort;
   spoilerMode: SpoilerMode;
   originFilter: OriginFilter;
-  hydrate: () => void;
+  /** Resuelve cuando el estado persistido está en memoria. Idempotente:
+   *  llamadas concurrentes comparten la misma lectura. */
+  hydrate: () => Promise<void>;
   toggleFavorite: (cardId: string) => void;
   markDiscovered: (cardIds: string[]) => void;
   setSort: (sort: CollectionSort) => void;
@@ -56,64 +58,92 @@ function snapshot(s: CollectionState): Persisted {
   };
 }
 
-export const useCollection = create<CollectionState>()((set, get) => ({
-  hydrated: false,
-  favorites: [],
-  discovered: [],
-  sort: 'name',
-  spoilerMode: 'silhouette',
-  originFilter: 'all',
+/** Promesa de hidratación EN CURSO: deduplica lecturas concurrentes y da
+ *  a los mutadores un punto de espera — antes, un markDiscovered() ejecutado
+ *  sin haber abierto la biblioteca persistía el estado VACÍO sobre el
+ *  JSON guardado y borraba favoritos/descubiertos/ajustes del usuario.
+ *  IMPORTANTE: se libera al completar (no se cachea para siempre) — una
+ *  promesa resuelta con hydrated=false (estado reseteado) encadenaba
+ *  .then(mutate)→defer→.then(mutate) en un bucle de microtareas infinito. */
+let _hydrating: Promise<void> | null = null;
 
-  hydrate: () => {
-    void (async () => {
-      try {
-        const raw = await storageGet(STORAGE_KEY);
-        if (raw) {
-          const saved = JSON.parse(raw) as Partial<Persisted>;
-          set({
-            favorites: saved.favorites ?? [],
-            discovered: saved.discovered ?? [],
-            sort: saved.sort ?? 'name',
-            spoilerMode: saved.spoilerMode ?? 'silhouette',
-            originFilter: saved.originFilter ?? 'all',
-            hydrated: true,
-          });
-          return;
-        }
-      } catch { /* JSON corrupto → defaults */ }
-      set({ hydrated: true });
-    })();
-  },
+export const useCollection = create<CollectionState>()((set, get) => {
+  /** Diferir la mutación hasta que el estado persistido esté en memoria;
+   *  devuelve true si la llamada fue encolada (el llamador debe retornar).
+   *  La promesa devuelta por hydrate() siempre termina con hydrated=true,
+   *  así que el mutador diferido nunca se re-encola. */
+  const deferUntilHydrated = (mutate: () => void): boolean => {
+    if (get().hydrated) return false;
+    void get().hydrate().then(mutate);
+    return true;
+  };
 
-  toggleFavorite: (cardId) => {
-    const favorites = get().favorites.includes(cardId)
-      ? get().favorites.filter((id) => id !== cardId)
-      : [...get().favorites, cardId];
-    set({ favorites });
-    persist(snapshot(get()));
-  },
+  return {
+    hydrated: false,
+    favorites: [],
+    discovered: [],
+    sort: 'name',
+    spoilerMode: 'silhouette',
+    originFilter: 'all',
 
-  markDiscovered: (cardIds) => {
-    const current = new Set(get().discovered);
-    const next = new Set([...current, ...cardIds]);
-    if (next.size === current.size) return;
-    const discovered = [...next];
-    set({ discovered });
-    persist(snapshot(get()));
-  },
+    hydrate: () => {
+      if (get().hydrated) return Promise.resolve();
+      _hydrating ??= (async () => {
+        try {
+          const raw = await storageGet(STORAGE_KEY);
+          if (raw) {
+            const saved = JSON.parse(raw) as Partial<Persisted>;
+            set({
+              favorites: saved.favorites ?? [],
+              discovered: saved.discovered ?? [],
+              sort: saved.sort ?? 'name',
+              spoilerMode: saved.spoilerMode ?? 'silhouette',
+              originFilter: saved.originFilter ?? 'all',
+              hydrated: true,
+            });
+            return;
+          }
+        } catch { /* JSON corrupto → defaults */ }
+        set({ hydrated: true });
+      })().finally(() => { _hydrating = null; });
+      return _hydrating;
+    },
 
-  setSort: (sort) => {
-    set({ sort });
-    persist(snapshot(get()));
-  },
+    toggleFavorite: (cardId) => {
+      if (deferUntilHydrated(() => get().toggleFavorite(cardId))) return;
+      const favorites = get().favorites.includes(cardId)
+        ? get().favorites.filter((id) => id !== cardId)
+        : [...get().favorites, cardId];
+      set({ favorites });
+      persist(snapshot(get()));
+    },
 
-  setSpoilerMode: (mode) => {
-    set({ spoilerMode: mode });
-    persist(snapshot(get()));
-  },
+    markDiscovered: (cardIds) => {
+      if (deferUntilHydrated(() => get().markDiscovered(cardIds))) return;
+      const current = new Set(get().discovered);
+      const next = new Set([...current, ...cardIds]);
+      if (next.size === current.size) return;
+      const discovered = [...next];
+      set({ discovered });
+      persist(snapshot(get()));
+    },
 
-  setOriginFilter: (originFilter) => {
-    set({ originFilter });
-    persist(snapshot(get()));
-  },
-}));
+    setSort: (sort) => {
+      if (deferUntilHydrated(() => get().setSort(sort))) return;
+      set({ sort });
+      persist(snapshot(get()));
+    },
+
+    setSpoilerMode: (mode) => {
+      if (deferUntilHydrated(() => get().setSpoilerMode(mode))) return;
+      set({ spoilerMode: mode });
+      persist(snapshot(get()));
+    },
+
+    setOriginFilter: (originFilter) => {
+      if (deferUntilHydrated(() => get().setOriginFilter(originFilter))) return;
+      set({ originFilter });
+      persist(snapshot(get()));
+    },
+  };
+});

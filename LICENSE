@@ -1,0 +1,24 @@
+# Licencia
+
+**Todos los derechos reservados.**
+
+Copyright © los autores del proyecto NT4H Digital.
+
+Este repositorio contiene código y contenido relacionado con el juego de
+mesa *No Time for Heroes*. El juego de mesa original es propiedad de su
+editorial y autores; este proyecto es una digitalización no oficial.
+
+## Restricciones
+
+- El código fuente no puede copiarse, modificarse ni redistribuirse sin
+  autorización expresa de los autores.
+- Los nombres, textos de cartas, reglas y cualquier contenido derivado del
+  juego original pertenecen a sus respectivos titulares de derechos.
+- Las dependencias conservan sus propias licencias (ver
+  `pnpm-lock.yaml` / `requirements.txt`).
+
+## Permisos
+
+El código se publica con fines de revisión, auditoría y colaboración del
+equipo del proyecto. Si quieres reutilizar alguna parte, contacta con los
+mantenedores.

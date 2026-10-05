@@ -4,9 +4,11 @@ import type {
   Modifier,
   ModifierLayer,
   Zone,
+  EffectDuration,
 } from '@nt4h/schema';
 
-import { cleanupHordeAttackEnd, cleanupRestoration, cleanupTurnEnd } from '../../modifiers/index.js';
+import { cleanupHordeAttackEnd, cleanupRestoration, cleanupTurnEnd, revertScenarioEffects } from '../../modifiers/index.js';
+import { canTransition } from '../../phases/transitions.js';
 
 import { mapPlayer, mapPlayerState } from '../applyEvent.js';
 
@@ -16,6 +18,14 @@ export function applyPhaseChanged(
   state: GameState,
   event: Extract<GameEvent, { type: 'PHASE_CHANGED' }>,
 ): GameState {
+  // Transiciones ilegales nunca deberían existir en el eventLog; el
+  // grafo de fases (phases/transitions.ts) se cumple aquí, en vivo y
+  // en replay — antes canTransition era código de test sin aplicación.
+  if (!canTransition(state.phase, event.phase)) {
+    throw new Error(
+      `Invalid phase transition: ${state.phase} → ${event.phase}`,
+    );
+  }
 
   // D434: al entrar en HORDE_ATTACK se limpia la decision de Feldon de
   // todos los jugadores para que cada nuevo ataque vuelva a preguntar
@@ -35,27 +45,40 @@ export function applyTurnStarted(
 
   return {
     ...state,
+    // TURN_STARTED ES la entrada a TURN_START: sin esto el log saltaba
+    // GAME_END_CHECK → ATTACK_CHOICE sin fase intermedia, y la tabla
+    // de transiciones no describía el flujo real.
+    phase: 'TURN_START',
     activePlayerId: event.playerId,
     turnNumber: event.turnNumber,
     // Reset contadores por turno del jugador activo
-    players: mapPlayer(state.players, event.playerId, p => ({
+    players: mapPlayer(state.players, event.playerId, p => {
+      // Defensas declaradas PERMANENT/WHILE_SOURCE_ACTIVE (contenido
+      // custom) sobreviven al cambio de turno; el resto caduca.
+      const persists = (d?: EffectDuration) =>
+        d === 'PERMANENT' || d === 'WHILE_SOURCE_ACTIVE';
+      return {
       ...p,
       cardsPlayedThisTurn: {},
       cardsPlayedAgainstEnemy: {},
-      prevention: 0,
-      damageCancellation: false,
+      prevention: persists(p.preventionExpiry) ? p.prevention : 0,
+      preventionExpiry: persists(p.preventionExpiry) ? p.preventionExpiry : undefined,
+      damageCancellation: persists(p.cancelExpiry) ? p.damageCancellation : false,
+      cancelExpiry: persists(p.cancelExpiry) ? p.cancelExpiry : undefined,
       shields: 0,
-      armor: 0,
+      armor: persists(p.armorExpiry) ? p.armor : 0,
+      armorExpiry: persists(p.armorExpiry) ? p.armorExpiry : undefined,
       blockNext: 0,
       interceptedBy: null,
       // Reset contadores de Apoyo (modo solitario)
       supportCardsDrawnThisTurn: 0,
       supportDeckIndexUsedThisTurn: null,
       supportCardUsedThisTurn: false,
-      // D434: limpiar flags de prestadas ÔÇö las cartas ya fueron devueltas
+      // D434: limpiar flags de prestadas — las cartas ya fueron devueltas
       // o eliminadas al final del turno anterior
       borrowedSupportCardIds: [],
-    })),
+      };
+    }),
     // Taller: los oyentes de un turno expiran al empezar el siguiente
     listeners: (state.listeners ?? []).filter(l => l.duration !== 'THIS_TURN'),
     // La cuenta de descartes por evasi├│n solo vale dentro de la
@@ -106,17 +129,59 @@ export function applyScenarioRevealed(
   };
 }
 
+export function applyScenarioEffectsApplied(
+  state: GameState,
+  event: Extract<GameEvent, { type: 'SCENARIO_EFFECTS_APPLIED' }>,
+): GameState {
+  // Los deltas ya vienen resueltos en el evento (evalValue necesitaba el
+  // contexto del camino directo): el fold solo aplica — live y replay
+  // convergen sin catálogo.
+  let next: GameState = {
+    ...state,
+    ignoreCoinRewards: event.ignoreCoinRewards,
+    ignoreGloryRewards: event.ignoreGloryRewards,
+  };
+  if (event.marketCostDelta !== 0) {
+    const sources = { ...(next.marketCostSources ?? {}) };
+    sources[event.scenarioInstanceId] =
+      (sources[event.scenarioInstanceId] ?? 0) + event.marketCostDelta;
+    next = {
+      ...next,
+      marketCostModifier: next.marketCostModifier + event.marketCostDelta,
+      marketCostSources: sources,
+    };
+  }
+  const aura = event.auraModifiers ?? [];
+  if (aura.length > 0) {
+    next = {
+      ...next,
+      battlefield: next.battlefield.map(e => ({
+        ...e,
+        modifiers: [...e.modifiers, ...aura],
+      })),
+      scenario: next.scenario
+        ? {
+            ...next.scenario,
+            auraModifiers: [...(next.scenario.auraModifiers ?? []), ...aura],
+          }
+        : next.scenario,
+    };
+  }
+  return next;
+}
+
 export function applyScenarioDiscarded(
   state: GameState,
-  _event: Extract<GameEvent, { type: 'SCENARIO_DISCARDED' }>,
+  event: Extract<GameEvent, { type: 'SCENARIO_DISCARDED' }>,
 ): GameState {
 
   // D434 (spec ┬º4.2): la moneda del ├║ltimo escenario se recoge "al
   // finalizar la partida". Si el descarte se produce al revelarse el
   // Se├▒or (warlordRevealed ya true por el WARLORD_REVEALED previo),
   // conservar scenarioCoins para el recuento final.
+  const reverted = revertScenarioEffects(state, event.scenarioInstanceId);
   return {
-    ...state,
+    ...reverted,
     scenario: null,
     scenarioCoins: state.warlordRevealed ? state.scenarioCoins : 0,
   };
@@ -143,7 +208,12 @@ export function applyModifierAdded(
     sourceId: event.sourceId ?? '',
     layer: event.layer as ModifierLayer,
     timestamp: state.monotonicCounter,
-    duration: (event.duration as Modifier['duration']) ?? 'UNTIL_END_OF_TURN',
+    // 'INSTANT' no tiene sentido en un Modifier persistente (nada lo
+    // expira — quedaba en la lista para siempre): normalizar como hace
+    // applyVulnerabilityApplied → 'UNTIL_END_OF_TURN'.
+    duration: event.duration === 'INSTANT'
+      ? 'UNTIL_END_OF_TURN'
+      : ((event.duration as Modifier['duration']) ?? 'UNTIL_END_OF_TURN'),
     amount: event.amount ?? 0,
     filter: event.filter,
     scope: event.scope,
@@ -172,7 +242,17 @@ export function applyModifierAdded(
   if (event.targetId === 'market' && event.layer === 'MARKET_COST') {
     // D418: sin amount explicito, no aplicar nada (default -1 era peligroso)
     if (event.amount === undefined) return state;
-    return { ...state, marketCostModifier: state.marketCostModifier + event.amount };
+    // Registrar el delta por fuente para poder revertirlo cuando el
+    // origen abandone el campo (WHILE_SOURCE_ACTIVE sobre el escalar).
+    const sources = { ...(state.marketCostSources ?? {}) };
+    if (event.sourceId) {
+      sources[event.sourceId] = (sources[event.sourceId] ?? 0) + event.amount;
+    }
+    return {
+      ...state,
+      marketCostModifier: state.marketCostModifier + event.amount,
+      marketCostSources: sources,
+    };
   }
   return state;
 }
@@ -226,15 +306,29 @@ export function applyGameEnded(
   _event: Extract<GameEvent, { type: 'GAME_ENDED' }>,
 ): GameState {
 
-  return { ...state, phase: 'FINISHED' };
+  // Las elecciones pendientes mueren con la partida: sin la limpieza un
+  // RESOLVE_CHOICE post-FINISHED podía mutar el estado terminal.
+  return {
+    ...state,
+    phase: 'FINISHED',
+    pendingChoices: state.pendingChoices.length ? [] : state.pendingChoices,
+  };
 }
 
 export function applyLeaderDetermined(
   state: GameState,
   event: Extract<GameEvent, { type: 'LEADER_DETERMINED' }>,
 ): GameState {
-
-  return { ...state, activePlayerId: event.playerId };
+  // Residuo de la puja: leaderBidCards solo existe entre el commit de la
+  // puja y su resolución — el evento terminal la limpia para que el fold
+  // reproduzca el mismo estado que la ejecución inline.
+  const players = Object.fromEntries(
+    Object.entries(state.players).map(([pid, p]) => [
+      pid,
+      p.leaderBidCards?.length ? { ...p, leaderBidCards: undefined } : p,
+    ]),
+  );
+  return { ...state, players, activePlayerId: event.playerId };
 }
 
 export function applyLeaderTieBreak(
@@ -264,7 +358,13 @@ export function applyStatusApplied(
   const hasStatus = (enemy.statuses ?? []).some(s => s.id === event.status);
   const statuses = hasStatus
     ? (enemy.statuses ?? []).map(s =>
-        s.id === event.status ? { ...s, stacks: s.stacks + event.stacks } : s)
+        s.id === event.status
+          // Al acumular stacks la duración se refresca a la de la última
+          // aplicación (política "última gana": re-aplicar renueva) —
+          // conservar la del primero dejaba permanentes recortados o
+          // temporales eternizados según el orden de los eventos.
+          ? { ...s, stacks: s.stacks + event.stacks, duration: event.duration ?? s.duration }
+          : s)
     : [...(enemy.statuses ?? []), { id: event.status, stacks: event.stacks, duration: event.duration }];
   return {
     ...state,
@@ -342,4 +442,48 @@ export function applyPendingChoicesRemoved(
     ...state,
     pendingChoices: state.pendingChoices.filter(c => !event.choiceIds.includes(c.choiceId)),
   };
+}
+
+export function applyPendingChoiceCreated(
+  state: GameState,
+  event: Extract<GameEvent, { type: 'PENDING_CHOICE_CREATED' }>,
+): GameState {
+  // Idempotente: en el camino vivo la elección ya fue insertada por
+  // mutación antes de que el diff emitiera el evento; en el fold del
+  // eventLog es este reducer quien la materializa (E-2).
+  if (state.pendingChoices.some(c => c.choiceId === event.choice.choiceId)) {
+    return state;
+  }
+  return { ...state, pendingChoices: [...state.pendingChoices, event.choice] };
+}
+
+export function applyLeaderBidCards(
+  state: GameState,
+  event: Extract<GameEvent, { type: 'LEADER_BID_CARDS' }>,
+): GameState {
+  return mapPlayerState(state, event.playerId, p => ({
+    ...p,
+    leaderBidCards: event.cardInstanceIds,
+  }));
+}
+
+export function applyFeldonDecision(
+  state: GameState,
+  event: Extract<GameEvent, { type: 'FELDON_DECISION' }>,
+): GameState {
+  return mapPlayerState(state, event.playerId, p => ({
+    ...p,
+    feldonDecision: event.decision,
+  }));
+}
+
+export function applyStartingCardsSwapped(
+  state: GameState,
+  event: Extract<GameEvent, { type: 'STARTING_CARDS_SWAPPED' }>,
+): GameState {
+
+  return mapPlayerState(state, event.playerId, p => ({
+    ...p,
+    startingSwapUsed: true,
+  }));
 }

@@ -1,0 +1,35 @@
+name: CI - Backend Django NT4H
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'apps/backend/**'
+      - '.github/workflows/backend-ci.yml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'apps/backend/**'
+      - '.github/workflows/backend-ci.yml'
+
+jobs:
+  backend:
+    name: 'Django: tests + lint'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Dependencias
+        run: pip install -r apps/backend/requirements.txt ruff
+      - name: Ruff
+        working-directory: apps/backend
+        run: ruff check .
+      - name: Tests Django
+        working-directory: apps/backend
+        env:
+          # DEBUG=true para que settings no exija SECRET_KEY/REDIS_URL;
+          # los tests usan SQLite en memoria y Channels in-memory.
+          DJANGO_DEBUG: 'true'
+        run: python manage.py test

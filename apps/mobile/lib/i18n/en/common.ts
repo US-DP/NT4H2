@@ -1,6 +1,8 @@
 ﻿/** English strings for 'common' — shared components and lib utilities. */
 export default {
   common: {
+    /** Loading state for buttons/controls (ui/Button) */
+    loading: 'Loading…',
     // Game phases (lib/phaseLabels.ts)
     phases: {
       SETUP: 'Setup',
@@ -68,6 +70,8 @@ export default {
       netRetrying: 'Offline — retrying.',
       stateStale: 'State is stale — resyncing.',
       cmdRejected: 'Command rejected: {{reason}}',
+      rateLimited: 'Too many messages — wait a moment.',
+      chatRateLimited: 'Chat too fast — wait a moment.',
       netWait: 'No internet connection — waiting for network.',
       netError: 'Connection error with the server',
       netLost: 'Connection lost — retrying.',
@@ -76,6 +80,8 @@ export default {
       choiceRejected: 'Choice rejected: {{reason}}',
       bidRejected: 'Bid rejected: {{reason}}',
       reasonUnknown: 'unknown',
+      newGameFailed: 'Could not create the game: check the configuration',
+      customNotLoaded: 'Workshop content is still loading — try again in a few seconds',
       saveOnlineNo: 'Cannot save an online game',
       savedOk: 'Game saved: {{name}}',
       saveFailed: 'Could not save the game',

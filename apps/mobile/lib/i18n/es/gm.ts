@@ -13,6 +13,7 @@ export default {
     undoA11y: 'Deshacer la última acción de la partida',
     undoDone: 'Última acción deshecha',
     undoNone: 'No hay acciones que deshacer',
+    undoRejected: 'Acción deshecha ({{count}} comando(s) rechazados al re-ejecutar — la partida puede divergir)',
     // Pestañas (móvil y panel lateral)
     tabCombat: 'Lucha',
     tabHand: 'Mano',
@@ -28,6 +29,19 @@ export default {
     tabFollowPhaseHint: 'Toca de nuevo para seguir la fase automáticamente',
     // Mercado
     marketInactive: 'Mercado — disponible en la fase de Mercado',
+    // Apoyos (modo SOLO, spec §4.1-4.2)
+    supportsTitle: 'Apoyos',
+    supportsA11y: 'Mazos de Apoyo disponibles',
+    supportDeckLabel: 'Mazo {{n}} · {{count}} cartas',
+    supportOpenLabel: 'Abrir ({{cost}} monedas)',
+    supportOpenLabelA11y: 'Abrir el mazo de Apoyo {{n}} por {{cost}} monedas',
+    supportOpenA11y: 'Mazo de Apoyo {{n}} abierto',
+    supportPayGlory: '{{cost}} Gloria',
+    supportPayGloryA11y: 'Robar carta del mazo de Apoyo {{n}} por {{cost}} Gloria',
+    supportPayCoins: '{{cost}} monedas',
+    supportPayCoinsA11y: 'Robar carta del mazo de Apoyo {{n}} por {{cost}} monedas',
+    supportBuyA11y: 'Carta de Apoyo robada del mazo {{n}}',
+    supportLocked: 'Abre el anterior primero',
     // Acciones secundarias
     save: 'Guardar',
     // Modificadores del desglose de la Horda
@@ -50,7 +64,7 @@ export default {
     instrAttackChoice:
       'Decide: juega cartas y enfréntate a la Horda, o evade descartando al menos 2 cartas de tu mano.',
     instrHordeAttack: 'La Horda ataca. Revisa el resumen de daño.',
-    instrLeaderChoice: 'Elige cartas para la puja de Líder.',
+    // (instrLeaderChoice eliminada: la puja vive en INITIAL_PLAYER_SELECTION)
     // Pantalla final (UI-210..212)
     finishedTitle: 'Partida Finalizada',
     finishedTie: 'Empate a {{total}} de Gloria entre {{players}}.',
@@ -98,6 +112,7 @@ export default {
     histGloryGained: 'Gloria ganada',
     histGloryLost: 'Gloria perdida',
     histCoins: 'Monedas',
+    histCoinsLost: 'Monedas perdidas',
     histCoinsStolen: 'Robo de monedas',
     histHealing: 'Curación',
     histMarketPurchase: 'Compra en Mercado',
@@ -140,7 +155,7 @@ export default {
   histHordeReordered: 'Horda reordenada',
   histSupportDeck: 'Mazo de Apoyo abierto',
   histWoundPlaced: 'Herida colocada',
-  histShieldTransferred: 'Escudo transferido',
+
   histBlock: 'Bloqueo',
   histBlockNext: '+{{n}} al próximo daño',
   histBlockConsumed: 'Consumido',

@@ -82,6 +82,7 @@ export default {
       customTitle: 'Mazos personalizados ({{count}})',
       meta: '{{count}} cartas · {{classes}}',
       deleteA11y: 'Eliminar mazo {{name}}',
+      editA11y: 'Editar mazo {{name}}',
       customHint: 'Seleccionables al crear una partida (marca ★ junto a la clase).',
       copies: 'Copias: {{count}}/{{max}}',
       removeCopyA11y: 'Quitar una copia de {{name}}',

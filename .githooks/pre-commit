@@ -1,0 +1,19 @@
+#!/bin/sh
+# Gate local opt-in (git config core.hooksPath .githooks):
+# lint Python de lo tocado + chequeo rápido de secretos.
+
+fail=0
+
+# Ruff solo sobre el backend (rapido); falla el commit si hay errores.
+if git diff --cached --name-only | grep -q '^apps/backend/.*\.py$'; then
+    (cd apps/backend && ruff check .) || fail=1
+fi
+
+# Secretos obvios en lo staged (tokens/keys reales, no placeholders).
+staged=$(git diff --cached -U0 --no-color | grep '^+' | grep -v '^+++')
+if echo "$staged" | grep -qE '(sk_live_|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY|ghp_[A-Za-z0-9]{36})'; then
+    echo "pre-commit: posible secreto en los cambios" >&2
+    fail=1
+fi
+
+exit $fail

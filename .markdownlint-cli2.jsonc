@@ -1,0 +1,19 @@
+{
+  // El README usa <h1>/<table> HTML para centrar el encabezado y la
+  // galería de capturas — es la práctica estándar en GitHub.
+  "config": {
+    "default": true,
+    "MD013": false,
+    "MD033": false,
+    "MD041": false,
+    "MD024": { "siblings_only": true },
+    "MD029": false,
+    "MD060": false
+  },
+  "ignores": [
+    "node_modules/**",
+    "**/node_modules/**",
+    "apps/mobile/.expo/**",
+    "docs/audits/**"
+  ]
+}

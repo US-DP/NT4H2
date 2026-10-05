@@ -5,7 +5,7 @@ export default {
     saved: '✓ Preferencias guardadas',
     back: 'Volver',
     cancel: 'Cancelar',
-    accept: 'Aceptar',
+    accept: 'Entendido',
     reset: 'Restablecer',
     import: 'Importar',
     always: '✓ Siempre',

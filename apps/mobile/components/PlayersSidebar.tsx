@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 import '../lib/i18n';
 import { useGameStore } from '../store/gameStore';
 import { spacing, radius, fontSize } from '../lib/theme';
+import type { Colors } from '../lib/theme';
 import { useColors, useFs } from '../lib/useTheme';
 import { classColor as heroClassColor } from '../lib/classTokens';
 
@@ -22,6 +23,9 @@ export function PlayersSidebar({ onSelectHero }: PlayersSidebarProps) {
   const { t } = useTranslation();
   const colors2 = useColors();
   const fs = useFs();
+  // Sin useMemo: el renderer ligero de tests invoca los componentes
+  // directamente y los hooks de React lanzan fuera de un render real.
+  const styles = createStyles(colors2, fs);
   const gameState = useGameStore((s) => s.gameState);
   const catalog = useGameStore((s) => s.catalog);
   const viewerId = useGameStore((s) => s.viewerId);
@@ -50,6 +54,7 @@ export function PlayersSidebar({ onSelectHero }: PlayersSidebarProps) {
             onPress={() => onSelectHero?.(player.heroId)}
             disabled={!onSelectHero}
             accessibilityRole="button"
+            accessibilityState={{ disabled: !onSelectHero }}
             accessibilityLabel={
               t('hud.playerRowA11y', {
                 name: heroDef?.name ?? '???',
@@ -65,6 +70,7 @@ export function PlayersSidebar({ onSelectHero }: PlayersSidebarProps) {
               { backgroundColor: colors2.surface, borderLeftColor: classColor },
               isActive && styles.rowActive,
               isEliminated && styles.rowEliminated,
+              !onSelectHero && styles.rowDisabled,
             ]}
           >
             <View style={styles.rowHeader}>
@@ -89,7 +95,7 @@ export function PlayersSidebar({ onSelectHero }: PlayersSidebarProps) {
               <Text style={[styles.stat, { color: colors2.info, fontSize: fs(fontSize.detail) }]}>
                 🛡 {player.shields}
               </Text>
-              <Text style={[styles.stat, { color: '#DCA83B', fontSize: fs(fontSize.detail) }]}>
+              <Text style={[styles.stat, { color: colors2.gameCoin, fontSize: fs(fontSize.detail) }]}>
                 ● {player.coins}
               </Text>
               <Text style={[styles.stat, { color: colors2.accent, fontSize: fs(fontSize.detail) }]}>
@@ -103,7 +109,7 @@ export function PlayersSidebar({ onSelectHero }: PlayersSidebarProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   container: {
     flex: 1,
     padding: spacing.sm,
@@ -121,12 +127,16 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     borderWidth: 2,
     borderColor: 'transparent',
+    minHeight: 44,
   },
   rowActive: {
-    borderColor: '#F4C94F',
-    backgroundColor: '#262A42',
+    borderColor: c.borderSelected,
+    backgroundColor: c.surfaceInteractiveSelected,
   },
   rowEliminated: {
+    opacity: 0.45,
+  },
+  rowDisabled: {
     opacity: 0.45,
   },
   rowHeader: {
@@ -144,19 +154,19 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   turnPill: {
-    backgroundColor: '#F4C94F',
+    backgroundColor: c.accent,
     borderRadius: 10,
     paddingHorizontal: 8,
     paddingVertical: 2,
   },
   turnPillText: {
-    color: '#1A1D30',
+    color: c.textOnAccent,
     fontWeight: '800',
   },
   eliminated: {
-    color: '#DC5862',
+    color: c.danger,
     fontWeight: '800',
-    fontSize: 14,
+    fontSize: fs(14),
   },
   rowStats: {
     flexDirection: 'row',

@@ -1,13 +1,14 @@
 ﻿/**
- * customContent Ã¢â‚¬â€ conjuntos de contenido personalizado creados en el Taller.
+ * customContent — conjuntos de contenido personalizado creados en el Taller.
  *
  * Persistidos en `nt4h.customSets` (storage no sensible). Las cartas validadas
- * se fusionan al catÂ¡logo en `loadCatalogWithCustom`, de modo que el motor las
+ * se fusionan al cat¡logo en `loadCatalogWithCustom`, de modo que el motor las
  * ve como cartas normales (mismos efectos registrados).
  */
 
 import { create } from 'zustand';
 import { storageGet, storageSet } from './storage';
+import { deleteImageAsset, warmImageAssets } from './assetImport';
 import {
   loadCatalog,
   mergeCustomCards,
@@ -23,10 +24,10 @@ const DRAFT_KEY = 'nt4h.cardDraft';
 const META_KEY = 'nt4h.setMeta';
 const DEFAULT_SET_ID = 'set.taller-local';
 
-/** MÂ¡ximo de estados revertibles por conjunto (undo). */
+/** M¡ximo de estados revertibles por conjunto (undo). */
 const HISTORY_LIMIT = 30;
 
-/** VersiÂ³n publicada inmutable: una vez creada nunca cambia. */
+/** Versi³n publicada inmutable: una vez creada nunca cambia. */
 export interface PublishedVersion {
   version: string;
   publishedAt: number;
@@ -51,8 +52,8 @@ export interface TrashedCard {
   deletedAt: number;
 }
 
-/** Hash de integridad determinista (FNV-1a). No es criptogrÂ¡fico: sirve para
- *  detectar corrupciÂ³n/ediciÂ³n accidental, no para seguridad. */
+/** Hash de integridad determinista (FNV-1a). No es criptogr¡fico: sirve para
+ *  detectar corrupci³n/edici³n accidental, no para seguridad. */
 function checksumOf(set: ContentSet): string {
   const text = JSON.stringify(set);
   let h = 0x811c9dc5;
@@ -72,7 +73,7 @@ function bumpPatch(version: string): string {
 interface CustomContentState {
   loaded: boolean;
   sets: ContentSet[];
-  /** Borrador de carta en ediciÂ³n (autoguardado, sobrevive al cambio de pestaÂ±a). */
+  /** Borrador de carta en edici³n (autoguardado, sobrevive al cambio de pesta±a). */
   draft: unknown;
   /** Carga los conjuntos persistidos (llamar una vez al arrancar). */
   init: () => Promise<void>;
@@ -94,15 +95,15 @@ interface CustomContentState {
   exportSet: (setId: string) => string | null;
   /** Elimina un conjunto instalado (no el juego base). Devuelve false si no existe. */
   removeSet: (setId: string) => boolean;
-  /** Pila de deshacer por conjunto (estados anteriores a cada mutaciÂ³n). */
+  /** Pila de deshacer por conjunto (estados anteriores a cada mutaci³n). */
   history: Record<string, ContentSet[]>;
   /** Versiones publicadas inmutables por conjunto. */
   published: Record<string, PublishedVersion[]>;
-  /** Revierte la Âºltima mutaciÂ³n del conjunto. Devuelve false si no hay historial. */
+  /** Revierte la ºltima mutaci³n del conjunto. Devuelve false si no hay historial. */
   undo: (setId: string) => boolean;
-  /** Publica una versiÂ³n inmutable del estado actual del conjunto. Devuelve errores de validaciÂ³n. */
+  /** Publica una versi³n inmutable del estado actual del conjunto. Devuelve errores de validaci³n. */
   publish: (setId: string) => string[];
-  /** Restaura una versiÂ³n publicada como copia de trabajo (revertible con undo). */
+  /** Restaura una versi³n publicada como copia de trabajo (revertible con undo). */
   restoreVersion: (setId: string, version: string) => boolean;
   /** Biblioteca de fragmentos reutilizables del Taller (P2). */
   fragments: WorkshopFragment[];
@@ -199,6 +200,10 @@ export const useCustomContent = create<CustomContentState>((set, get) => ({
         }
         else set({ loaded: true });
       } else set({ loaded: true });
+      // Precalentar el cache de imágenes del Taller: sourceImage 'asset:<id>'
+      // se resuelve síncronamente en el render — sin warm-up, la primera
+      // pasada siempre enseñaría el placeholder.
+      void warmImageAssets(get().sets.flatMap(s => s.cards.map(c => c.sourceImage)));
       // Historial y versiones publicadas
       try {
         const metaRaw = await storageGet(META_KEY);
@@ -216,7 +221,7 @@ export const useCustomContent = create<CustomContentState>((set, get) => ({
             trash: meta.trash ?? {},
           });
         }
-      } catch { /* metadatos corruptos: empezar vacÂ­o */ }
+      } catch { /* metadatos corruptos: empezar vac­o */ }
       const draftRaw = await storageGet(DRAFT_KEY);
       if (draftRaw) {
         try {
@@ -225,7 +230,7 @@ export const useCustomContent = create<CustomContentState>((set, get) => ({
         } catch { /* borrador corrupto: ignorar */ }
       } else {
         // Migracion: borrador del editor antiguo (nt4h.study.draft) a clave nueva.
-        // Se conserva el formato antiguo hasta que la migraciÂ³n verifica.
+        // Se conserva el formato antiguo hasta que la migraci³n verifica.
         const legacy = await storageGet('nt4h.study.draft');
         if (legacy) {
           try {
@@ -310,18 +315,21 @@ export const useCustomContent = create<CustomContentState>((set, get) => ({
   upsertDeck: (deck) => {
     const sets = get().sets;
     const target = localSet(sets);
-    const history = pushHistory(get, target.id, target);
     const next: ContentSet = {
       ...target,
       decks: [...target.decks.filter(d => d.id !== deck.id), { ...deck, setId: target.id }],
     };
     const updated = [...sets.filter(s => s.id !== target.id), next];
+    // M-11: validar ANTES de persistir (mismo orden que upsertCard) —
+    // un mazo inválido no debe quedar escrito en el set.
+    const catalog = loadCatalogWithCustomSets(updated);
+    const errors = validateDeck(deck, catalog.byId).errors;
+    if (errors.length > 0) return errors;
+    const history = pushHistory(get, target.id, target);
     set({ sets: updated, history });
     persist(updated);
     persistMeta(history, get().published, get().fragments, get().trash);
-    // ValidaciÂ³n del mazo completo contra el catÂ¡logo fusionado
-    const catalog = loadCatalogWithCustomSets(updated);
-    return validateDeck(deck, catalog.byId).errors;
+    return errors;
   },
 
   removeCard: (cardId) => {
@@ -337,7 +345,16 @@ export const useCustomContent = create<CustomContentState>((set, get) => ({
         trash[cardId] = { card, draft: get().cardDrafts[cardId] ?? null, deletedAt: Date.now() };
       }
     }
-    const updated = sets.map(s => ({ ...s, cards: s.cards.filter(c => c.id !== cardId) }));
+    const updated = sets.map(s => ({
+      ...s,
+      cards: s.cards.filter(c => c.id !== cardId),
+      // M-12: los mazos que citaban la carta quedaban con un
+      // cardDefinitionId huérfano — limpiarlo en el mismo commit.
+      decks: s.decks.map(d => ({
+        ...d,
+        cardEntries: d.cardEntries.filter(e => e.cardDefinitionId !== cardId),
+      })),
+    }));
     set({ sets: updated, history, trash });
     persist(updated);
     persistMeta(history, get().published, get().fragments, trash);
@@ -371,8 +388,15 @@ export const useCustomContent = create<CustomContentState>((set, get) => ({
     for (const s of get().sets) for (const c of s.cards) alive.add(c.id);
     const cardDrafts = Object.fromEntries(
       Object.entries(get().cardDrafts).filter(([id]) => alive.has(id)));
+    // Imágenes del Taller huérfanas: las cartas purgadas de la papelera
+    // ya no pueden restaurarse — su `nt4h.asset/<id>` sería basura
+    // permanente (hasta 4 MiB por asset).
+    const trashedAssets = Object.values(get().trash)
+      .map(e => e.card.sourceImage)
+      .filter((r): r is string => !!r);
     set({ trash: {}, cardDrafts });
     persistMeta(get().history, get().published, get().fragments, {});
+    for (const ref of trashedAssets) void deleteImageAsset(ref);
   },
 
   saveFragment: (name, nodes) => {
@@ -424,7 +448,7 @@ export const useCustomContent = create<CustomContentState>((set, get) => ({
     const catalog = loadCatalog();
     const validation = validateContentSet(working, catalog.byId);
     if (!validation.ok) return validation.errors;
-    // VersiÂ³n inmutable: patch+1 respecto a la Âºltima publicada
+    // Versi³n inmutable: patch+1 respecto a la ºltima publicada
     const prev = get().published[setId] ?? [];
     const version = bumpPatch(prev[prev.length - 1]?.version ?? working.version);
     const snapshot: ContentSet = {
@@ -447,7 +471,7 @@ export const useCustomContent = create<CustomContentState>((set, get) => ({
   restoreVersion: (setId, version) => {
     const record = (get().published[setId] ?? []).find(v => v.version === version);
     if (!record) return false;
-    // VerificaciÂ³n de integridad: el snapshot no debe haberse alterado
+    // Verificaci³n de integridad: el snapshot no debe haberse alterado
     const { checksum: embedded, ...snapshotNoChecksum } = record.snapshot;
     // El snapshot restaurado debe coincidir con el checksum de publicación.
     if (typeof embedded === 'string'
@@ -474,7 +498,7 @@ function loadCatalogWithCustomSets(sets: ContentSet[]): CatalogLoadResult {
   return mergeCustomCards(base, valid);
 }
 
-/** CatÂ¡logo oficial + conjuntos personalizados vÂ¡lidos. */
+/** Cat¡logo oficial + conjuntos personalizados v¡lidos. */
 export function loadCatalogWithCustom(): CatalogLoadResult {
   return loadCatalogWithCustomSets(useCustomContent.getState().sets);
 }

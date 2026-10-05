@@ -9,9 +9,16 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import '../lib/i18n';
 import { useGameStore } from '../store/gameStore';
+import { useColors, useFs } from '../lib/useTheme';
+import type { Colors } from '../lib/theme';
 
 export function PrivacyScreen() {
   const { t } = useTranslation();
+  const c = useColors();
+  const fs = useFs();
+  // Sin useMemo: el renderer ligero de tests invoca los componentes
+  // directamente y los hooks de React lanzan fuera de un render real.
+  const styles = createStyles(c, fs);
   const gameState = useGameStore((s) => s.gameState);
   const catalog = useGameStore((s) => s.catalog);
   const passPrivacy = useGameStore((s) => s.passPrivacy);
@@ -19,10 +26,12 @@ export function PrivacyScreen() {
 
   if (!gameState || !catalog) return null;
 
-  // Durante la puja de Líder no hay activePlayerId — el que toma el
-  // dispositivo es el viewer (siguiente jugador con decisión pendiente)
-  const player = gameState.players[gameState.activePlayerId]
-    ?? (viewerId ? gameState.players[viewerId] : undefined);
+  // El que toma el dispositivo es el VIEWER actual (siguiente jugador con
+  // decisión o turno): un hand-over por pendingChoice ajena (M-6) pone
+  // viewerId al decisor — si se etiquetara por activePlayerId la pantalla
+  // pediría pasar el dispositivo al jugador equivocado.
+  const player = (viewerId ? gameState.players[viewerId] : undefined)
+    ?? gameState.players[gameState.activePlayerId];
   const heroDef = player ? catalog.byId.get(player.heroId) : undefined;
 
   return (
@@ -43,59 +52,62 @@ export function PrivacyScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   container: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
+    backgroundColor: c.background,
   },
   title: {
-    color: '#f1c40f',
-    fontSize: 28,
+    color: c.accent,
+    fontSize: fs(28),
     fontWeight: 'bold',
     marginBottom: 16,
   },
   subtitle: {
-    color: '#bdc3c7',
-    fontSize: 16,
+    color: c.textMuted,
+    fontSize: fs(16),
     marginBottom: 24,
   },
   heroBadge: {
-    backgroundColor: '#2c3e50',
+    backgroundColor: c.surface,
     padding: 20,
     borderRadius: 12,
     alignItems: 'center',
     marginBottom: 24,
     borderWidth: 2,
-    borderColor: '#3498db',
+    borderColor: c.info,
   },
   heroName: {
-    color: '#ecf0f1',
-    fontSize: 22,
+    color: c.text,
+    fontSize: fs(22),
     fontWeight: 'bold',
   },
   heroClass: {
-    color: '#3498db',
-    fontSize: 14,
+    color: c.info,
+    fontSize: fs(14),
     marginTop: 4,
   },
   warning: {
-    color: '#e74c3c',
-    fontSize: 12,
+    color: c.danger,
+    fontSize: fs(12),
     textAlign: 'center',
     marginBottom: 32,
   },
   button: {
-    backgroundColor: '#27ae60',
+    backgroundColor: c.success,
     padding: 16,
     borderRadius: 8,
     minWidth: 200,
+    minHeight: 44,
+    justifyContent: 'center',
     alignItems: 'center',
   },
   buttonText: {
-    color: '#fff',
-    fontSize: 16,
+    color: c.text,
+    fontSize: fs(16),
     fontWeight: 'bold',
   },
 });

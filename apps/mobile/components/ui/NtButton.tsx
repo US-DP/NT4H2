@@ -7,11 +7,11 @@
  * (incluido highContrast) sin lógica en el componente.
  */
 
-import { Pressable, Text, type PressableProps } from 'react-native';
+import { ActivityIndicator, Pressable, Text, type PressableProps } from 'react-native';
 // Side-effect: garantiza StyleSheet.configure antes del create de abajo
 import '../../lib/unistyles';
 import { StyleSheet } from 'react-native-unistyles';
-import { useExtraTextSpacing } from '../../lib/useTheme';
+import { useColors, useExtraTextSpacing } from '../../lib/useTheme';
 import { typeScale } from '../../lib/theme';
 
 export type NtButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost';
@@ -22,10 +22,14 @@ export interface NtButtonProps extends Omit<PressableProps, 'style' | 'children'
   variant?: NtButtonVariant;
   size?: NtButtonSize;
   disabled?: boolean;
+  /** Muestra un spinner y bloquea la acción (operaciones con latencia). */
+  loading?: boolean;
 }
 
-export function NtButton({ label, variant = 'primary', size = 'md', disabled, ...rest }: NtButtonProps) {
-  styles.useVariants({ variant, size, disabled: !!disabled });
+export function NtButton({ label, variant = 'primary', size = 'md', disabled, loading, ...rest }: NtButtonProps) {
+  const inactive = disabled || loading;
+  styles.useVariants({ variant, size, disabled: !!inactive });
+  const colors = useColors();
   // extraTextSpacing: más interlineado + tracking en las etiquetas
   const spacing = useExtraTextSpacing();
   const labelExtra = spacing.letterSpacing !== 0
@@ -37,11 +41,19 @@ export function NtButton({ label, variant = 'primary', size = 'md', disabled, ..
   return (
     <Pressable
       accessibilityRole="button"
-      disabled={disabled}
-      style={({ pressed }) => [styles.button, pressed && !disabled && styles.pressed]}
+      accessibilityState={{ disabled: inactive, busy: !!loading }}
+      disabled={inactive}
+      style={({ pressed }) => [styles.button, pressed && !inactive && styles.pressed]}
       {...rest}
     >
-      <Text style={[styles.label, labelExtra]}>{label}</Text>
+      {loading ? (
+        <ActivityIndicator
+          size="small"
+          color={variant === 'primary' || variant === 'danger' ? colors.textOnAccent : colors.accent}
+        />
+      ) : (
+        <Text style={[styles.label, labelExtra]}>{label}</Text>
+      )}
     </Pressable>
   );
 }
@@ -86,7 +98,7 @@ const styles = StyleSheet.create((theme) => ({
       variant: {
         primary: { color: theme.tokens.text.inverse },
         secondary: {},
-        danger: { color: '#ffffff' },
+        danger: { color: theme.colors.textOnAccent },
         ghost: { color: theme.colors.accent },
       },
     },

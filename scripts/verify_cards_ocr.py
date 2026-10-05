@@ -12,11 +12,18 @@ import json
 import io
 import os
 import re
+import sys
 import unicodedata
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CATALOG_DIR = os.path.join(ROOT, 'packages', 'catalog', 'data', 'official')
-OCR_PATH = os.path.join(ROOT, '..', 'NT4H', 'ocr_results.json')
+# El corpus OCR vive en el repo vecino del P&P (../NT4H) — configurable
+# por env o argv para no depender de la disposición del disco local.
+OCR_PATH = (
+    sys.argv[1] if len(sys.argv) > 1
+    else os.environ.get('OCR_RESULTS_PATH')
+    or os.path.join(ROOT, 'docs', 'ocr_results.json')
+)
 OUT = os.path.join(ROOT, 'docs', 'card-verification-report.json')
 
 FILES = [
@@ -34,6 +41,12 @@ def norm(s: str) -> str:
 
 def load_ocr_corpus():
     """Todos los fragmentos OCR como un solo corpus normalizado."""
+    if not os.path.exists(OCR_PATH):
+        sys.exit(
+            f'Corpus OCR no encontrado: {OCR_PATH}\n'
+            'Indicar la ruta con argv[1] o OCR_RESULTS_PATH '
+            '(el fichero ocr_results.json vive en el repo del P&P, fuera de este repo).'
+        )
     d = json.load(io.open(OCR_PATH, encoding='utf-8'))
     frags = []
     def walk(x):

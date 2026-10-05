@@ -47,6 +47,8 @@ export default {
     pageOf: '{{current}} de {{total}}',
     inThisSection: 'EN ESTA SECCIÓN',
     related: 'RELACIONADO',
+    keywordRelated: 'Aparece también en: {{sections}}',
+    keywordNone: 'Esta palabra clave solo aparece en esta sección.',
     back: 'Volver',
     drawerTitle: 'Índice del reglamento',
     closeIndexA11y: 'Cerrar índice',

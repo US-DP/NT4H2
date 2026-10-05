@@ -49,8 +49,14 @@ export function NtDialog({ visible, title, description, actions, onDismiss, chil
         accessibilityLabel={onDismiss ? t('common.a11y.closeDialog') : undefined}
         accessibilityRole={onDismiss ? 'button' : 'none'}
       >
-        {/* El diálogo intercepta su propia pulsación para no cerrarse */}
-        <Pressable style={styles.dialog} onPress={() => {}} accessibilityLabel={title}>
+        {/* El diálogo intercepta su propia pulsación para no cerrarse —
+            View + responder (un Pressable sin acción es un "botón" falso
+            que roba rol y foco a los lectores de pantalla). */}
+        <View
+          style={styles.dialog}
+          accessibilityLabel={title}
+          onStartShouldSetResponder={() => true}
+        >
           <Text style={styles.title} accessibilityRole="header">{title}</Text>
           {description ? <Text style={styles.description}>{description}</Text> : null}
           {children}
@@ -69,7 +75,7 @@ export function NtDialog({ visible, title, description, actions, onDismiss, chil
               );
             })}
           </View>
-        </Pressable>
+        </View>
       </Pressable>
     </Modal>
   );

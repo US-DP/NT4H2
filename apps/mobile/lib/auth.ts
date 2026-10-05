@@ -31,9 +31,18 @@ export interface AuthTokens {
 
 /* ---------- almacenamiento ---------- */
 
+// Web: sessionStorage (como secureStorage.ts) — los JWT viven solo en la
+// pestaña; localStorage los dejaba indefinidamente legibles para
+// cualquier script inyectado. Nativo: SecureStore con fallback a
+// AsyncStorage (menos seguro pero persistente; mejor que perder sesión).
+function _webStorage(): Storage | null {
+  return typeof sessionStorage !== 'undefined' ? sessionStorage : null;
+}
+
 async function _setItem(key: string, value: string): Promise<void> {
+  const ss = _webStorage();
   if (Platform.OS === 'web') {
-    globalThis.localStorage?.setItem(key, value);
+    ss?.setItem(key, value);
     return;
   }
   try {
@@ -44,8 +53,9 @@ async function _setItem(key: string, value: string): Promise<void> {
 }
 
 async function _getItem(key: string): Promise<string | null> {
+  const ss = _webStorage();
   if (Platform.OS === 'web') {
-    return globalThis.localStorage?.getItem(key) ?? null;
+    return ss?.getItem(key) ?? null;
   }
   try {
     return await SecureStore.getItemAsync(key);
@@ -55,8 +65,9 @@ async function _getItem(key: string): Promise<string | null> {
 }
 
 async function _delItem(key: string): Promise<void> {
+  const ss = _webStorage();
   if (Platform.OS === 'web') {
-    globalThis.localStorage?.removeItem(key);
+    ss?.removeItem(key);
     return;
   }
   try {
@@ -111,37 +122,95 @@ export const authApi = {
     _postJson('/auth/login/', { email, password }),
   refresh: (refresh: string) => _postJson('/auth/refresh/', { refresh }),
   logout: (refresh: string, access: string) => _postJson('/auth/logout/', { refresh }, access),
-  claimGuest: (roomId: string, playerId: string, playerToken: string, access: string) =>
-    _postJson('/auth/claim-guest/', { roomId, playerId, playerToken }, access),
+  // (claimGuest eliminado: el join con JWT ya auto-vincula la cuenta —
+  //  sin flujo UI que lo llamara era superficie muerta)
+  /** PATCH /api/v1/me — sincroniza campos de la cuenta (display_name, locale). */
+  updateMe: (patch: { display_name?: string; locale?: string; avatar?: string; timezone?: string }) =>
+    authFetch('/v1/me/', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
+  /** Estadísticas de cuenta del jugador (jugadas/ganadas/abandonadas). */
+  myStatistics: (userId: string) => authFetch(`/v1/players/${userId}/statistics/`),
 };
 
-/** Lee el access almacenado, renovándolo vía refresh si la petición daría 401. */
-export async function getAccessToken():Promise<string | null> {
-  const access = await _getItem(K_ACCESS);
-  const refresh = await _getItem(K_REFRESH);
-  if (!access || !refresh) return null;
-  return access;
+// Hooks que authStore registra: lib/auth no puede importar el store
+// (dependencia circular), así que el store se suscribe.
+let _onSessionCleared: (() => void) | null = null;
+let _onAccessRefreshed: ((access: string, refresh: string) => void) | null = null;
+export function setAuthHooks(hooks: {
+  onSessionCleared?: () => void;
+  onAccessRefreshed?: (access: string, refresh: string) => void;
+}): void {
+  _onSessionCleared = hooks.onSessionCleared ?? null;
+  _onAccessRefreshed = hooks.onAccessRefreshed ?? null;
+}
+
+/** True si el JWT access está caducado (o a punto: margen de 5s). */
+function _isExpired(token: string): boolean {
+  try {
+    const payload = JSON.parse(
+      atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))
+    );
+    return typeof payload.exp === 'number' && payload.exp * 1000 < Date.now() + 5_000;
+  } catch {
+    return false; // token opaco/no-JWT: que decida el servidor
+  }
 }
 
 let _refreshing: Promise<string | null> | null = null;
 
+function _doRefresh(): Promise<string | null> {
+  _refreshing ??= _refreshNow().finally(() => {
+    _refreshing = null;
+  });
+  return _refreshing;
+}
+
 async function _refreshNow(): Promise<string | null> {
   const refresh = await _getItem(K_REFRESH);
   if (!refresh) return null;
-  const res = await authApi.refresh(refresh);
+  let res: Response;
+  try {
+    res = await authApi.refresh(refresh);
+  } catch {
+    // Fallo de red/timeout: no destruir la sesión — el refresh de 14
+    // días sigue siendo válido cuando vuelva la conectividad.
+    return null;
+  }
   if (!res.ok) {
-    await clearSession();
+    // Solo una respuesta de auth real (401/403) significa "refresh
+    // revocado": un 500/502 del servidor no debe cerrar la sesión.
+    if (res.status === 401 || res.status === 403) {
+      await clearSession();
+      _onSessionCleared?.();
+    }
     return null;
   }
   const body = (await res.json()) as AuthTokens;
   const userRaw = await _getItem(K_USER);
-  await persistSession(body, userRaw ? (JSON.parse(userRaw) as AuthUser) : ({} as AuthUser));
+  if (userRaw) {
+    await persistSession(body, JSON.parse(userRaw) as AuthUser);
+  } else {
+    await Promise.all([_setItem(K_ACCESS, body.access), _setItem(K_REFRESH, body.refresh)]);
+  }
+  _onAccessRefreshed?.(body.access, body.refresh);
   return body.access;
+}
+
+/** Lee el access almacenado, renovándolo vía refresh si ya caducó. */
+export async function getAccessToken(): Promise<string | null> {
+  const access = await _getItem(K_ACCESS);
+  const refresh = await _getItem(K_REFRESH);
+  if (!access || !refresh) return null;
+  if (!_isExpired(access)) return access;
+  return _doRefresh();
 }
 
 /**
  * fetch autenticado con retry tras 401: renueva el access una vez y reintenta.
- * Si la renovación falla, la sesión se limpia y devuelve la respuesta 401.
+ * Si la renovación falla por auth, la sesión se limpia y devuelve el 401.
  */
 export async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
   let access = await getAccessToken();
@@ -152,10 +221,7 @@ export async function authFetch(path: string, init: RequestInit = {}): Promise<R
   });
   let res = await fetchWithTimeout(`${API_BASE}${path}`, withAuth(access));
   if (res.status !== 401) return res;
-  _refreshing ??= _refreshNow().finally(() => {
-    _refreshing = null;
-  });
-  access = await _refreshing;
+  access = await _doRefresh();
   if (!access) return res;
   res = await fetchWithTimeout(`${API_BASE}${path}`, withAuth(access));
   return res;

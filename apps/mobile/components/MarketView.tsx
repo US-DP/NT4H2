@@ -15,7 +15,12 @@ import { useTranslation } from 'react-i18next';
 import '../lib/i18n';
 import { CardView } from './CardView';
 import { useGameStore } from '../store/gameStore';
+import { useColors, useFs } from '../lib/useTheme';
+import { touchTarget } from '../lib/theme';
+import type { Colors } from '../lib/theme';
 import type { CardInstance } from '@nt4h/schema';
+import { engineReasonText } from '../lib/engineReasons';
+import { capListLabel } from '../lib/capabilities';
 
 export function MarketView() {
   const { t } = useTranslation();
@@ -23,6 +28,9 @@ export function MarketView() {
   const catalog = useGameStore((s) => s.catalog);
   const buyCard = useGameStore((s) => s.buyCard);
   const checkMarketCardBuyable = useGameStore((s) => s.checkMarketCardBuyable);
+  const c = useColors();
+  const fs = useFs();
+  const styles = createStyles(c, fs);
 
   if (!gameState || !catalog) return null;
 
@@ -53,7 +61,9 @@ export function MarketView() {
               ok: isMarketPhase,
             };
             const canBuy = buyable.ok && isMarketPhase;
-            const buyReason = !buyable.ok ? buyable.reason : undefined;
+            const buyReason = !buyable.ok
+              ? engineReasonText(t, buyable.reasonCode, buyable.reason, buyable.costs)
+              : undefined;
 
             // UI-143: capacidad incompatible
             const missingCapabilities = (cardDef.requiredCapabilities ?? []).filter(
@@ -82,7 +92,9 @@ export function MarketView() {
                   </View>
                   {missingCapabilities.length > 0 && (
                     <Text style={styles.incompatible}>
-                      {t('hud.requiresCaps', { list: missingCapabilities.join(', ') })}
+                      {/* las capabilities llegan como enums (MELEE…) —
+                          capListLabel las traduce con fallback al valor */}
+                      {t('hud.requiresCaps', { list: capListLabel(t, missingCapabilities) })}
                     </Text>
                   )}
                   {penalty && (
@@ -96,6 +108,7 @@ export function MarketView() {
                   disabled={!canBuy}
                   style={[styles.buyButton, !canBuy && styles.buyButtonDisabled]}
                   accessibilityRole="button"
+                  accessibilityState={{ disabled: !canBuy }}
                   accessibilityLabel={canBuy ? t('hud.buyA11y', { name: cardDef.name }) : t('hud.cannotBuyA11y', { name: cardDef.name })}
                   accessibilityHint={buyReason}
                 >
@@ -113,12 +126,12 @@ export function MarketView() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors, fs: (n: number) => number) => StyleSheet.create({
   container: {
     padding: 8,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: c.surface,
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderBottomColor: c.border,
   },
   header: {
     flexDirection: 'row',
@@ -127,13 +140,13 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   title: {
-    color: '#f1c40f',
-    fontSize: 14,
+    color: c.accent,
+    fontSize: fs(14),
     fontWeight: 'bold',
   },
   coins: {
-    color: '#d4a017',
-    fontSize: 14,
+    color: c.gameCoin,
+    fontSize: fs(14),
     fontWeight: 'bold',
   },
   market: {
@@ -154,55 +167,57 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   baseCost: {
-    color: '#7f8c8d',
-    fontSize: 11,
+    color: c.textFaint,
+    fontSize: fs(11),
     textDecorationLine: 'line-through',
   },
   cost: {
-    color: '#d4a017',
-    fontSize: 13,
+    color: c.gameCoin,
+    fontSize: fs(13),
     fontWeight: 'bold',
   },
   costIncrease: {
-    color: '#e74c3c',
+    color: c.danger,
   },
   incompatible: {
-    color: '#e74c3c',
-    fontSize: 9,
+    color: c.danger,
+    fontSize: fs(9),
     textAlign: 'center',
     marginTop: 2,
   },
   penalty: {
-    color: '#f39c12',
-    fontSize: 9,
+    color: c.warning,
+    fontSize: fs(9),
     textAlign: 'center',
     marginTop: 2,
   },
   buyButton: {
-    backgroundColor: '#27ae60',
+    backgroundColor: c.accent,
     padding: 8,
     borderRadius: 6,
     marginTop: 2,
     minWidth: 80,
+    minHeight: touchTarget,
+    justifyContent: 'center',
     alignItems: 'center',
   },
   buyButtonDisabled: {
-    backgroundColor: '#555',
+    opacity: 0.45,
   },
   buyText: {
-    color: '#fff',
-    fontSize: 12,
+    color: c.textOnAccent,
+    fontSize: fs(12),
     fontWeight: 'bold',
   },
   empty: {
-    color: '#777',
-    fontSize: 12,
+    color: c.textFaint,
+    fontSize: fs(12),
     padding: 8,
     textAlign: 'center',
   },
   hint: {
-    color: '#777',
-    fontSize: 10,
+    color: c.textFaint,
+    fontSize: fs(10),
     marginTop: 4,
     fontStyle: 'italic',
   },

@@ -9,6 +9,7 @@ import uuid
 
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
+from django.db.models.functions import Lower
 
 
 class UserManager(BaseUserManager):
@@ -49,6 +50,17 @@ class User(AbstractUser):
     REQUIRED_FIELDS = []
 
     objects = UserManager()
+
+    class Meta:
+        constraints = [
+            # Unicidad case-insensitive real: el check iexact de los
+            # serializers tiene una carrera TOCTOU y el unique=True de la
+            # columna es case-sensitive — "Alice"/"alice" entraban a la vez.
+            models.UniqueConstraint(
+                Lower("display_name"),
+                name="uniq_user_display_name_ci",
+            ),
+        ]
 
     def __str__(self):
         return self.display_name

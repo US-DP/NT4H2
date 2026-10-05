@@ -116,10 +116,10 @@ export function makeGameState(overrides: Partial<GameState> = {}): GameState {
     eventLog: overrides.eventLog ?? [],
     rngState: overrides.rngState ?? { seed: 'test-seed', state: 0 },
     monotonicCounter: overrides.monotonicCounter ?? 0,
-    orcFortitudeBonus: overrides.orcFortitudeBonus ?? 0,
     marketCostModifier: overrides.marketCostModifier ?? 0,
     ignoreCoinRewards: overrides.ignoreCoinRewards ?? false,
     ignoreGloryRewards: overrides.ignoreGloryRewards ?? false,
+    listeners: overrides.listeners ?? [],
   };
 }
 

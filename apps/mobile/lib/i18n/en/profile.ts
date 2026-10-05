@@ -5,7 +5,7 @@ export default {
     saved: '✓ Preferences saved',
     back: 'Back',
     cancel: 'Cancel',
-    accept: 'OK',
+    accept: 'Got it',
     reset: 'Reset',
     import: 'Import',
     always: '✓ Always',

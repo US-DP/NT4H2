@@ -147,15 +147,14 @@ describe('Nivel 7 - Propiedades de fortaleza efectiva', () => {
     );
   });
 
-  it('fortaleza efectiva con bonus de orco nunca es negativa', () => {
+  it('fortaleza efectiva nunca es negativa', () => {
     fc.assert(
       fc.property(
         fc.integer({ min: 0, max: 20 }),
-        fc.integer({ min: 0, max: 5 }),
         fc.boolean(),
-        (baseFortitude, orcBonus, isOrc) => {
+        (baseFortitude, isOrc) => {
           const enemy = makeEnemy({ baseFortitude, isOrc });
-          const state = makeGameState({ battlefield: [enemy], orcFortitudeBonus: orcBonus });
+          const state = makeGameState({ battlefield: [enemy] });
           const eff = getEffectiveFortitude(enemy, state);
           expect(eff).toBeGreaterThanOrEqual(0);
         },
@@ -163,19 +162,18 @@ describe('Nivel 7 - Propiedades de fortaleza efectiva', () => {
     );
   });
 
-  it('fortaleza efectiva = base + modificadores + bonus de orco (si >= 0)', () => {
+  it('fortaleza efectiva = base + modificadores (clamp a 0)', () => {
     fc.assert(
       fc.property(
         fc.integer({ min: 0, max: 20 }),
         fc.integer({ min: -5, max: 5 }),
-        fc.integer({ min: 0, max: 3 }),
         fc.boolean(),
-        (baseFortitude, modAmount, orcBonus, isOrc) => {
+        (baseFortitude, modAmount, isOrc) => {
           const mod = makeMod('FORTITUDE_MODIFIERS', modAmount);
           const enemy = makeEnemy({ baseFortitude, modifiers: [mod], isOrc });
-          const state = makeGameState({ battlefield: [enemy], orcFortitudeBonus: orcBonus });
+          const state = makeGameState({ battlefield: [enemy] });
           const eff = getEffectiveFortitude(enemy, state);
-          const expected = Math.max(0, baseFortitude + modAmount + (isOrc ? orcBonus : 0));
+          const expected = Math.max(0, baseFortitude + modAmount);
           expect(eff).toBe(expected);
         },
       ),

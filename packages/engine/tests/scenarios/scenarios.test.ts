@@ -16,7 +16,7 @@ import { resetPhaseSeq } from '../../src/phases/engine.js';
 import { resetResolveSeq } from '../../src/effects/resolver.js';
 import { loadCatalog } from '@nt4h/catalog';
 import { makeEnemy, makeGameState, makeCard, resetTestCounters } from '../fixtures/builders.js';
-import { getEffectiveFortitude } from '../../src/modifiers/index.js';
+import { getEffectiveFortitude, applyEntryAuras } from '../../src/modifiers/index.js';
 
 const catalog = loadCatalog();
 
@@ -125,18 +125,26 @@ describe('Nivel 6 - Roghkiller (warlord bonus de orcos)', () => {
     resetTestCounters();
   });
 
-  it('orcos reciben +1 fortaleza cuando orcFortitudeBonus > 0', () => {
-    const orc = makeEnemy({ instanceId: 'e1', baseFortitude: 3, isOrc: true });
-    const human = makeEnemy({ instanceId: 'e2', baseFortitude: 3, isOrc: false });
-    const state = makeGameState({ battlefield: [orc, human], orcFortitudeBonus: 1 });
-    expect(getEffectiveFortitude(orc, state)).toBe(4);
-    expect(getEffectiveFortitude(human, state)).toBe(3);
+  // El mecanismo real es el Modifier que applyEntryAuras añade a cada
+  // orco cuando warlord.roghkiller está en el campo (el campo suelto
+  // orcFortitudeBonus se eliminó — nunca se escribía).
+  const roghkiller = () => makeEnemy({
+    instanceId: 'w1', baseFortitude: 9, isWarlord: true, isOrc: true,
+    definitionId: 'warlord.roghkiller',
   });
 
-  it('orcos no reciben bonus cuando orcFortitudeBonus = 0', () => {
+  it('orcos reciben +1 fortaleza con Roghkiller en el campo', () => {
     const orc = makeEnemy({ instanceId: 'e1', baseFortitude: 3, isOrc: true });
-    const state = makeGameState({ battlefield: [orc], orcFortitudeBonus: 0 });
-    expect(getEffectiveFortitude(orc, state)).toBe(3);
+    const human = makeEnemy({ instanceId: 'e2', baseFortitude: 3, isOrc: false });
+    const state = makeGameState({ battlefield: [orc, human, roghkiller()] });
+    expect(getEffectiveFortitude(applyEntryAuras(orc, state), state)).toBe(4);
+    expect(getEffectiveFortitude(applyEntryAuras(human, state), state)).toBe(3);
+  });
+
+  it('orcos no reciben bonus sin Roghkiller en el campo', () => {
+    const orc = makeEnemy({ instanceId: 'e1', baseFortitude: 3, isOrc: true });
+    const state = makeGameState({ battlefield: [orc] });
+    expect(getEffectiveFortitude(applyEntryAuras(orc, state), state)).toBe(3);
   });
 });
 

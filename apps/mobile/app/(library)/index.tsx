@@ -28,8 +28,10 @@ import type { CardDefinition, HeroClass } from '@nt4h/schema';
 import { validateDeck } from '@nt4h/schema';
 import { CLASS_TOKENS } from '../../lib/classTokens';
 import { useCustomContent } from '../../lib/customContent';
-import { colors, spacing, radius, fontSize } from '../../lib/theme';
+import { spacing, radius, fontSize, touchTarget, type Colors } from '../../lib/theme';
 import { useColors, useFs } from '../../lib/useTheme';
+import { AppNav, useNavSidebarWidth } from '../../components/AppNav';
+import { capListLabel } from '../../lib/capabilities';
 
 const CARD_TYPES = ['ABILITY', 'HERO', 'HORDE', 'WARLORD', 'MARKET', 'SCENARIO'];
 const HERO_CLASSES = Object.keys(CLASS_TOKENS);
@@ -82,6 +84,8 @@ export default function LibraryScreen() {
   const router = useRouter();
   const c = useColors();
   const fs = useFs();
+  const styles = createStyles(c);
+  const navWidth = useNavSidebarWidth();
   const { width } = useWindowDimensions();
   const wide = width >= 1000;
   const catalog = useGameStore((s) => s.catalog);
@@ -244,18 +248,18 @@ useEffect(() => {
           />
         ) : (
           <View style={[styles.tileImage, styles.tileImageEmpty, { backgroundColor: c.surfaceRaised }]}>
-            <Text style={{ color: c.textFaint, fontSize: 18 }}>🂠</Text>
+            <Text style={{ color: c.textFaint, fontSize: fs(18) }}>🂠</Text>
           </View>
         )}
         {isUndiscovered && (
           <View style={styles.lockBadge} accessibilityLabel={t('library.badges.undiscoveredA11y')}>
-            <Lock size={12} color="#C5C3CB" />
-            <Text style={{ color: '#C5C3CB', fontSize: 9, fontWeight: '700' }}>{t('library.badges.undiscovered')}</Text>
+            <Lock size={12} color={c.textMuted} />
+            <Text style={{ color: c.textMuted, fontSize: fs(9), fontWeight: '700' }}>{t('library.badges.undiscovered')}</Text>
           </View>
         )}
         {isFav && (
           <View style={styles.favBadge}>
-            <Star size={12} color="#F4C94F" fill="#F4C94F" />
+            <Star size={12} color={c.accent} fill={c.accent} />
           </View>
         )}
         <View style={styles.tileBody}>
@@ -329,7 +333,11 @@ useEffect(() => {
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: c.background }]}>
+    <View style={{ flex: 1 }}>
+    <View style={[
+      styles.container,
+      { backgroundColor: c.background, marginLeft: navWidth, paddingBottom: navWidth ? spacing.lg : 72 },
+    ]}>
       {/* Cabecera: volver + título + progreso */}
       <View style={styles.headerRow}>
         <Pressable
@@ -358,7 +366,12 @@ useEffect(() => {
           accessibilityLabel={t('library.search.a11y')}
         />
         {query.length > 0 && (
-          <Pressable onPress={() => setQuery('')} accessibilityRole="button" accessibilityLabel={t('library.search.clearA11y')}>
+          <Pressable
+            onPress={() => setQuery('')}
+            accessibilityRole="button"
+            accessibilityLabel={t('library.search.clearA11y')}
+            style={styles.iconTouch}
+          >
             <X size={16} color={c.textMuted} />
           </Pressable>
         )}
@@ -476,8 +489,13 @@ useEffect(() => {
             : `${t('library.results', { count: filtered.length })}${activeFilters ? t('library.activeFilters', { count: activeFilters }) : ''}`}
         </Text>
         {activeFilters > 0 && (
-          <Pressable onPress={clearFilters} accessibilityRole="button" accessibilityLabel={t('library.filters.clearA11y')}>
-            <Text style={{ color: c.info, fontSize: fs(fontSize.detail), marginRight: spacing.md }}>{t('library.filters.clear')}</Text>
+          <Pressable
+            onPress={clearFilters}
+            accessibilityRole="button"
+            accessibilityLabel={t('library.filters.clearA11y')}
+            style={{ minHeight: touchTarget, justifyContent: 'center', marginRight: spacing.md }}
+          >
+            <Text style={{ color: c.info, fontSize: fs(fontSize.detail) }}>{t('library.filters.clear')}</Text>
           </Pressable>
         )}
         <View style={styles.sortRow}>
@@ -487,6 +505,7 @@ useEffect(() => {
               onPress={() => setSort(s)}
               accessibilityRole="button"
               accessibilityState={{ selected: sort === s }}
+              style={{ minHeight: touchTarget, justifyContent: 'center' }}
             >
               <Text style={{
                 color: sort === s ? c.accent : c.textFaint,
@@ -507,7 +526,7 @@ useEffect(() => {
             accessibilityState={{ selected: viewMode === 'grid' }}
             accessibilityLabel={t('library.views.gridA11y')}
           >
-            <Text style={{ color: viewMode === 'grid' ? '#1a1a2e' : c.textMuted, fontSize: 12 }}>▦</Text>
+            <Text style={{ color: viewMode === 'grid' ? c.textOnAccent : c.textMuted, fontSize: fs(12) }}>▦</Text>
           </Pressable>
           <Pressable
             onPress={() => setViewMode('list')}
@@ -516,7 +535,7 @@ useEffect(() => {
             accessibilityState={{ selected: viewMode === 'list' }}
             accessibilityLabel={t('library.views.listA11y')}
           >
-            <Text style={{ color: viewMode === 'list' ? '#1a1a2e' : c.textMuted, fontSize: 12 }}>☷</Text>
+            <Text style={{ color: viewMode === 'list' ? c.textOnAccent : c.textMuted, fontSize: fs(12) }}>☷</Text>
           </Pressable>
         </View>
         </View>
@@ -565,7 +584,7 @@ useEffect(() => {
                       tone={valid ? 'accent' : 'warning'}
                     />
                     <Pressable
-                      onPress={() => router.push({ pathname: '/(study)/[tab]', params: { tab: 'decks' } })}
+                      onPress={() => router.push({ pathname: '/(study)/[tab]', params: { tab: 'decks', deckId: d.id } })}
                       accessibilityRole="link"
                       accessibilityLabel={t('library.decks.editA11y', { name: d.name })}
                       style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 6 }}
@@ -626,14 +645,18 @@ useEffect(() => {
                   onPress={() => setQuery(suggestion)}
                   accessibilityRole="button"
                   accessibilityLabel={t('library.empty.suggestionA11y', { suggestion })}
-                  style={{ marginTop: spacing.sm }}
+                  style={{ marginTop: spacing.sm, minHeight: touchTarget, justifyContent: 'center' }}
                 >
                   <Text style={{ color: c.info, fontSize: fs(fontSize.body) }}>
                     {t('library.empty.suggestion', { suggestion })}
                   </Text>
                 </Pressable>
               )}
-              <Pressable onPress={clearFilters} accessibilityRole="button" style={{ marginTop: spacing.md }}>
+              <Pressable
+                onPress={clearFilters}
+                accessibilityRole="button"
+                style={{ marginTop: spacing.md, minHeight: touchTarget, justifyContent: 'center' }}
+              >
                 <Text style={{ color: c.info, fontSize: fs(fontSize.body) }}>{t('library.filters.clearAll')}</Text>
               </Pressable>
             </View>
@@ -676,6 +699,8 @@ useEffect(() => {
         </NtBottomSheet>
       )}
     </View>
+    <AppNav />
+    </View>
   );
 }
 
@@ -693,6 +718,7 @@ function FilterChip({
   c: ReturnType<typeof useColors>;
   fs: (n: number) => number;
 }) {
+  const styles = createStyles(c);
   const activeBg = accentColor ?? c.accent;
   return (
     <Pressable
@@ -706,7 +732,7 @@ function FilterChip({
       accessibilityState={{ selected: active }}
     >
       <Text style={{
-        color: active ? '#1a1a2e' : c.textMuted,
+        color: active ? c.textOnAccent : c.textMuted,
         fontSize: fs(fontSize.detail),
         fontWeight: active ? '700' : '400',
       }}>
@@ -734,6 +760,7 @@ function DetailPanel({
   onRules: () => void;
 }) {
   const { t } = useTranslation();
+  const styles = createStyles(c);
   const img = cardImage(card.id, 'preview');
   const resolution = describeResolution(card);
   const classColor = card.heroClass ? CLASS_TOKENS[card.heroClass]?.color : c.textMuted;
@@ -767,7 +794,7 @@ function DetailPanel({
     fields.push({ label: t('library.detail.fields.usage'), value: t('library.detail.fields.singleUse') });
   }
   if (card.requiredCapabilities?.length) {
-    fields.push({ label: t('library.detail.fields.requires'), value: card.requiredCapabilities.join(', ') });
+    fields.push({ label: t('library.detail.fields.requires'), value: capListLabel(t, card.requiredCapabilities) });
   }
   if (card.heroAbility) {
     fields.push({ label: t('library.detail.fields.peritia'), value: t('library.detail.peritiaUses', { count: card.heroAbility.uses }) });
@@ -792,7 +819,12 @@ function DetailPanel({
           {t('library.detail.heading')}
           {total > 0 && t('library.detail.position', { current: idx + 1, total })}
         </Text>
-        <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel={t('library.detail.closeA11y')} hitSlop={8}>
+        <Pressable
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel={t('library.detail.closeA11y')}
+          style={styles.iconTouch}
+        >
           <X size={18} color={c.textMuted} />
         </Pressable>
       </View>
@@ -826,9 +858,9 @@ function DetailPanel({
             accessibilityRole="button"
             accessibilityLabel={isFav ? t('library.detail.favRemoveA11y') : t('library.detail.favAddA11y')}
             accessibilityState={{ selected: isFav }}
-            hitSlop={10}
+            style={styles.iconTouch}
           >
-            <Star size={20} color={isFav ? '#F4C94F' : c.textFaint} fill={isFav ? '#F4C94F' : 'none'} />
+            <Star size={20} color={isFav ? c.accent : c.textFaint} fill={isFav ? c.accent : 'none'} />
           </Pressable>
         </View>
         <View style={styles.detailTypeRow}>
@@ -869,24 +901,38 @@ function DetailPanel({
         {card.capabilities && card.capabilities.length > 0 && (
           <>
             <Text style={{ color: c.textFaint, fontSize: fs(fontSize.micro), fontWeight: '700', letterSpacing: 1, marginTop: spacing.md }}>
-              CAPACIDADES
+              {t('library.detail.capabilities')}
             </Text>
             <Text style={{ color: c.textMuted, fontSize: fs(fontSize.detail) }}>
-              {card.capabilities.join(' · ')}
+              {capListLabel(t, card.capabilities, ' · ')}
             </Text>
           </>
         )}
 
-        <Pressable onPress={onRules} accessibilityRole="button" style={{ marginTop: spacing.lg }}>
-          <Text style={{ color: c.info, fontSize: fs(fontSize.detail) }}>Consultar reglas relacionadas →</Text>
+        <Pressable onPress={onRules} accessibilityRole="button" style={{ marginTop: spacing.lg, minHeight: touchTarget, justifyContent: 'center' }}>
+          <Text style={{ color: c.info, fontSize: fs(fontSize.detail) }}>{t('library.detail.rulesLink')}</Text>
         </Pressable>
       </ScrollView>
 
       <View style={styles.detailNav}>
-        <Pressable onPress={onPrev} disabled={idx <= 0} style={idx <= 0 && { opacity: 0.35 }} accessibilityRole="button" accessibilityLabel="Carta anterior">
+        <Pressable
+          onPress={onPrev}
+          disabled={idx <= 0}
+          style={[styles.detailNavBtn, idx <= 0 && { opacity: 0.45 }]}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: idx <= 0 }}
+          accessibilityLabel="Carta anterior"
+        >
           <Text style={{ color: c.text, fontSize: fs(fontSize.detail) }}>← Anterior</Text>
         </Pressable>
-        <Pressable onPress={onNext} disabled={idx >= total - 1} style={idx >= total - 1 && { opacity: 0.35 }} accessibilityRole="button" accessibilityLabel="Carta siguiente">
+        <Pressable
+          onPress={onNext}
+          disabled={idx >= total - 1}
+          style={[styles.detailNavBtn, idx >= total - 1 && { opacity: 0.45 }]}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: idx >= total - 1 }}
+          accessibilityLabel="Carta siguiente"
+        >
           <Text style={{ color: c.text, fontSize: fs(fontSize.detail) }}>Siguiente →</Text>
         </Pressable>
       </View>
@@ -894,7 +940,7 @@ function DetailPanel({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (c: Colors) => StyleSheet.create({
   container: { flex: 1, padding: spacing.lg },
   headerRow: {
     flexDirection: 'row',
@@ -902,7 +948,9 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginBottom: spacing.md,
   },
-  backLink: { padding: 4 },
+  backLink: { padding: 4, minWidth: touchTarget, minHeight: touchTarget, justifyContent: 'center' },
+  iconTouch: { minWidth: touchTarget, minHeight: touchTarget, alignItems: 'center', justifyContent: 'center' },
+  detailNavBtn: { minHeight: touchTarget, justifyContent: 'center', paddingHorizontal: spacing.sm },
   title: { fontWeight: '800', flex: 1 },
   searchRow: {
     flexDirection: 'row',
@@ -922,14 +970,14 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xs,
     gap: spacing.sm,
   },
-  filterLabel: { width: 44, fontWeight: '700', letterSpacing: 1 },
+  filterLabel: { width: 78, fontWeight: '700', letterSpacing: 1 },
   chip: {
     borderWidth: 1,
     borderRadius: 14,
     paddingHorizontal: 10,
     paddingVertical: 6,
     marginRight: 6,
-    minHeight: 32,
+    minHeight: touchTarget,
     justifyContent: 'center',
   },
   toolbar: {
@@ -945,7 +993,14 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     overflow: 'hidden',
   },
-  viewBtn: { paddingHorizontal: 10, paddingVertical: 6 },
+  viewBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    minWidth: touchTarget,
+    minHeight: touchTarget,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   body: { flex: 1, flexDirection: 'row', gap: spacing.md },
   // Cuadrícula
   tile: {
@@ -981,7 +1036,7 @@ const styles = StyleSheet.create({
   detail: {
     width: 300,
     borderLeftWidth: 1,
-    borderLeftColor: colors.border,
+    borderLeftColor: c.border,
     paddingLeft: spacing.md,
   },
   detailHeader: {
@@ -1010,7 +1065,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    backgroundColor: 'rgba(9,11,18,0.85)',
+    backgroundColor: c.overlayStrong,
     borderRadius: 8,
     paddingHorizontal: 5,
     paddingVertical: 3,
@@ -1019,7 +1074,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 6,
     right: 6,
-    backgroundColor: 'rgba(9,11,18,0.85)',
+    backgroundColor: c.overlayStrong,
     borderRadius: 10,
     padding: 4,
   },
@@ -1040,19 +1095,19 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 4,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(59,64,91,0.4)',
+    borderBottomColor: c.divider,
   },
   detailNav: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingTop: spacing.sm,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: c.border,
   },
   // Hoja inferior (móvil)
   sheetOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: c.overlayScrim,
     justifyContent: 'flex-end',
   },
   sheet: {

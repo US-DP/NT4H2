@@ -19,6 +19,10 @@ export default defineConfig({
   reporter: 'html',
   use: {
     baseURL: 'http://localhost:8081',
+    // La app decide el idioma por locale del dispositivo (i18n.ts);
+    // los specs aserten textos en español — sin esto un navegador
+    // en-US renderiza "New game" y todo falla de forma opaca.
+    locale: 'es-ES',
     trace: 'on-first-retry',
   },
   projects: [

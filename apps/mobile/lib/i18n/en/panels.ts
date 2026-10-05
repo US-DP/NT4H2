@@ -36,17 +36,11 @@ export default {
     historyVersion: 'v{{version}}',
     historySeed: 'seed: {{seed}}',
 
-    // ChoiceDialog
-    choicePrivate: 'Private',
+    // Pending choices (shared ChoiceView/PendingChoiceView)
     choiceWaiting: 'Waiting for a decision from {{decider}}.',
-    choiceDecider: 'Decision by: {{decider}}',
-    choiceTimer: '⏱ {{seconds}}s',
-    choiceSelect_one: 'Select {{range}} option.',
-    choiceSelect_other: 'Select {{range}} options.',
+    choiceHandOver: 'Pass the device to {{decider}}',
     choiceNoOptions: 'No valid options available.',
     choiceContinue: 'Continue game',
-    choiceSkip: 'Skip',
-    choiceConfirm: 'Confirm ({{selected}}/{{min}})',
 
     // PendingChoiceView
     pendingCardAttack: '{{name}} (Atk {{value}})',

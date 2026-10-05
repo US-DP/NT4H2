@@ -2,6 +2,7 @@ import type {
   CardInstance,
   GameEvent,
   GameState,
+  Modifier,
   Zone,
 } from '@nt4h/schema';
 
@@ -52,6 +53,41 @@ export function applyWoundHealed(
   }));
 }
 
+/** Revertir el delta de coste de mercado aportado por una fuente que
+ *  abandona el campo (enemigo derrotado/intercambiado/devuelto). Los
+ *  MODIFY_MARKET_COST de cartas de la Horda son WHILE_SOURCE_ACTIVE:
+ *  sin esto, el precio quedaba alterado para siempre. */
+function revertMarketCostSource(state: GameState, sourceId: string): GameState {
+  const delta = state.marketCostSources?.[sourceId];
+  if (!delta) return state;
+  const sources = { ...(state.marketCostSources ?? {}) };
+  delete sources[sourceId];
+  return {
+    ...state,
+    marketCostModifier: state.marketCostModifier - delta,
+    marketCostSources: sources,
+  };
+}
+
+/** Un enemigo abandona el campo (derrotado/devuelto/intercambiado):
+ *  sus modificadores WHILE_SOURCE_ACTIVE sobre otros enemigos y sobre
+ *  jugadores deben morir con él — antes solo se limpiaba el caso
+ *  especial 'roghkiller'; un aura de carta custom quedaba huérfana y
+ *  eterna. Genérico: purgar por sourceId + duración WHILE_SOURCE_ACTIVE. */
+function purgeWhileSourceActive(state: GameState, sourceId: string): GameState {
+  const strip = (mods: Modifier[]) =>
+    mods.filter(m => !(m.duration === 'WHILE_SOURCE_ACTIVE' && m.sourceId === sourceId));
+  const players: GameState['players'] = {};
+  for (const [id, p] of Object.entries(state.players)) {
+    players[id] = { ...p, modifiers: strip(p.modifiers) };
+  }
+  return {
+    ...state,
+    players,
+    battlefield: state.battlefield.map(e => ({ ...e, modifiers: strip(e.modifiers) })),
+  };
+}
+
 export function applyEnemyDefeated(
   state: GameState,
   event: Extract<GameEvent, { type: 'ENEMY_DEFEATED' }>,
@@ -59,23 +95,26 @@ export function applyEnemyDefeated(
   const enemy = state.battlefield.find(e => e.instanceId === event.enemyInstanceId);
   if (!enemy) return state;
 
-  const player = state.players[event.defeatingPlayerId];
+  // La fuente que abandona arrastra sus auras WHILE_SOURCE_ACTIVE
+  const purged = purgeWhileSourceActive(state, event.enemyInstanceId);
+  const player = purged.players[event.defeatingPlayerId];
   if (!player) return state;
   // Si se derrot├│ a Roghkiller, eliminar sus modificadores de +1 fortaleza de los orcos
-  let newBattlefield = state.battlefield.filter(e => e.instanceId !== event.enemyInstanceId);
+  let newBattlefield = purged.battlefield.filter(e => e.instanceId !== event.enemyInstanceId);
   if (enemy.isWarlord && enemy.definitionId.includes('roghkiller')) {
     newBattlefield = newBattlefield.map(e => ({
       ...e,
       modifiers: e.modifiers.filter(m => m.sourceId !== 'roghkiller'),
     }));
   }
+  const reverted = revertMarketCostSource(purged, event.enemyInstanceId);
   return {
-    ...state,
+    ...reverted,
     battlefield: newBattlefield,
     warlordDefeated: state.warlordDefeated || enemy.isWarlord,
     warlordsDefeatedCount: state.warlordsDefeatedCount + (enemy.isWarlord ? 1 : 0),
     players: {
-      ...state.players,
+      ...purged.players,
       [event.defeatingPlayerId]: {
         ...player,
         // D397: Guardar instanceId (no definitionId) seg├║n el schema
@@ -109,6 +148,8 @@ export function applyEnemySwapped(
   // El enemigo viejo vuelve al FONDO del mazo de la Horda, el nuevo entra al campo
   const oldEnemy = state.battlefield.find(e => e.instanceId === event.oldEnemyInstanceId);
   if (!oldEnemy) return state;
+  // El enemigo que sale pierde sus auras WHILE_SOURCE_ACTIVE
+  const purged = purgeWhileSourceActive(state, event.oldEnemyInstanceId);
   const oldEnemyCard: CardInstance = {
     instanceId: oldEnemy.instanceId,
     definitionId: oldEnemy.definitionId,
@@ -126,10 +167,11 @@ export function applyEnemySwapped(
     isOrc: event.newEnemyIsOrc,
     specialIcons: event.newEnemySpecialIcons,
     damageDisabled: false,
-  }, state);
+  }, purged);
+  const reverted = revertMarketCostSource(purged, event.oldEnemyInstanceId);
   return {
-    ...state,
-    battlefield: state.battlefield.map(e =>
+    ...reverted,
+    battlefield: purged.battlefield.map(e =>
       e.instanceId === event.oldEnemyInstanceId ? newEnemy : e
     ),
     hordeDeck: [
@@ -151,12 +193,17 @@ export function applyEnemyReturnedToHorde(
     ownerId: 'horde',
     zone: 'HORDE_DECK',
   };
+  // El enemigo devuelto pierde sus auras WHILE_SOURCE_ACTIVE
+  const purged = purgeWhileSourceActive(state, event.enemyInstanceId);
+  const reverted = revertMarketCostSource(purged, event.enemyInstanceId);
   return {
-    ...state,
-    battlefield: state.battlefield.filter(e => e.instanceId !== event.enemyInstanceId),
-    hordeDeck: event.position === 'BOTTOM'
-      ? [...state.hordeDeck, enemyCard]
-      : [enemyCard, ...state.hordeDeck],
+    ...reverted,
+    battlefield: purged.battlefield.filter(e => e.instanceId !== event.enemyInstanceId),
+    // TOP = encima del mazo (robo inmediato); BOTTOM = fondo. Antes se
+    // ignoraba event.position y siempre iba al fondo.
+    hordeDeck: event.position === 'TOP'
+      ? [enemyCard, ...reverted.hordeDeck]
+      : [...reverted.hordeDeck, enemyCard],
   };
 }
 
@@ -193,6 +240,9 @@ export function applyPreventionApplied(
   return mapPlayerState(state, event.playerId, p => ({
     ...p,
     prevention: p.prevention + event.amount,
+    // Eventos antiguos sin duration = 'HORDE_ATTACK' (comportamiento
+    // previo: la prevención moría al terminar el ataque de la Horda).
+    preventionExpiry: event.duration ?? 'HORDE_ATTACK',
   }));
 }
 
@@ -207,23 +257,6 @@ export function applyShieldPlaced(
   }));
 }
 
-export function applyShieldTransferred(
-  state: GameState,
-  event: Extract<GameEvent, { type: 'SHIELD_TRANSFERRED' }>,
-): GameState {
-  const fromPlayer = state.players[event.fromPlayerId];
-  const toPlayer = state.players[event.toPlayerId];
-  if (!fromPlayer || !toPlayer) return state;
-  return {
-    ...state,
-    players: {
-      ...state.players,
-      [event.fromPlayerId]: { ...fromPlayer, shields: Math.max(0, fromPlayer.shields - event.amount) },
-      [event.toPlayerId]: { ...toPlayer, shields: toPlayer.shields + event.amount },
-    },
-  };
-}
-
 export function applyCancellationActivated(
   state: GameState,
   event: Extract<GameEvent, { type: 'CANCELLATION_ACTIVATED' }>,
@@ -232,6 +265,7 @@ export function applyCancellationActivated(
   return mapPlayerState(state, event.playerId, p => ({
     ...p,
     damageCancellation: true,
+    cancelExpiry: event.duration ?? 'HORDE_ATTACK',
   }));
 }
 
@@ -244,7 +278,13 @@ export function applyEnemyDamageDisabled(
     ...state,
     battlefield: state.battlefield.map(e =>
       e.instanceId === event.enemyInstanceId
-        ? { ...e, damageDisabled: true }
+        // Eventos antiguos sin duration = 'HORDE_ATTACK' (limpieza al
+        // final del ataque de la Horda — comportamiento previo).
+        ? {
+            ...e,
+            damageDisabled: true,
+            damageDisabledDuration: event.duration ?? 'HORDE_ATTACK',
+          }
         : e
     ),
   };
@@ -268,7 +308,11 @@ export function applyVulnerabilityApplied(
                 sourceId: event.enemyInstanceId,
                 layer: 'DAMAGE_BONUS',
                 timestamp: event.seq,
-                duration: 'UNTIL_END_OF_TURN',
+                // El efecto schema exige `duration`; `INSTANT` no tiene
+                // sentido en un modificador persistente → cae al default.
+                duration: event.duration === 'INSTANT' || event.duration == null
+                  ? 'UNTIL_END_OF_TURN'
+                  : event.duration,
                 amount: event.bonus,
                 targetId: event.enemyInstanceId,
               },
@@ -287,6 +331,12 @@ export function applyArmorGranted(
   return mapPlayerState(state, event.playerId, p => ({
     ...p,
     armor: (p.armor ?? 0) + event.amount,
+    // La armadura es un pool escalar con un solo expiry: si ya había
+    // armadura PERMANENT no debe caducar por un grant temporal, y un grant
+    // PERMANENT nuevo tampoco — PERMANENT domina; si no, gana la última.
+    armorExpiry: (p.armorExpiry === 'PERMANENT' || event.duration === 'PERMANENT')
+      ? 'PERMANENT'
+      : event.duration ?? p.armorExpiry ?? 'UNTIL_END_OF_TURN',
   }));
 }
 
