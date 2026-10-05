@@ -13,9 +13,9 @@ ENGINE  := packages/engine
 
 .DEFAULT_GOAL := help
 .PHONY: help setup \
-        dev dev-web dev-backend dev-runner \
+        dev dev-web dev-expo dev-backend dev-runner start-runner \
         build test lint typecheck test-all \
-        test-engine test-mobile test-backend test-e2e \
+        test-engine test-mobile test-backend test-e2e test-e2e-ui \
         check-py check-py-extra lint-catalog lint-schema lint-yaml \
         audit audit-catalog verify-cards gen-traceability promote-verified \
         loadtest docker-runner \
@@ -43,11 +43,17 @@ dev: ## turbo dev de las apps frontales (excluye el backend Django)
 dev-web: ## Solo la app Expo web (:8081)
 	cd $(MOBILE) && $(PNPM) web
 
+dev-expo: ## Expo DevTools completo (QR para móvil físico/emulador)
+	cd $(MOBILE) && $(PNPM) start
+
 dev-backend: ## Solo el backend Django
 	cd $(BACKEND) && $(PY) manage.py runserver
 
-dev-runner: ## Solo el engine-runner (Node, ejecuta el motor online)
+dev-runner: ## Solo el engine-runner en watch (tsx watch server.ts)
 	cd apps/engine-runner && $(PNPM) dev
+
+start-runner: ## Engine-runner sin watch (tsx server.ts)
+	cd apps/engine-runner && $(PNPM) start
 
 # ============================================================
 #  BUILD / TEST / LINT (turbo)
@@ -83,6 +89,9 @@ test-backend: ## Tests Django del backend
 
 test-e2e: ## E2E Playwright de la app móvil
 	cd $(MOBILE) && $(PNPM) test:e2e
+
+test-e2e-ui: ## E2E Playwright en modo UI (depuración interactiva)
+	cd $(MOBILE) && $(PNPM) test:e2e:ui
 
 # ============================================================
 #  CALIDAD BACKEND (Python)
