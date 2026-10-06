@@ -60,6 +60,7 @@ Comparación entre `ESTRATEGIA_PRUEBAS.md` y lo implementado actualmente.
 ### Niveles 0-8: Motor de reglas — COMPLETO ✅
 
 Todos los niveles del motor están implementados con 444 tests pasando:
+
 - Nivel 0: Validación estática del catálogo (41 tests)
 - Nivel 1: Cálculos, movimientos, desgaste, objetivos (60+ tests)
 - Nivel 2: Pruebas por efecto (50+ tests)
@@ -73,6 +74,7 @@ Todos los niveles del motor están implementados con 444 tests pasando:
 ### Niveles 9-15: UI — COMPLETO ✅
 
 Todos los niveles de UI están implementados con 198 tests pasando:
+
 - Nivel 9: Componentes (38 tests)
 - Nivel 10: Accesibilidad (25 tests)
 - Nivel 11: Interacción (12 tests)
@@ -101,65 +103,76 @@ Todos los niveles de UI están implementados con 198 tests pasando:
 ### Niveles parcialmente implementados
 
 #### Nivel 10 (contratos): Contratos API/WebSocket 🔧
+
 - WebSocket consumer implementado (game.command, chat.message, ping/pong)
 - **Pendiente**: Tests formales de contrato (eventos, campos, privacidad por actor)
 
 #### Nivel 11 (online): Modo online 🔧
+
 - gameStore online + 6 tests UI online
 - EngineRunnerClient con create_room, get_state, execute_command
 - **Pendiente**: Tests de concurrencia, reconexión, condiciones de red
 
 #### Nivel 12 (offline): Persistencia offline 🔧
+
 - gameStore saveGame/loadGame con localStorage
 - **Pendiente**: Tests de guardado/carga, migración, corrupción, hot-seat
 
 #### Nivel 13 (chat): Chat 🔧
+
 - ChatPanel UI + integración en WebSocket consumer
 - **Pendiente**: Tests de seguridad (HTML escaping, spam, suplantación)
 
 #### Nivel 14 (editor): Editor — COMPLETO ✅
+
 - 32 tests UI del Estudio (12 pestañas, navegación, migas, guardado, versionado)
 - **Pendiente**: Tests de validación de reglas, PNG, ida y vuelta
 
 ### Niveles pendientes (post-MVP)
 
 #### Nivel 15 (importación): Importación/exportación ❌
+
 - Paquetes válidos, dependencias, conflictos
 - Seguridad de archivos (path traversal, scripts)
 - Atomicidad (99 válidos + 1 inválido)
 - Ida y vuelta (exportar → importar → equivalente)
 
-### Niveles pendientes (post-MVP)
-
 #### Nivel 17: Rendimiento ❌
+
 - Motor (efecto simple < 10ms, comando < 100ms)
 - Backend (10-500 salas simultáneas)
 - Chat (ráfagas, historial extenso)
 - Editor (10.000 cartas)
 
 #### Nivel 18: Seguridad ❌
+
 - Autenticación, autorización, API, WebSocket
 - Información oculta (inspección de payloads por actor)
 
 #### Nivel 20: Recuperación y resiliencia ❌
+
 - Reinicio backend, caída Redis/PostgreSQL
 - WebSocket cortado, app cerrada durante guardado
 - Almacenamiento lleno, versiones parcialmente descargadas
 
 #### Nivel 21: Migración y compatibilidad ❌
+
 - Bases de datos, esquemas de cartas, guardados offline, paquetes
 
 #### Regresión visual ❌
+
 - Capturas de referencia de todas las pantallas
 - Detección de cambios visuales
 
 ## Priorización recomendada
 
 ### Inmediato (MVP actual)
+
 1. ✅ Niveles 0-15: COMPLETO
 2. 🔧 Nivel 16: E2E — ejecutar contra servidor web
 
 ### Fase 11 (Backend + Online)
+
 3. Nivel 9 (backend): Integración DB, API, permisos
 4. Nivel 10 (contratos): Contratos API/WS, vistas privadas
 5. Nivel 11 (online): Salas, concurrencia, reconexión
@@ -167,10 +180,12 @@ Todos los niveles de UI están implementados con 198 tests pasando:
 7. Nivel 13 (chat): Chat funcional, privacidad, seguridad
 
 ### Fase 12 (Estudio)
+
 8. Nivel 14 (editor): Creación, validación, versionado
 9. Nivel 15 (importación): Paquetes, seguridad, atomicidad
 
 ### Post-MVP
+
 10. Nivel 17: Rendimiento
 11. Nivel 18: Seguridad
 12. Nivel 20: Recuperación

@@ -26,7 +26,9 @@ La interfaz deberá permitir que una persona pueda:
 ## 2. Principios generales de UI
 
 ### UI-P01. Claridad antes que decoración
+
 La estética de fantasía no deberá reducir la legibilidad. Los marcos, fondos, animaciones e ilustraciones no podrán dificultar:
+
 - La lectura del texto.
 - La identificación de valores.
 - La selección de objetivos.
@@ -34,7 +36,9 @@ La estética de fantasía no deberá reducir la legibilidad. Los marcos, fondos,
 - La comprensión del turno.
 
 ### UI-P02. Estado visible
+
 La interfaz deberá mostrar permanentemente:
+
 - Jugador activo.
 - Fase actual.
 - Acción esperada.
@@ -44,15 +48,19 @@ La interfaz deberá mostrar permanentemente:
 - Número de cartas de cada mazo relevante.
 
 ### UI-P03. Acciones contextuales
+
 La interfaz solo ofrecerá como principales las acciones válidas en el contexto actual.
 Por ejemplo, durante la fase de Mercado: Comprar, Inspeccionar objeto, Finalizar Mercado.
 No deberían destacar acciones propias de la fase de Ataque.
 
 ### UI-P04. Prevención de errores
+
 La interfaz deberá prevenir acciones inválidas antes de enviarlas, pero el servidor volverá a validarlas.
 
 ### UI-P05. Explicación de errores
+
 No bastará con mostrar "Acción inválida". La aplicación deberá indicar:
+
 - Qué acción falló.
 - Por qué no puede realizarse.
 - Qué requisito falta.
@@ -61,9 +69,11 @@ No bastará con mostrar "Acción inválida". La aplicación deberá indicar:
 Ejemplo: `No puedes comprar esta carta. Necesitas 5 monedas y actualmente tienes 3.`
 
 ### UI-P06. Coherencia multiplataforma
+
 Web, Android e iOS compartirán: terminología, iconos, colores de estado, jerarquía visual, comportamiento de las cartas, flujo de navegación. La distribución podrá cambiar según el tamaño de pantalla.
 
 ### UI-P07. Divulgación progresiva
+
 La interfaz mostrará primero la información necesaria y permitirá ampliar los detalles cuando el usuario lo desee.
 Una carta de la mesa puede mostrar inicialmente: nombre, ataque/fortaleza, heridas, estado.
 Al ampliarla mostrará: texto completo, efectos estructurados, fuente, historial, aclaraciones.
@@ -75,6 +85,7 @@ Al ampliarla mostrará: texto completo, efectos estructurados, fuente, historial
 ### 3.1 Colores
 
 **UI-001** — Paleta consistente por elemento:
+
 | Elemento | Tratamiento visual |
 |---|---|
 | Guerrero | Rojo o granate |
@@ -236,6 +247,7 @@ Distribución: Cabecera (nombre, código, privacidad, conexión), Participantes 
 ## 13. Acciones contextuales
 
 **UI-120** — Las acciones principales aparecerán en una barra contextual.
+
 - Durante Ataque: Enfrentarse, Evasión, Jugar carta, Finalizar ataque, Usar poder, Usar escenario.
 - Durante Mercado: Comprar, Inspeccionar, Finalizar Mercado.
 - Durante Restablecimiento: Seleccionar descartes, Confirmar.
@@ -494,14 +506,17 @@ En escritorio: `Panel de edición | Previsualización de carta`. En móvil: `Con
 ## 35. Estados vacíos, carga y errores
 
 ### 35.1. Estado vacío
+
 **UI-350** — Una biblioteca vacía mostrará: qué contenido debería aparecer, cómo crear el primero, cómo importar, enlace a ayuda.
 
 ### 35.2. Carga
+
 **UI-351** — Se utilizarán esqueletos de carga para catálogos.
 **UI-352** — Los procesos largos mostrarán progreso real cuando sea posible.
 **UI-353** — Las operaciones en segundo plano podrán minimizarse.
 
 ### 35.3. Errores
+
 **UI-354** — Los errores se clasificarán: validación, conexión, permisos, compatibilidad, servidor, almacenamiento, contenido.
 **UI-355** — Todo error recuperable ofrecerá una acción: Reintentar, Corregir, Volver, Guardar borrador, Descargar informe, Contactar con soporte.
 **UI-356** — Los errores técnicos no mostrarán trazas internas al usuario normal.
@@ -591,6 +606,7 @@ Móvil: zona principal prioritaria, mano inferior, jugadores en carrusel, mercad
 ## 43. Requisitos verificables de calidad visual
 
 La interfaz deberá superar estas comprobaciones:
+
 1. Ningún texto se corta al 200 % de zoom.
 2. Ningún botón principal queda fuera de pantalla.
 3. Una carta seleccionada se distingue sin depender del color.
@@ -626,15 +642,19 @@ La interfaz deberá superar estas comprobaciones:
 ## 45. Priorización para el MVP
 
 ### Must have
+
 Inicio claro, Creación y continuación de partidas, Sala online, Mesa adaptable, Mano propia, Horda, Mercado, Escenario, Fase y turno visibles, Objetivos legales, Decisiones intermedias, Historial, Chat básico, Reconexión, Guardado offline, Biblioteca, Editor básico, Constructor de mazos, Sandbox, Estados de validación, Accesibilidad básica, Responsive web y móvil.
 
 ### Should have
+
 Tutorial contextual, Comparación de versiones, Importación guiada, Extracción desde PDF, Animaciones configurables, Vista avanzada de cálculos, Hoja imprimible, Moderación básica.
 
 ### Could have
+
 Personalización de temas, Editor libre de plantillas, Atajos configurables, Estadísticas visuales avanzadas, Espectadores, Repetición visual turno a turno, Perfiles públicos de creadores.
 
 ### Fuera del MVP
+
 Chat de voz, Vídeo, Editor gráfico profesional, Animaciones tridimensionales, Marketplace, Personalización completa de toda la mesa, Moderación automática avanzada.
 
 ---
@@ -642,6 +662,7 @@ Chat de voz, Vídeo, Editor gráfico profesional, Animaciones tridimensionales, 
 ## 46. Criterios de aceptación de UI del MVP
 
 La UI del MVP podrá considerarse finalizada cuando:
+
 1. Un usuario nuevo puede crear una partida sin ayuda externa.
 2. Puede identificar el jugador y la fase activos.
 3. Puede jugar una carta y seleccionar objetivos.
@@ -668,6 +689,7 @@ La UI del MVP podrá considerarse finalizada cuando:
 ## Conclusión
 
 La interfaz se organizará alrededor de cuatro contextos diferenciados:
+
 - **JUGAR**: Mesa, mano, Horda, Mercado, escenarios y decisiones.
 - **COMUNICARSE**: Sala, presencia, chat, desconexiones e invitaciones.
 - **CREAR**: Héroes, habilidades, mazos, cartas, reglas y diseño.
