@@ -145,11 +145,17 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: spacing.lg,
     alignItems: 'center',
+    // RN-web usa flexShrink:0 por defecto: sin esto la fila no encoge
+    // en viewports estrechos y desborda el footer (overflow horizontal).
+    flexShrink: 1,
+    minWidth: 0,
   },
   statWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    flexShrink: 1,
+    minWidth: 0,
   },
   stat: {
     fontWeight: '700',
@@ -159,6 +165,11 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     alignItems: 'center',
     gap: spacing.md,
+    // Idem: con shrink:0 el bloque se mide sin envolver (~444px con el
+    // aviso de reconstrucción) y rebosa la barra en móvil.
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: '100%',
   },
   deckText: {
     fontWeight: '600',

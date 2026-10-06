@@ -127,6 +127,37 @@ test.describe('Recorrido 7: Responsive (UI-370..374)', () => {
     await page.goto('/');
     await expect(page.getByText('No Time for Heroes').first()).toBeVisible({ timeout: 15000 });
   });
+
+  /** scrollWidth == clientWidth ⇒ sin desplazamiento horizontal global. */
+  async function expectNoHorizontalOverflow(page: Page) {
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(1);
+  }
+
+  test('la mesa de juego no desborda horizontalmente en móvil', async ({ page, isMobile }) => {
+    test.skip(!isMobile, 'Solo en móvil');
+    await startQuickGame(page);
+    // La barra HUD (HeroStatusBar) desbordaba ~96px a 360px cuando el
+    // aviso «Reconstruir el mazo…» se activaba (flexShrink:0 implícito
+    // de RN-web sobre contenedores flexWrap). Regresión permanente.
+    await expectNoHorizontalOverflow(page);
+    for (const tab of ['Mano', 'Tienda', 'Estado', 'Registro', 'Lucha']) {
+      const t = page.getByText(new RegExp(`^${tab}`)).last();
+      if (await t.isVisible().catch(() => false)) {
+        await t.click();
+        await page.waitForTimeout(300);
+        await expectNoHorizontalOverflow(page);
+      }
+    }
+  });
+
+  test('la mesa de juego no desborda horizontalmente en escritorio', async ({ page, isMobile }) => {
+    test.skip(isMobile, 'Solo en escritorio');
+    await startQuickGame(page);
+    await expectNoHorizontalOverflow(page);
+  });
 });
 
 test.describe('Recorrido 8: Accesibilidad E2E (UI-360..369)', () => {
