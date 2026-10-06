@@ -61,7 +61,11 @@ describe('Integridad semántica del catálogo', () => {
     for (const c of catalog.byType.get('HORDE') ?? []) {
       expect(c.printedFortitude).toBeGreaterThan(0);
       expect(c.reward).toBeDefined();
-      expect((c.reward?.coins ?? 0) + (c.reward?.glory ?? 0)).toBeGreaterThan(0);
+      // El laurel del frente (trophyGlory) y el botín del dorso (reward)
+      // son recompensas distintas: derrotar una Hueste siempre paga algo —
+      // como mínimo su laurel. Un dorso sin botín (reward 0/0) es legítimo.
+      const yield_ = (c.trophyGlory ?? 0) + (c.reward?.coins ?? 0) + (c.reward?.glory ?? 0);
+      expect(yield_, `${c.id} sin laurel ni botín`).toBeGreaterThan(0);
     }
   });
 
