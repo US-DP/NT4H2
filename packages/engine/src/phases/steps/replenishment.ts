@@ -105,6 +105,7 @@ export function processBattlefieldReplenishment(
       baseFortitude: enemyDef.printedFortitude ?? 1,
       wounds: 0,
       reward: enemyDef.reward ?? null,
+      trophyGlory: enemyDef.trophyGlory ?? 0,
       modifiers: [],
       isWarlord: enemyDef.type === 'WARLORD',
       isOrc: enemyDef.isOrc ?? false,

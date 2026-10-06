@@ -70,7 +70,10 @@ export function ContextualActions({ actions }: ContextualActionsProps) {
         return (
           <Pressable
             key={action.id}
-            onPress={action.disabled ? undefined : action.onPress}
+            // Pressable pasa el GestureResponderEvent al handler — sin la
+            // envoltura llegaba como `targetId` de USE_HERO_ABILITY y el
+            // motor rechazaba la pericia con «Invalid targetId».
+            onPress={action.disabled ? undefined : () => action.onPress()}
             disabled={action.disabled}
             style={[
               styles.button,

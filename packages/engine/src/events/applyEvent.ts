@@ -187,7 +187,8 @@ export function checkFortitudeDefeats(
         defeatingPlayerId,
         reward: {
           coins: work.ignoreCoinRewards ? 0 : (current.reward?.coins ?? 0),
-          glory: work.ignoreGloryRewards ? 0 : (current.reward?.glory ?? 0),
+          // Laurel del frente (trofeo) permanente + Gloria del dorso suprimible
+          glory: (current.trophyGlory ?? 0) + (work.ignoreGloryRewards ? 0 : (current.reward?.glory ?? 0)),
         },
         seq: seq(),
       };

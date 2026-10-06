@@ -107,7 +107,10 @@ export function loadCatalog(): CatalogLoadResult {
     }
     byId.set(card.id, card);
 
-    if (card.heroClass) {
+    // byClass = cartas que componen el mazo de Habilidad de una clase.
+    // Los HEROES llevan heroClass impreso (banner de color) pero NUNCA
+    // entran en un mazo — excluirlos o se cuelan en la mano inicial.
+    if (card.heroClass && card.type !== 'HERO') {
       const classList = byClass.get(card.heroClass) ?? [];
       classList.push(card);
       byClass.set(card.heroClass, classList);

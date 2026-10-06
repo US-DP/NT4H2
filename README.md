@@ -33,8 +33,10 @@
   <td><img src="docs/assets/screenshots/game-attack.png" alt="Elección de ataque: enemigos con resistencia y modificadores, mercado bloqueado y mano del jugador" width="420"></td>
   <td><img src="docs/assets/screenshots/game-market.png" alt="Fase de Mercado: cartas comprables con coste, monedas disponibles y aviso de reconstrucción del mazo" width="420"></td>
   <td><img src="docs/assets/screenshots/game-horde.png" alt="Ataque de la Horda: previsión de desgaste con desglose y ventana de reacción pendiente" width="420"></td>
+</tr><tr>
+  <td colspan="3" align="center"><img src="docs/assets/screenshots/game-end.png" alt="Fin de partida: logros desbloqueados, ganador por Gloria y ranking final con trofeos por héroe" width="420"></td>
 </tr></table>
-<p align="center"><sub>Elección de ataque · Mercado · Ataque de la Horda (con elección de reacción)</sub></p>
+<p align="center"><sub>Elección de ataque · Mercado · Ataque de la Horda (con elección de reacción) · Fin de partida</sub></p>
 
 <table align="center"><tr>
   <td><img src="docs/assets/screenshots/home.png" alt="Pantalla de inicio con el mazo de cartas y acceso a nueva partida" width="420"></td>
@@ -59,7 +61,7 @@
 
 <details><summary>Todas las capturas — las 12 restantes del inventario</summary>
 
-Las anteriores muestran el flujo principal; estas completan las 25
+Las anteriores muestran el flujo principal; estas completan las 26
 pantallas publicadas en `docs/assets/screenshots/`:
 
 | Salas online | |

@@ -69,11 +69,27 @@ function* walkEffects(effects: readonly unknown[] | undefined): Generator<Record
  * si alguno requiere elección del jugador, el modo es 'enemy'.
  */
 export function getCardTargeting(cardDef: CardDefinition | undefined | null): CardTargeting {
+  // Regla E-13/D441 del motor: printedAttack>0 sin efecto de daño
+  // "especial" (reparto/área/héroes) exige targetEnemyId, igual que un
+  // selector SELECTED_ENEMY/ONE_ENEMY. Si la UI no lo pide, el comando
+  // se rechaza con TARGET_REQUIRED y la carta era injugable.
+  const SPECIAL_DAMAGE = new Set([
+    'DEAL_DAMAGE_SPLIT', 'DEAL_DAMAGE_ALL_ENEMIES',
+    'DEAL_DAMAGE_TO_HERO', 'DEAL_DAMAGE_TO_OTHER_HEROES',
+  ]);
+  const hasSpecialDamage = (cardDef?.effects ?? []).some(
+    e => SPECIAL_DAMAGE.has((e as { type?: string }).type ?? ''),
+  );
+  const printedNeedsTarget = (cardDef?.printedAttack ?? 0) > 0 && !hasSpecialDamage;
+
   if (!cardDef?.effects?.length) {
+    if (printedNeedsTarget) {
+      return { mode: 'enemy', filters: [], description: i18n.t('hud.targetChoose') };
+    }
     return { mode: 'none', filters: [], description: i18n.t('hud.targetNoEffects') };
   }
 
-  let needsChoice = false;
+  let needsChoice = printedNeedsTarget;
   const filters: CardTargeting['filters'] = [];
   const autoKinds = new Set<string>();
 

@@ -51,7 +51,7 @@ export { projectForPlayer, projectEventsForPlayer } from './projection/index.js'
 export type { PlayerGameState } from './projection/index.js';
 export { createSnapshot, replay, replayFromSnapshot, replayInit, replayStep, stateHash, createReplay, ENGINE_VERSION, RULESET_VERSION, SNAPSHOT_VERSION } from './replay/index.js';
 export type { GameSnapshot, ReplayEnvelope, ReplayCursor, CommandResult as ReplayCommandResult } from './replay/index.js';
-export { getEffectiveFortitude, effectiveDamage, effectiveHordeDamage, effectiveEnemyDamage, expireModifiers, MODIFIER_LAYERS } from './modifiers/index.js';
+export { getEffectiveFortitude, effectiveDamage, effectiveHordeDamage, effectiveEnemyDamage, expireModifiers, applyEntryAuras, MODIFIER_LAYERS } from './modifiers/index.js';
 export type { ModifierLayer } from './modifiers/index.js';
 export { nextSeq, resetSeq, setSeq, currentSeq } from './seq.js';
 export { computeFinalScore } from './scoring.js';

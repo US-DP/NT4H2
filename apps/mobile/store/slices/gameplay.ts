@@ -521,7 +521,13 @@ export const createGameplaySlice: StateCreator<GameStore, [['zustand/immer', nev
     if (!player) return { ok: false, reason: 'Jugador no encontrado' };
     const cmd: Command = { type: 'PLAY_CARD', cid: newCid('check'), cardInstanceId };
     const evalResult = evaluateCommand(gameState, player.playerId, cmd, catalog);
-    return { ok: evalResult.legal, reason: evalResult.reason, reasonCode: evalResult.reasonCode, costs: evalResult.costs };
+    // TARGET_REQUIRED no es "injugable": la carta se selecciona primero y
+    // el objetivo se elige después en el campo (isValidEnemyTarget valida
+    // el enemigo concreto al confirmar). Sin este escape, toda pericia de
+    // daño directo quedaba bloqueada en la mano y era injugable desde la UI.
+    const ok = evalResult.legal ||
+      (evalResult.reasonCode === 'TARGET_REQUIRED' && gameState.battlefield.length > 0);
+    return { ok, reason: evalResult.reason, reasonCode: evalResult.reasonCode, costs: evalResult.costs };
   },
 
   checkMarketCardBuyable: (marketCardInstanceId: string) => {

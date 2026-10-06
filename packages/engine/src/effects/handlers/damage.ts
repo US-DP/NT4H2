@@ -219,10 +219,12 @@ export function registerDamageEffects(registry: EffectRegistry): void {
     const enemy = state.battlefield.find(e => e.instanceId === targetId);
     if (!enemy) return [];
 
-    let reward = eff.loot ? (enemy.reward ?? { coins: 0, glory: 0 }) : { coins: 0, glory: 0 };
-    // Respetar modificadores de escenario (IGNORE_COIN/GLORY_REWARDS)
-    if (state.ignoreCoinRewards) reward = { ...reward, coins: 0 };
-    if (state.ignoreGloryRewards) reward = { ...reward, glory: 0 };
+    // El laurel del frente (trofeo) siempre se cobra — incluso con loot:false
+    // (Trampa solo pierde el BOTÍN del dorso). IGNORE_* solo suprimen el dorso.
+    const reward = {
+      coins: eff.loot && !state.ignoreCoinRewards ? (enemy.reward?.coins ?? 0) : 0,
+      glory: (enemy.trophyGlory ?? 0) + (eff.loot && !state.ignoreGloryRewards ? (enemy.reward?.glory ?? 0) : 0),
+    };
     return [{
       type: 'ENEMY_DEFEATED',
       enemyInstanceId: targetId,
@@ -302,9 +304,10 @@ export function registerDamageEffects(registry: EffectRegistry): void {
     if (!enemy) return [];
     const threshold = evalValue(eff.threshold, ctx, state);
     if (getEffectiveFortitude(enemy, state) > threshold) return [];
-    let reward = eff.loot !== false ? (enemy.reward ?? { coins: 0, glory: 0 }) : { coins: 0, glory: 0 };
-    if (state.ignoreCoinRewards) reward = { ...reward, coins: 0 };
-    if (state.ignoreGloryRewards) reward = { ...reward, glory: 0 };
+    const reward = {
+      coins: eff.loot !== false && !state.ignoreCoinRewards ? (enemy.reward?.coins ?? 0) : 0,
+      glory: (enemy.trophyGlory ?? 0) + (eff.loot !== false && !state.ignoreGloryRewards ? (enemy.reward?.glory ?? 0) : 0),
+    };
     return [{
       type: 'ENEMY_DEFEATED' as const,
       enemyInstanceId: targetId,

@@ -61,9 +61,13 @@ export function emitEnemyDefeated(
   if (!enemy) return currentState;
 
   enemiesDefeated.push(enemyInstanceId);
-  const finalReward = { ...(enemy.reward ?? { coins: 0, glory: 0 }) };
-  if (currentState.ignoreCoinRewards) finalReward.coins = 0;
-  if (currentState.ignoreGloryRewards) finalReward.glory = 0;
+  // Gloria = laurel del frente (trofeo, permanente) + Gloria del dorso (botín,
+  // suprimible por IGNORE_GLORY_REWARDS / Ruinas de Brunmar). Las Monedas del
+  // dorso las suprime IGNORE_COIN_REWARDS (Planicie de Skaàrg).
+  const finalReward = {
+    coins: currentState.ignoreCoinRewards ? 0 : (enemy.reward?.coins ?? 0),
+    glory: (enemy.trophyGlory ?? 0) + (currentState.ignoreGloryRewards ? 0 : (enemy.reward?.glory ?? 0)),
+  };
 
   allEvents.push({
     type: 'ENEMY_DEFEATED',
@@ -279,6 +283,13 @@ export function resolveCard(
   const allEvents: GameEvent[] = [];
   const enemiesDefeated: string[] = [];
   const additionalCardsPlayed: string[] = [];
+  // Eleccion incidental que NO suspende la resolucion de la carta jugada
+  // (p.ej. el opt-in de Beleth-Il en un fallo de Disparo Rapido, o una
+  // eleccion de la carta robada por PLAY_RANDOM_CARD_FROM_OTHER_HERO):
+  // la resolucion continua — destino, gloria del Senor y pericias — y la
+  // eleccion viaja en el resultado. Antes estos returns saltaban la
+  // seccion de destino y la carta jugada quedaba en la mano (carta gratis).
+  let deferredChoice: PendingChoice | undefined;
   let currentState = state;
 
   // Contexto de resolucion (construido temprano para pendingChoice)
@@ -406,22 +417,31 @@ export function resolveCard(
       currentState = applyEventInline(currentState, expiry);
     }
 
-    // Aplicar penalizacion de capacidad (especificacion 3.5)
-    // Si el heroe tiene un icono con penalizacion, restar del dano
-    // Ej: Picaro con armas a distancia resta 1
-    // No se aplica la penalizacion si el heroe posee otro icono requerido sin penalizacion
-    if (cardDef.penaltyCapabilities && cardDef.penaltyCapabilities.length > 0) {
-      for (const penalty of cardDef.penaltyCapabilities) {
-        if (player.capabilities.includes(penalty.icon)) {
-          // Verificar si el heroe tiene algun capability requerido que NO este en penaltyCapabilities
-          const hasNonPenaltyMatch = player.capabilities.some(cap =>
-            cardDef.requiredCapabilities?.includes(cap) &&
-            !cardDef.penaltyCapabilities?.some(p => p.icon === cap)
-          );
-          if (!hasNonPenaltyMatch) {
-            damage = Math.max(0, damage - penalty.damagePenalty);
+    // Penalizacion de capacidad (especificacion 3.5) — una sola vez:
+    // - Lado CARTA: icono alternativo impreso con «-1» (penaltyCapabilities
+    //   de la def — el heroe necesita ese icono en capabilities).
+    // - Lado HEROE: el icono impreso con «-1» en la carta de Heroe
+    //   (player.penaltyCapabilities — p.ej. Pícaro usa RANGED con -1).
+    // No aplica si el heroe tiene ALGUN icono requerido sin penalizar
+    // (ej. Piedra de Amolar con 3 iconos y el heroe posee uno pleno).
+    if (cardDef.requiredCapabilities && cardDef.requiredCapabilities.length > 0) {
+      const hasFullRequired = player.capabilities.some(cap =>
+        cardDef.requiredCapabilities!.includes(cap) &&
+        !(cardDef.penaltyCapabilities?.some(p => p.icon === cap) ?? false)
+      );
+      if (!hasFullRequired) {
+        let penalty = 0;
+        for (const p of cardDef.penaltyCapabilities ?? []) {
+          if (player.capabilities.includes(p.icon)) {
+            penalty = Math.max(penalty, p.damagePenalty);
           }
         }
+        for (const p of player.penaltyCapabilities ?? []) {
+          if (cardDef.requiredCapabilities.includes(p.icon)) {
+            penalty = Math.max(penalty, p.damagePenalty);
+          }
+        }
+        if (penalty > 0) damage = Math.max(0, damage - penalty);
       }
     }
 
@@ -592,13 +612,10 @@ export function resolveCard(
       enemiesDefeated.push(...sub.enemiesDefeated);
       additionalCardsPlayed.push(...sub.additionalCardsPlayed);
       if (sub.pendingChoice) {
-        return {
-          events: allEvents,
-          newState: currentState,
-          enemiesDefeated,
-          additionalCardsPlayed,
-          pendingChoice: sub.pendingChoice,
-        };
+        // La eleccion pertenece a la carta robada (su resolutionContext la
+        // reanudara via RESOLVE_CHOICE); la nuestra termina aqui — no
+        // early-return, que saltaria el destino de la carta jugada.
+        deferredChoice ??= sub.pendingChoice;
       }
       continue;
     }
@@ -651,23 +668,19 @@ export function resolveCard(
         const extraDamage = drawnDef?.printedAttack ?? 0;
         // Sumar dano al objetivo actual
         if (extraDamage > 0 && targetEnemyId) {
-          allEvents.push({
-            type: 'DAMAGE_DEALT',
-            targetId: targetEnemyId,
-            amount: extraDamage,
-            sourceCardInstanceId: drawnCard.instanceId,
-            seq: nextSeq(),
-          });
           // NOTA: La carta robada por Todo o Nada NO se juega, solo suma su ataque.
           // Por tanto NO genera Gloria del Señor de la Guerra (§3.7: 1 Gloria por carta jugada).
-          // Aplicar al estado intermedio
-          currentState = applyEventInline(currentState, {
+          // El MISMO objeto evento va al log y al estado intermedio — emitir
+          // dos copias consumia dos seq y dejaba huecos en la numeración.
+          const dmgEv: GameEvent = {
             type: 'DAMAGE_DEALT',
             targetId: targetEnemyId,
             amount: extraDamage,
             sourceCardInstanceId: drawnCard.instanceId,
             seq: nextSeq(),
-          });
+          };
+          allEvents.push(dmgEv);
+          currentState = applyEventInline(currentState, dmgEv);
           // Comprobar derrota (applyEventInline ya sumó extraDamage a wounds)
           currentState = emitEnemyDefeated(
             currentState, targetEnemyId, player.playerId, enemiesDefeated, allEvents, catalog, ctx,
@@ -723,15 +736,11 @@ export function resolveCard(
       currentState = chainResult.state;
       additionalCardsPlayed.push(...chainResult.additionalCardsPlayed);
       enemiesDefeated.push(...chainResult.enemiesDefeated);
-      // D434: propagar eleccion pendiente (opt-in de Beleth-Il)
+      // D434: propagar eleccion pendiente (opt-in de Beleth-Il). Es
+      // incidental — no suspende la carta: se difiere y la resolucion
+      // continua hasta el destino declarado (WEAR_PILE/etc.).
       if (chainResult.pendingChoice) {
-        return {
-          events: allEvents,
-          newState: currentState,
-          enemiesDefeated,
-          additionalCardsPlayed,
-          pendingChoice: chainResult.pendingChoice,
-        };
+        deferredChoice ??= chainResult.pendingChoice;
       }
       continue;
     }
@@ -771,6 +780,7 @@ export function resolveCard(
         // la proyección la redacta en el campo de batalla; con null el
         // sustituto pagaba {0,0} al ser derrotado.
         newEnemyReward: newEnemyDef.reward ?? null,
+        newEnemyTrophyGlory: newEnemyDef.trophyGlory ?? 0,
         newEnemyIsOrc: newEnemyDef.isOrc ?? false,
         newEnemyIsWarlord: newEnemyDef.type === 'WARLORD',
         newEnemySpecialIcons: newEnemyDef.specialIcons ?? [],
@@ -792,6 +802,7 @@ export function resolveCard(
           enemyDefinitionId: spawnCard.definitionId,
           enemyFortitude: spawnDef.printedFortitude ?? 1,
           enemyReward: spawnDef.reward ?? null,
+          enemyTrophyGlory: spawnDef.trophyGlory ?? 0,
           enemyIsOrc: spawnDef.isOrc ?? false,
           enemyIsWarlord: spawnDef.type === 'WARLORD',
           enemySpecialIcons: spawnDef.specialIcons ?? [],
@@ -1162,6 +1173,7 @@ export function resolveCard(
     newState: finalState,
     enemiesDefeated,
     additionalCardsPlayed,
+    pendingChoice: deferredChoice,
   };
 }
 

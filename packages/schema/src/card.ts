@@ -761,7 +761,11 @@ export const CardDefinitionSchema = z.object({
   printedFortitude: z.number().int().min(0).optional(),
   printedCost: z.number().int().min(0).optional(),
   maxWounds: z.number().int().min(1).optional(), // para heroes
-  reward: RewardSchema.optional(), // para huestes
+  reward: RewardSchema.optional(), // para huestes — botín del dorso (suprimible por escenarios)
+  /** Laurel del frente de la Hueste: valor de Gloria del trofeo. Permanente
+   *  (solo cuenta al final); NO lo suprime IGNORE_GLORY_REWARDS, que solo
+   *  ignora la Gloria del dorso (botín). */
+  trophyGlory: z.number().int().min(0).optional(),
   capabilities: z.array(CapabilityIconSchema).optional(), // para heroes y mercado
   requiredCapabilities: z.array(CapabilityIconSchema).optional(), // para mercado
   penaltyCapabilities: z.array(z.object({

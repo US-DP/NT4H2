@@ -446,10 +446,36 @@ describe('Multiclass via setupGame — integración D364-D367', () => {
     };
     const result = setupGame(config, catalog);
     const p1 = result.state.players['p1'];
-    // Aranel es EXPLORER (RANGED, EXPERTISE) + WARRIOR (MELEE, EXPERTISE)
-    expect(p1.capabilities).toContain('RANGED');
+    // Iconos impresos: Aranel es MAGO (MAGIC) + segunda baraja Guerrero
+    // añade MELEE (classToCaps). Ya no hay EXPERTISE/RANGED implícitos.
+    expect(p1.capabilities).toContain('MAGIC');
     expect(p1.capabilities).toContain('MELEE');
+    expect(p1.capabilities).not.toContain('EXPERTISE');
+    expect(p1.capabilities).not.toContain('RANGED');
+  });
+
+  it('D366b: segunda clase Explorador añade RANGED + icono Melee penalizado (-1)', () => {
+    const config: GameConfig = {
+      mode: 'MULTICLASS',
+      playerCount: 2,
+      seed: 'test-mc-caps-002',
+      heroes: [
+        // Feldon impreso: Pícaro = EXPERTISE + diana penalizada (-1).
+        // Segunda baraja Explorador añade RANGED pleno + MELEE penalizado.
+        { playerId: 'p1', heroId: 'hero.feldon', heroFace: 'MALE', deckId: 'rogue.default', secondDeckId: 'explorer.default' },
+        { playerId: 'p2', heroId: 'hero.lisavette', heroFace: 'FEMALE', deckId: 'warrior.default' },
+      ],
+      useScenarios: true,
+    };
+    const result = setupGame(config, catalog);
+    const p1 = result.state.players['p1'];
     expect(p1.capabilities).toContain('EXPERTISE');
+    expect(p1.capabilities).toContain('RANGED');
+    // El icono melee penalizado de la clase Explorador se propaga
+    expect(p1.penaltyCapabilities).toContainEqual({ icon: 'MELEE', damagePenalty: 1 });
+    // Y el propio icono penalizado del Pícaro (diana -1) queda cubierto por
+    // el RANGED pleno de la segunda clase — no debe quedar duplicado
+    expect(p1.penaltyCapabilities?.some(p => p.icon === 'RANGED')).toBe(false);
   });
 
   it('D364: mercado filtrado por capabilities en multiclase', () => {
@@ -467,13 +493,15 @@ describe('Multiclass via setupGame — integración D364-D367', () => {
     const result = setupGame(config, catalog);
     // El mercado debe tener 5 cartas
     expect(result.state.market).toHaveLength(5);
-    // Todas las cartas del mercado deben ser compatibles con RANGED+MELEE+EXPERTISE
+    // Con iconos impresos: Aranel=MAGIC, Feldon=EXPERTISE+diana(-1);
+    // segunda baraja explorer de p1 añade RANGED+MELEE(-1). El filtro admite
+    // iconos plenos Y penalizados → unión usable = {MAGIC,EXPERTISE,RANGED,MELEE}
     for (const card of result.state.market) {
       const def = catalog.byId.get(card.definitionId);
       if (def?.requiredCapabilities && def.requiredCapabilities.length > 0) {
-        // Al menos una capability debe estar entre RANGED, MELEE, EXPERTISE
-        const playerCaps = new Set(['RANGED', 'MELEE', 'EXPERTISE']);
-        expect(def.requiredCapabilities.every(c => playerCaps.has(c))).toBe(true);
+        // Al menos UN icono requerido debe ser usable (pleno o penalizado)
+        const usableCaps = new Set(['RANGED', 'MELEE', 'EXPERTISE', 'MAGIC']);
+        expect(def.requiredCapabilities.some(c => usableCaps.has(c))).toBe(true);
       }
     }
   });

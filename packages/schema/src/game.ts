@@ -90,6 +90,8 @@ export interface EnemyState {
   //  getEffectiveFortitude(base + modifiers), calculado al vuelo)
   wounds: number;
   reward: Reward | null; // null = no revelado
+  /** Laurel del frente: valor de Gloria del trofeo (permanente, no suprimible) */
+  trophyGlory?: number;
   modifiers: Modifier[];
   isWarlord: boolean;
   isOrc: boolean;
@@ -129,6 +131,9 @@ export interface PlayerState {
   wounds: number;
   maxWounds: number;
   capabilities: CapabilityIcon[];
+  /** Iconos de capacidad impresos con penalización (-N al Daño al usar objetos
+   *  que los requieran). El icono permite comprar/usar, pero con penalización. */
+  penaltyCapabilities?: { icon: CapabilityIcon; damagePenalty: number }[];
   abilityDeck: CardInstance[];
   hand: CardInstance[];
   wearPile: CardInstance[];
@@ -426,7 +431,7 @@ export type GameEvent =
   | { type: 'CANCELLATION_ACTIVATED'; playerId: string; duration?: EffectDuration; seq: number }
   | { type: 'PERSISTENT_CARD_PLACED'; playerId: string; cardInstanceId: string; cardDefinitionId: string; trigger: string; seq: number }
   | { type: 'PERSISTENT_CARD_REMOVED'; cardInstanceId: string; seq: number }
-  | { type: 'ENEMY_SWAPPED'; oldEnemyInstanceId: string; newEnemyInstanceId: string; newEnemyDefinitionId: string; newEnemyFortitude: number; newEnemyReward: Reward | null; newEnemyIsOrc: boolean; newEnemyIsWarlord: boolean; newEnemySpecialIcons: string[]; seq: number }
+  | { type: 'ENEMY_SWAPPED'; oldEnemyInstanceId: string; newEnemyInstanceId: string; newEnemyDefinitionId: string; newEnemyFortitude: number; newEnemyReward: Reward | null; newEnemyTrophyGlory?: number; newEnemyIsOrc: boolean; newEnemyIsWarlord: boolean; newEnemySpecialIcons: string[]; seq: number }
   | { type: 'ENEMY_RETURNED_TO_HORDE'; enemyInstanceId: string; position: 'BOTTOM' | 'TOP'; seq: number }
   | { type: 'DAMAGE_INTERCEPTED'; interceptorPlayerId: string; originalTargetPlayerId: string; amount: number; seq: number }
   | { type: 'CARDS_REVEALED_TO_PLAYER'; playerId: string; cardInstanceIds: string[]; deck: 'HORDE'; seq: number }
@@ -437,7 +442,7 @@ export type GameEvent =
   | { type: 'STATUS_REMOVED'; enemyInstanceId: string; status: string; seq: number }
   | { type: 'ARMOR_GRANTED'; playerId: string; amount: number; duration?: EffectDuration; seq: number }
   | { type: 'HORDE_CARD_DISCARDED'; cardInstanceId: string; seq: number }
-  | { type: 'ENEMY_SPAWNED'; enemyInstanceId: string; enemyDefinitionId: string; enemyFortitude: number; enemyReward: Reward | null; enemyIsOrc: boolean; enemyIsWarlord: boolean; enemySpecialIcons: string[]; seq: number }
+  | { type: 'ENEMY_SPAWNED'; enemyInstanceId: string; enemyDefinitionId: string; enemyFortitude: number; enemyReward: Reward | null; enemyTrophyGlory?: number; enemyIsOrc: boolean; enemyIsWarlord: boolean; enemySpecialIcons: string[]; seq: number }
   // Extensiones del Taller (fase 2)
   | { type: 'VARIABLE_SET'; name: string; value: number; seq: number }
   | { type: 'BLOCK_GRANTED'; playerId: string; amount: number; seq: number }

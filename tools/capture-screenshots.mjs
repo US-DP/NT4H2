@@ -75,19 +75,39 @@ try {
   await page.waitForTimeout(1000);
   if (/Elección|Turno \d/.test(await body())) await shot('game-board.png', 300);
 
-  for (let step = 0; step < 14; step++) {
-    // El asalto de la Horda se detecta por sus botones exclusivos — el resumen
-    // modal ("Continuar partida") o la ventana de reacción ("Usar pericia") —
-    // ANTES de pulsar nada: el texto "la Horda" también aparece en el log de
-    // eventos y disparaba la captura ya en fase Mercado.
-    const hordeBtn = page.locator('button, [role="button"], div[tabindex="0"]')
-      .filter({ hasText: /Continuar partida|Usar pericia/ }).first();
+  let hordeShot = false;
+  for (let step = 0; step < 30; step++) {
+    // Entre elección y elección el hot-seat muestra "Estoy listo" (pantalla de
+    // privacidad al pasar el dispositivo): hay que quitarla dentro del bucle o
+    // ningún patrón de click casa y la partida se aborta en el primer cambio
+    // de jugador.
+    await settle();
+    const txt0 = await body();
+    console.log('  step', step, JSON.stringify(txt0.slice(0, 80)));
+    // El asalto de la Horda se captura desde su UI real, nunca por texto del
+    // log (que ya decía "la Horda" en fase Mercado). Tres vías:
+    //  - ventana de reacción: botón "Usar pericia"
+    //  - resumen abierto: botón "Continuar partida"
+    //  - fase HORDE_ATTACK sin auto-apertura (modo 'modifiers' sin
+    //    modificadores): se pulsa "Ver desglose" del banner para abrir el
+    //    modal con el desglose por enemigo.
+    // Se busca por texto, no por rol: el Pressable de cierre no declara
+    // accessibilityRole.
+    const hordeBtn = page.locator('text=/^\\s*(Continuar partida|Usar pericia)\\s*$/').first();
+    if (!hordeShot && /Ataque de la Horda|Horda ataca/i.test(txt0)) {
+      await clickVis(/Ver desglose/, 2500);
+      await page.waitForSelector('text=/Continuar partida|Usar pericia/', { timeout: 5000 }).catch(() => null);
+    }
     if (await hordeBtn.isVisible().catch(() => false)) {
       await shot('game-horde.png', 400);
+      hordeShot = true;
+      await clickVis(/Continuar partida|Pasar/, 2000);
+      // Sigue la cadena normal de clicks: la fase debe avanzar, no reabrir
+      // el modal en bucle.
     }
     const clicked = await clickVis(/Atac.{0,15}Horda|a la Horda/i, 2500)
       || await clickVis(/Evadir/i, 2500)
-      || await clickVis(/Continuar partida|Terminar|Pasar|Continuar|Siguiente|Finalizar|mercado/i, 2500);
+      || await clickVis(/Terminar|Pasar|Continuar|Siguiente|Finalizar|mercado/i, 2500);
     if (!clicked) break;
     await settle();
     const txt = await body();

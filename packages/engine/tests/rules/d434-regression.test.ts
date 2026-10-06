@@ -259,6 +259,31 @@ describe('D434 pericias opt-in — Cemenmar, Taheral, Feldon', () => {
     // El daño aún no se ha resuelto
     expect(result.events.some(e => e.type === 'HORDE_ATTACKED')).toBe(false);
   });
+
+  it('resolver la elección de Feldon no duplica FELDON_DECISION en el eventLog', () => {
+    // Regresión: el handler aplicaba FELDON_DECISION dos veces (una suelta
+    // y otra en el bucle) — el log persistido llevaba el evento duplicado
+    // con el mismo seq y divergía de lo devuelto al cliente.
+    const state = makeGameState({
+      phase: 'HORDE_ATTACK',
+      activePlayerId: 'p1',
+      players: {
+        p1: makePlayer({ playerId: 'p1', heroId: 'hero.feldon', heroUsesRemaining: 2, abilityDeck: makeCards(5, { zone: 'ABILITY_DECK' as Zone }) }),
+      },
+      battlefield: [makeEnemy({ baseFortitude: 4 })],
+      pendingChoices: [{
+        choiceId: 'feldon-reduce-1-p1', playerId: 'p1', type: 'CONFIRM',
+        prompt: 'Feldon', options: ['yes', 'no'], minSelections: 1, maxSelections: 1,
+      } as any],
+    });
+    const result = execute(state, {
+      type: 'RESOLVE_CHOICE', choiceId: 'feldon-reduce-1-p1', selectedIds: ['yes'],
+    } as any, freshRng(), makeRegistry(), catalog, 'p1');
+    const feldonLog = result.newState.eventLog.filter(e => e.type === 'FELDON_DECISION');
+    expect(feldonLog).toHaveLength(1);
+    const seqs = result.newState.eventLog.map(e => e.seq);
+    expect(new Set(seqs).size).toBe(seqs.length);
+  });
 });
 
 describe('D434 Portal de Ulthar — no cobrar sin objetivo válido', () => {

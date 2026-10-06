@@ -246,11 +246,11 @@ export function setupGame(
       if (heroDef?.capabilities) {
         for (const cap of heroDef.capabilities) playerCapabilities.add(cap);
       }
-      // Incluir capabilities de la segunda clase
+      // Incluir capabilities de la segunda clase (iconos impresos)
       const secondDeckIdParts = heroConfig.secondDeckId?.split('.');
       const secondClass = secondDeckIdParts?.[0]?.toUpperCase();
-      if (secondClass === 'EXPLORER') { playerCapabilities.add('RANGED'); playerCapabilities.add('EXPERTISE'); }
-      if (secondClass === 'WARRIOR') { playerCapabilities.add('MELEE'); playerCapabilities.add('EXPERTISE'); }
+      if (secondClass === 'EXPLORER') { playerCapabilities.add('RANGED'); }
+      if (secondClass === 'WARRIOR') { playerCapabilities.add('MELEE'); }
       if (secondClass === 'MAGE') { playerCapabilities.add('MAGIC'); }
       if (secondClass === 'ROGUE') { playerCapabilities.add('EXPERTISE'); }
     }
@@ -258,10 +258,18 @@ export function setupGame(
     // (un hero multiclase puede comprar cartas con penalizacion si tiene el icono penalizado).
     // Misma semantica que isLegal en execute.ts: basta UN icono requerido
     // (los iconos impresos son alternativas), o un icono penalizado.
+    // D377: incluir tambien los iconos penalizados del HEROE (penaltyCapabilities
+    // del player: Pícaro→RANGED-1, Explorador→MELEE-1) — habilitan la compra
+    // con el daño reducido, igual que en isLegal (execute.ts).
+    const playerPenaltyIcons = new Set<string>();
+    for (const heroConfig of config.heroes) {
+      const heroDef = catalog.byId.get(heroConfig.heroId);
+      for (const p of heroDef?.penaltyCapabilities ?? []) playerPenaltyIcons.add(p.icon);
+    }
     marketCards = marketCardsAll.filter(card => {
       if (!card.requiredCapabilities || card.requiredCapabilities.length === 0) return true;
       return card.requiredCapabilities.some(cap =>
-        playerCapabilities.has(cap) ||
+        playerCapabilities.has(cap) || playerPenaltyIcons.has(cap) ||
         (card.penaltyCapabilities?.some(p => playerCapabilities.has(p.icon)) ?? false)
       );
     });
@@ -335,12 +343,15 @@ export function setupGame(
     // Usar deckId del config (respeta la elección de clase del jugador)
     const deckIdParts = heroConfig.deckId.split('.');
     const deckClass = deckIdParts[0]?.toUpperCase() as 'EXPLORER' | 'WARRIOR' | 'MAGE' | 'ROGUE' | undefined;
-    // Fallback: si deckId no tiene clase válida, inferir de capabilities del héroe
+    // Fallback: si deckId no tiene clase válida, usar la clase impresa del
+    // héroe (heroClass) y, en su defecto, inferir de las capabilities.
     const heroClass = deckClass && catalog.byClass.has(deckClass)
       ? deckClass
-      : heroDef.capabilities?.includes('RANGED') ? 'EXPLORER'
-        : heroDef.capabilities?.includes('MELEE') ? 'WARRIOR'
+      : heroDef.heroClass
+        ? heroDef.heroClass
         : heroDef.capabilities?.includes('MAGIC') ? 'MAGE'
+        : heroDef.capabilities?.includes('RANGED') ? 'EXPLORER'
+        : heroDef.capabilities?.includes('MELEE') ? 'WARRIOR'
         : 'ROGUE';
 
     const classCards = catalog.byClass.get(heroClass) ?? [];
@@ -504,19 +515,35 @@ export function setupGame(
     // Solitario: sin pericia de héroe (spec §4.1)
     const heroUses = config.mode === 'SOLO' ? 0 : (heroDef.heroAbility?.uses ?? 0);
 
-    // D366: En multiclase, las capabilities son la unión de ambas clases
-    // Especificacion §7.1: Guerrero=Melee+Pericia, Explorador=Ranged+Pericia,
-    // Picaro=Pericia (puede usar Ranged con penalizacion -1), Mago=Magia
+    // D366: En multiclase, las capabilities son la unión de ambas clases.
+    // Iconos impresos en las cartas de Héroe (auditados contra los PNG):
+    //   Guerrero=Melee, Explorador=Ranged+Melee(-1), Pícaro=Pericia+Ranged(-1),
+    //   Mago=Magia. Los iconos con «-1» van en penaltyCapabilities.
     const classToCaps: Record<string, ('MELEE' | 'RANGED' | 'EXPERTISE' | 'MAGIC')[]> = {
-      EXPLORER: ['RANGED', 'EXPERTISE'],
-      WARRIOR: ['MELEE', 'EXPERTISE'],
+      EXPLORER: ['RANGED'],
+      WARRIOR: ['MELEE'],
       MAGE: ['MAGIC'],
       ROGUE: ['EXPERTISE'],
     };
+    const classToPenaltyCaps: Record<string, { icon: 'MELEE' | 'RANGED' | 'EXPERTISE' | 'MAGIC'; damagePenalty: number }[]> = {
+      EXPLORER: [{ icon: 'MELEE', damagePenalty: 1 }],
+      WARRIOR: [],
+      MAGE: [],
+      ROGUE: [{ icon: 'RANGED', damagePenalty: 1 }],
+    };
     const playerCaps = new Set<'MELEE' | 'RANGED' | 'EXPERTISE' | 'MAGIC'>(heroDef.capabilities ?? []);
+    let playerPenaltyCaps = [...(heroDef.penaltyCapabilities ?? [])];
     if (secondClass && config.mode === 'MULTICLASS') {
       for (const cap of classToCaps[secondClass] ?? []) {
         playerCaps.add(cap);
+      }
+      // Si la segunda clase concede el icono pleno, la penalización del
+      // héroe para ese icono queda cubierta — no debe persistir.
+      playerPenaltyCaps = playerPenaltyCaps.filter(p => !playerCaps.has(p.icon));
+      for (const pen of classToPenaltyCaps[secondClass] ?? []) {
+        if (!playerCaps.has(pen.icon) && !playerPenaltyCaps.some(p => p.icon === pen.icon)) {
+          playerPenaltyCaps.push(pen);
+        }
       }
     }
     const playerCapabilities = Array.from(playerCaps);
@@ -532,6 +559,7 @@ export function setupGame(
       wounds: 0,
       maxWounds: heroDef.maxWounds ?? 3,
       capabilities: playerCapabilities,
+      ...(playerPenaltyCaps.length > 0 ? { penaltyCapabilities: playerPenaltyCaps } : {}),
       abilityDeck: remainingDeck,
       hand,
       wearPile: [],
@@ -558,10 +586,11 @@ export function setupGame(
       for (const supportHeroId of config.soloSupportHeroIds) {
         const supportHeroDef = catalog.byId.get(supportHeroId);
         if (!supportHeroDef) continue;
-        const supportClass = supportHeroDef.capabilities?.includes('RANGED') ? 'EXPLORER'
+        const supportClass = supportHeroDef.heroClass
+          ?? (supportHeroDef.capabilities?.includes('MAGIC') ? 'MAGE'
+          : supportHeroDef.capabilities?.includes('RANGED') ? 'EXPLORER'
           : supportHeroDef.capabilities?.includes('MELEE') ? 'WARRIOR'
-          : supportHeroDef.capabilities?.includes('MAGIC') ? 'MAGE'
-          : 'ROGUE';
+          : 'ROGUE');
         const supportClassCards = catalog.byClass.get(supportClass) ?? [];
         const supportDeck: CardInstance[] = [];
         for (const card of supportClassCards) {
@@ -607,6 +636,7 @@ export function setupGame(
       // Recompensa oculta: se carga del catálogo pero no se revela al jugador
       // hasta derrotar al enemigo. El motor la usa internamente.
       reward: enemyDef.reward ?? null,
+      trophyGlory: enemyDef.trophyGlory ?? 0,
       modifiers: [],
       isWarlord: enemyDef.type === 'WARLORD',
       isOrc: enemyDef.isOrc ?? false,

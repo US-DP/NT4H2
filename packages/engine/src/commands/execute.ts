@@ -247,10 +247,16 @@ export function isLegal(
             player.capabilities.includes(icon)
           );
           if (!hasAny) {
-            // Verificar si puede usarla con penalizacion
-            const canUseWithPenalty = cardDef.penaltyCapabilities?.some(
-              p => player.capabilities.includes(p.icon)
-            ) ?? false;
+            // Penalización del lado de la CARTA (icono alternativo con -1)
+            // y del lado del HÉROE (p.ej. Pícaro con icono diana -1 puede
+            // comprar armas a distancia; Explorador con puño -1, armas melee).
+            const canUseWithPenalty =
+              (cardDef.penaltyCapabilities?.some(
+                p => player.capabilities.includes(p.icon)
+              ) ?? false) ||
+              (player.penaltyCapabilities?.some(
+                p => cardDef.requiredCapabilities!.includes(p.icon)
+              ) ?? false);
             if (!canUseWithPenalty) {
               return { ok: false, reason: 'Hero lacks required capabilities' };
             }

@@ -95,7 +95,6 @@ export function executeResolveChoice(
       decision: wants ? 'HALVE' : 'DECLINE',
       seq: reg.nextSeq(),
     }];
-    let resolvedState = applyEvent(state, feldonEvents[0]);
     if (wants) {
       feldonEvents.push({
         type: 'HERO_ABILITY_USED',
@@ -105,6 +104,9 @@ export function executeResolveChoice(
       });
     }
     events.push(...feldonEvents);
+    // Cada evento se aplica UNA vez — aplicar dos veces el primero
+    // duplicaba FELDON_DECISION en el eventLog persistido.
+    let resolvedState = state;
     for (const ev of feldonEvents) {
       resolvedState = applyEvent(resolvedState, ev);
     }
@@ -297,6 +299,18 @@ export function executeResolveChoice(
         events.push(...resolveResult.events);
         for (const ev of resolveResult.events) {
           resolvedState = applyEvent(resolvedState, ev);
+        }
+        // Eleccion incidental de la carta prestada (p.ej. opt-in de
+        // Beleth-Il): persistirla en vez de descartarla — sin esto el
+        // CONFIRM se perdia y la Pericia nunca se ofrecia.
+        if (resolveResult.pendingChoice) {
+          const pcEvent: GameEvent = {
+            type: 'PENDING_CHOICE_CREATED',
+            choice: resolveResult.pendingChoice,
+            seq: reg.nextSeq(),
+          };
+          events.push(pcEvent);
+          resolvedState = applyEvent(resolvedState, pcEvent);
         }
       }
       // El dueño roba 1 carta (D434: con Herida + reciclaje si el mazo
@@ -683,6 +697,7 @@ export function executeResolveChoice(
         baseFortitude: trophyDef.printedFortitude ?? 1,
         wounds: 0,
         reward: trophyDef.reward ?? null,
+        trophyGlory: trophyDef.trophyGlory ?? 0,
         modifiers: [],
         isWarlord: false,
         isOrc: trophyDef.isOrc ?? false,
@@ -923,6 +938,17 @@ export function executeResolveChoice(
   let resolvedState = state;
   for (const ev of result.events) {
     resolvedState = applyEvent(resolvedState, ev);
+  }
+  // Eleccion incidental surgida en la re-resolucion (p.ej. Beleth-Il en
+  // un Disparo Rapido encadenado): persistirla en vez de descartarla.
+  if (result.pendingChoice) {
+    const pcEvent: GameEvent = {
+      type: 'PENDING_CHOICE_CREATED',
+      choice: result.pendingChoice,
+      seq: reg.nextSeq(),
+    };
+    result.events.push(pcEvent);
+    resolvedState = applyEvent(resolvedState, pcEvent);
   }
   // Limpiar la eleccion pendiente
   resolvedState = { ...resolvedState, pendingChoices: resolvedState.pendingChoices.filter(c => c.choiceId !== command.choiceId) };

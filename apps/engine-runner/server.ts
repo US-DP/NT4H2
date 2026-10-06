@@ -51,6 +51,10 @@ function sanitizeForPlayer(state: GameState, viewerId: string): GameState {
           // multijugador los toca, el mazo de apoyos ajeno quedaba
           // expuesto en claro — redactar igual que el resto.
           supportDecks: (p.supportDecks ?? []).map(d => d.map(redactCard)),
+          // D446: PLACE_PERSISTENT se coloca BOCA ABAJO — los demás
+          // jugadores ven que hay una persistente, nunca cuál es.
+          // (redactCard además limpia name y persistentTrigger.)
+          persistentCards: (p.persistentCards ?? []).map(redactCard),
         };
   }
   return {
@@ -98,6 +102,11 @@ const PaymentSchema = z.union([
 // actorId (opcional): el runner lo sobrescribe con el playerId autenticado
 // tras validar — sirve para el log/replay, no para suplantar identidad.
 const actor = { actorId: idSchema.optional() };
+// selectedIds de RESOLVE_CHOICE son tokens de opción, no ids puros: el
+// motor emite opciones compuestas como 'playerId#coinN' (SELECT_COINS_TO_STEAL,
+// Yermo de Cemenmar). El engine valida selectedIds ⊆ choice.options, así que
+// relajar el charset aquí no abre inyección — solo habilita opciones válidas.
+const selectionTokenSchema = z.string().regex(/^[\w.@:#+-]{1,128}$/);
 const CommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('PLAY_CARD'), cid: cidSchema, ...actor, cardInstanceId: idSchema, targetEnemyId: idSchema.optional() }),
   z.object({ type: z.literal('END_ATTACK'), cid: cidSchema, ...actor }),
@@ -106,7 +115,7 @@ const CommandSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('END_TURN'), cid: cidSchema, ...actor }),
   z.object({ type: z.literal('USE_HERO_ABILITY'), cid: cidSchema, ...actor, targetId: idSchema.optional() }),
   z.object({ type: z.literal('CHOOSE_LEADER_CARDS'), cid: cidSchema, ...actor, cardInstanceIds: z.array(idSchema).min(1).max(2) }),
-  z.object({ type: z.literal('RESOLVE_CHOICE'), cid: cidSchema, ...actor, choiceId: z.string().min(1).max(200), selectedIds: z.array(idSchema).max(60) }),
+  z.object({ type: z.literal('RESOLVE_CHOICE'), cid: cidSchema, ...actor, choiceId: z.string().min(1).max(200), selectedIds: z.array(selectionTokenSchema).max(60) }),
   z.object({ type: z.literal('PASS'), cid: cidSchema, ...actor }),
   z.object({ type: z.literal('SWAP_STARTING_CARDS'), cid: cidSchema, ...actor, cardInstanceIds: z.array(idSchema).max(10) }),
   z.object({ type: z.literal('ACCEPT_TURN_START_EFFECT'), cid: cidSchema, ...actor, accepted: z.boolean() }),

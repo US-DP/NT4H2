@@ -217,6 +217,13 @@ describe('HeroAbilities — Pericias de heroes', () => {
     const result = resolveCard(state, rapid, rapidDef, null, state.players.p1, rng, reg, catalog);
     // El fallo crea eleccion opt-in, no recuperacion automatica
     expect(result.pendingChoice?.choiceId.startsWith('beleth-recover-')).toBe(true);
+    // Regresion: el opt-in es incidental — la carta JUGADA ya resolvio y
+    // debe ir al Desgaste (antes el early-return la dejaba en la mano).
+    expect(
+      result.events.some(e => e.type === 'CARD_MOVED' && e.cardInstanceId === rapid.instanceId && e.to === 'WEAR_PILE')
+    ).toBe(true);
+    expect(result.newState.players.p1.wearPile.some(c => c.instanceId === rapid.instanceId)).toBe(true);
+    expect(result.newState.players.p1.hand.some(c => c.instanceId === rapid.instanceId)).toBe(false);
     const stateWithChoice: GameState = {
       ...result.newState,
       pendingChoices: [...result.newState.pendingChoices, result.pendingChoice!],

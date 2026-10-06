@@ -170,7 +170,7 @@ export function mergeCustomCards(
       // arrays internos con el catálogo original — un push directo
       // contaminaba los índices globales con cartas del Taller de otra
       // sala (y acumulaba duplicados a cada merge).
-      if (stamped.heroClass) {
+      if (stamped.heroClass && stamped.type !== 'HERO') {
         byClass.set(stamped.heroClass, [...(byClass.get(stamped.heroClass) ?? []), stamped]);
       }
       byType.set(stamped.type, [...(byType.get(stamped.type) ?? []), stamped]);

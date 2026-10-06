@@ -45,7 +45,12 @@ export function PrivacyScreen() {
       <Text style={styles.warning}>
         {t('common.privacy.warning')}
       </Text>
-      <Pressable style={styles.button} onPress={passPrivacy}>
+      <Pressable
+        style={styles.button}
+        onPress={passPrivacy}
+        accessibilityRole="button"
+        accessibilityLabel={t('common.privacy.ready')}
+      >
         <Text style={styles.buttonText}>{t('common.privacy.ready')}</Text>
       </Pressable>
     </View>
