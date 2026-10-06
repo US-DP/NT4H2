@@ -1482,6 +1482,47 @@ function canonicalExercise(def: ReturnType<typeof catalog.byId.get> & object, st
   return null;
 }
 
+/**
+ * Invariantes metamórficas del sistema: ninguna carta puede duplicarse ni
+ * desaparecer, los recursos nunca son negativos y los seqs del eventLog
+ * son estrictamente crecientes. Se comprueban tras ejercitar cada carta.
+ */
+function checkInvariants(post: GameState, failures: string[], label: string) {
+  // seqs estrictamente crecientes en el eventLog
+  const seqs = (post.eventLog ?? []).map((e: any) => e.seq).filter(s => typeof s === 'number');
+  for (let i = 1; i < seqs.length; i++) {
+    if (seqs[i] <= seqs[i - 1]) {
+      failures.push(`${label}: seq no monótono ${seqs[i - 1]}→${seqs[i]}`);
+      break;
+    }
+  }
+  // Conservación de instancias: un instanceId no puede estar en dos zonas a la vez
+  const seen = new Map<string, string>();
+  const zonesOf = (p: any) => ([
+    ['hand', p.hand ?? []], ['abilityDeck', p.abilityDeck ?? []],
+    ['wearPile', p.wearPile ?? []], ['persistentCards', p.persistentCards ?? []],
+  ] as const);
+  for (const [pid, p] of Object.entries(post.players as Record<string, any>)) {
+    for (const [zone, cards] of zonesOf(p)) {
+      for (const c of cards) {
+        const prev = seen.get(c.instanceId);
+        if (prev) failures.push(`${label}: ${c.instanceId} duplicado (${prev} y ${pid}.${zone})`);
+        else seen.set(c.instanceId, `${pid}.${zone}`);
+      }
+    }
+    // Recursos no negativos
+    for (const res of ['coins', 'glory', 'wounds'] as const) {
+      if ((p[res] ?? 0) < 0) failures.push(`${label}: ${pid}.${res}=${p[res]} < 0`);
+    }
+    if ((p.wounds ?? 0) > (p.maxWounds ?? Infinity) + 1) {
+      failures.push(`${label}: ${pid} heridas ${p.wounds} > max ${p.maxWounds}`);
+    }
+  }
+  for (const e of post.battlefield ?? []) {
+    if (e.wounds < 0) failures.push(`${label}: ${e.instanceId} heridas < 0`);
+  }
+}
+
 for (const def of catalog.cards) {
   test(`replay-safe ${def.id} — fold del eventLog reproduce el estado bit a bit`, async () => {
     const failures: string[] = [];
@@ -1498,6 +1539,8 @@ for (const def of catalog.cards) {
     if (!r.json.accepted) failures.push(`comando canónico rechazado: ${r.json.reason}`);
     await http.drainChoices(roomId, events);
     await checkReplay(roomId, state, events, failures, def.id);
+    const post = await http.fullState(roomId);
+    checkInvariants(post, failures, def.id);
     await del(roomId);
     assert.deepEqual(failures, [], failures.join('\n'));
   });

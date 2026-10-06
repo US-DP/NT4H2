@@ -1,0 +1,470 @@
+/**
+ * Fidelidad literal — una aserción por cláusula del texto impreso.
+ *
+ * server-cards.test.ts cubre «la carta se puede jugar» y
+ * server-effects.test.ts cubre «el tipo de efecto funciona»; esta suite
+ * audita que cada cláusula del texto de la carta (altText, verificado
+ * contra los PNG de apps/mobile/assets/cards) se cumple al pie de la
+ * letra: segundas cláusulas, exclusión del lanzador, límites de uso
+ * («una vez / dos veces por partida») y casos negativos.
+ */
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import type { Server } from 'node:http';
+import {
+  bootServer, makeHttp, catalog, roomIdFor, inst, enemyFromDef,
+  moveFromDeck, buildStateFor, resetInstSeq, type Http,
+} from './test-harness.js';
+import type { CardInstance, GameState } from '@nt4h/schema';
+
+let server: Server;
+let http: Http;
+
+before(async () => {
+  ({ server } = await bootServer());
+  http = makeHttp(`http://127.0.0.1:${(server.address() as any).port}`);
+});
+after(() => server.close());
+
+const send = (...a: Parameters<Http['send']>) => http.send(...a);
+const drainChoices = (...a: Parameters<Http['drainChoices']>) => http.drainChoices(...a);
+const del = (...a: Parameters<Http['del']>) => http.del(...a);
+
+/** Estado base para una carta, con la carta en mano de p1. */
+async function seededPlay(cardId: string, tweak?: (s: GameState) => void) {
+  resetInstSeq();
+  const def = catalog.byId.get(cardId)!;
+  const { state, rng } = buildStateFor(def);
+  const card = moveFromDeck(state, 'p1', cardId);
+  tweak?.(state);
+  const roomId = roomIdFor(cardId, '-clause');
+  await http.restore(roomId, state, rng);
+  return { roomId, card, state };
+}
+
+/** Estado base con `heroId` como héroe de p1 y `uses` usos restantes. */
+async function seededHero(heroId: string, uses: number, suffix: string, tweak?: (s: GameState) => void) {
+  resetInstSeq();
+  const def = catalog.byId.get(heroId)!;
+  const { state, rng } = buildStateFor(def);
+  state.players.p1 = {
+    ...state.players.p1, heroId,
+    heroUsesRemaining: uses, heroMaxUses: uses,
+  };
+  tweak?.(state);
+  const roomId = roomIdFor(heroId, suffix);
+  await http.restore(roomId, state, rng);
+  return { roomId, state, rng };
+}
+
+const deckCount = (st: GameState, pid: string) =>
+  (st.players as any)[pid].abilityDeck.length;
+const handCount = (st: GameState, pid: string) =>
+  (st.players as any)[pid].hand.length;
+const findCard = (cards: CardInstance[], defId: string) =>
+  cards.find(c => c.definitionId === defId);
+
+// ---------------------------------------------------------------------------
+// Segundas/terceras cláusulas del texto impreso
+// ---------------------------------------------------------------------------
+
+test('«Voz de Aliento»: todos recuperan 2 — Y roba 1 — Y gana 1 Gloria', async () => {
+  const { roomId, card } = await seededPlay('warrior.voice-of-encouragement', (s) => {
+    // p2 necesita ≥2 cartas en desgaste para que «recupera 2» sea observable
+    s.players.p2.wearPile = [
+      inst('warrior.sword-strike', 'p2', 'WEAR_PILE', 'Espadazo'),
+      inst('warrior.step-back', 'p2', 'WEAR_PILE', 'Paso Atrás'),
+    ];
+  });
+  const before = await http.fullState(roomId);
+  const r = await send(roomId, 'p1', { type: 'PLAY_CARD', cardInstanceId: card.instanceId });
+  assert.equal(r.status, 200);
+  const events = [...(r.json.events ?? [])];
+  await drainChoices(roomId, events);
+  const st = await http.fullState(roomId);
+  for (const pid of ['p1', 'p2']) {
+    const recovered = events.filter(e =>
+      e.type === 'CARDS_RECOVERED' && e.playerId === pid);
+    const total = recovered.reduce((n, e) => n + (e.count ?? e.cardIds?.length ?? 0), 0);
+    assert.equal(total, 2, `${pid} debe recuperar 2 cartas`);
+  }
+  // Desgaste p1: 3 iniciales −2 recuperadas +1 la carta jugada = 2
+  assert.equal(
+    st.players.p1.wearPile.length,
+    (before.players.p1 as any).wearPile.length - 1,
+    'desgaste p1: −2 recuperadas +1 carta jugada');
+  const drawn = events.filter(e => e.type === 'CARDS_DRAWN' && e.playerId === 'p1');
+  assert.equal(drawn.reduce((n, e) => n + (e.count ?? e.cardIds?.length ?? 0), 0), 1,
+    'cláusula «Roba 1 carta»');
+  const glory = events.find(e => e.type === 'GLORY_GAINED' && e.playerId === 'p1');
+  assert.equal(glory?.amount, 1, 'cláusula «ganas 1 ficha de Gloria»');
+  await del(roomId);
+});
+
+test('«Recoger Flechas»: solo recupera «Disparo Rápido», baraja el mazo y da 1 Moneda', async () => {
+  const { roomId, card } = await seededPlay('explorer.collect-arrows', (s) => {
+    // Desgaste controlado: un Disparo Rápido + una carta ajena que NO debe moverse
+    s.players.p1.wearPile = [
+      inst('explorer.rapid-shot', 'p1', 'WEAR_PILE', 'Disparo Rápido'),
+      inst('explorer.precise-shot', 'p1', 'WEAR_PILE', 'Disparo Certero'),
+    ];
+  });
+  const coinsBefore = (await http.fullState(roomId)).players.p1.coins;
+  const r = await send(roomId, 'p1', { type: 'PLAY_CARD', cardInstanceId: card.instanceId });
+  assert.equal(r.status, 200);
+  const events = [...(r.json.events ?? [])];
+  await drainChoices(roomId, events);
+  const st = await http.fullState(roomId);
+  // El Disparo Rápido sale del desgaste al fondo del mazo
+  assert.ok(findCard(st.players.p1.abilityDeck, 'explorer.rapid-shot'),
+    '«Disparo Rápido» debe volver al mazo de Habilidad');
+  assert.ok(!findCard(st.players.p1.wearPile, 'explorer.rapid-shot'),
+    '«Disparo Rápido» sale del desgaste');
+  // La carta ajena permanece en el desgaste (filtro por nombre literal)
+  assert.ok(findCard(st.players.p1.wearPile, 'explorer.precise-shot'),
+    'carta que no es «Disparo Rápido» NO se recupera');
+  assert.ok(events.some(e => e.type === 'DECK_SHUFFLED'),
+    'cláusula «Baraja el Mazo de Habilidades»');
+  assert.equal(st.players.p1.coins, coinsBefore + 1, 'cláusula «Ganas 1 Moneda»');
+  await del(roomId);
+});
+
+test('«Disparo Gélido»: el enemigo queda inerte — Y «Roba 1 carta»', async () => {
+  const { roomId, card } = await seededPlay('mage.ice-shot');
+  const before = await http.fullState(roomId);
+  const target = before.battlefield[0].instanceId;
+  const r = await send(roomId, 'p1', {
+    type: 'PLAY_CARD', cardInstanceId: card.instanceId, targetEnemyId: target,
+  });
+  assert.equal(r.status, 200);
+  const events = [...(r.json.events ?? [])];
+  await drainChoices(roomId, events);
+  assert.ok(events.some(e => e.type === 'CARDS_DRAWN' && e.playerId === 'p1'),
+    'cláusula «Roba 1 carta»');
+  const st = await http.fullState(roomId);
+  assert.equal(handCount(st, 'p1'), handCount(before, 'p1'), // -1 jugada +1 robada
+    'la mano queda igual: -1 carta jugada +1 robada');
+  await del(roomId);
+});
+
+test('«Torrente de Luz»: el resto recupera 2, el lanzador NO — y gana 1 Gloria', async () => {
+  const { roomId, card } = await seededPlay('mage.light-torrent', (s) => {
+    s.players.p2.wearPile = [
+      inst('warrior.sword-strike', 'p2', 'WEAR_PILE', 'Espadazo'),
+      inst('warrior.step-back', 'p2', 'WEAR_PILE', 'Paso Atrás'),
+    ];
+  });
+  const before = await http.fullState(roomId);
+  // printedAttack 2 → objetivo obligatorio; apuntamos al enemigo medio
+  const target = before.battlefield[1]?.instanceId ?? before.battlefield[0].instanceId;
+  const r = await send(roomId, 'p1', {
+    type: 'PLAY_CARD', cardInstanceId: card.instanceId, targetEnemyId: target,
+  });
+  assert.equal(r.status, 200);
+  assert.ok(r.json.accepted !== false, `rechazada: ${r.json.reason}`);
+  const events = [...(r.json.events ?? [])];
+  await drainChoices(roomId, events);
+  const st = await http.fullState(roomId);
+  // «El resto de héroes»: p2 recupera, p1 NO
+  const p2Recovered = events
+    .filter(e => e.type === 'CARDS_RECOVERED' && e.playerId === 'p2')
+    .reduce((n, e) => n + (e.count ?? e.cardIds?.length ?? 0), 0);
+  assert.equal(p2Recovered, 2, 'p2 (otro héroe) recupera 2');
+  const p1Recovered = events
+    .filter(e => e.type === 'CARDS_RECOVERED' && e.playerId === 'p1')
+    .reduce((n, e) => n + (e.count ?? e.cardIds?.length ?? 0), 0);
+  assert.equal(p1Recovered, 0, '«el resto» excluye al lanzador');
+  assert.equal(st.players.p1.glory, before.players.p1.glory + 1,
+    'cláusula «Ganas 1 ficha de Gloria»');
+  await del(roomId);
+});
+
+test('«Saqueo B»: 1 Moneda por enemigo vivo — Y 1 Punto de Gloria', async () => {
+  const { roomId, card } = await seededPlay('rogue.plunder-b');
+  const before = await http.fullState(roomId);
+  const living = before.battlefield.length;
+  const r = await send(roomId, 'p1', { type: 'PLAY_CARD', cardInstanceId: card.instanceId });
+  assert.equal(r.status, 200);
+  const events = [...(r.json.events ?? [])];
+  await drainChoices(roomId, events);
+  const st = await http.fullState(roomId);
+  assert.equal(st.players.p1.coins, before.players.p1.coins + living,
+    '«1 Moneda por cada enemigo vivo»');
+  assert.equal(st.players.p1.glory, before.players.p1.glory + 1,
+    '«Gana 1 Punto de Gloria»');
+  await del(roomId);
+});
+
+test('«Robar Bolsillos»: roba 1 Moneda a CADA OTRO héroe, nunca a sí mismo', async () => {
+  const { roomId, card } = await seededPlay('rogue.pickpocket');
+  const before = await http.fullState(roomId);
+  const r = await send(roomId, 'p1', { type: 'PLAY_CARD', cardInstanceId: card.instanceId });
+  assert.equal(r.status, 200);
+  const events = [...(r.json.events ?? [])];
+  await drainChoices(roomId, events);
+  const st = await http.fullState(roomId);
+  assert.equal(st.players.p2.coins, before.players.p2.coins - 1,
+    'p2 pierde exactamente 1');
+  assert.equal(st.players.p1.coins, before.players.p1.coins + 1,
+    'p1 gana lo robado (1 con 2 jugadores)');
+  // Conservación: monedas totales inalteradas
+  const tot = (s: GameState) =>
+    Object.values(s.players).reduce((n: number, p: any) => n + p.coins, 0);
+  assert.equal(tot(st), tot(before), 'las monedas se transfieren, no se crean');
+  await del(roomId);
+});
+
+test('«Paso Atrás»: roba exactamente 2 cartas', async () => {
+  const { roomId, card } = await seededPlay('warrior.step-back');
+  const before = await http.fullState(roomId);
+  const r = await send(roomId, 'p1', { type: 'PLAY_CARD', cardInstanceId: card.instanceId });
+  assert.equal(r.status, 200);
+  const events = [...(r.json.events ?? [])];
+  await drainChoices(roomId, events);
+  const st = await http.fullState(roomId);
+  assert.equal(handCount(st, 'p1'), handCount(before, 'p1') + 1, // -1 +2
+    'mano neta +1 (jugó 1, robó 2)');
+  assert.equal(deckCount(st, 'p1'), deckCount(before, 'p1') - 2,
+    'el mazo pierde exactamente 2');
+  await del(roomId);
+});
+
+// «Pierdes 1 carta» — la cláusula de coste en desgaste, por carta
+const LOSE_ONE = [
+  'warrior.brutal-attack', 'warrior.double-slash',
+  'explorer.precise-shot', 'explorer.bullseye',
+  'mage.corrosive-arrow', 'rogue.to-the-heart',
+];
+for (const cardId of LOSE_ONE) {
+  test(`«Pierdes 1 carta» — ${cardId}: el tope del mazo va al Desgaste`, async () => {
+    const { roomId, card } = await seededPlay(cardId, (s) => {
+      // Vulnerabilidad/disparos dirigidos necesitan objetivo legal
+      s.phase = 'PLAYER_ATTACK';
+    });
+    const before = await http.fullState(roomId);
+    const topCard = (before.players.p1 as any).abilityDeck[0];
+    const cmd: Record<string, unknown> = { type: 'PLAY_CARD', cardInstanceId: card.instanceId };
+    const def = catalog.byId.get(cardId)!;
+    if ((def.printedAttack ?? 0) > 0 ||
+        (def.effects as any[])?.some(e =>
+          e.type === 'APPLY_VULNERABILITY' || e.target?.kind === 'SELECTED_ENEMY')) {
+      cmd.targetEnemyId = before.battlefield[1].instanceId; // no el débil, no matar
+    }
+    const r = await send(roomId, 'p1', cmd);
+    assert.equal(r.status, 200, `${cardId} rechazado: ${JSON.stringify(r.json)}`);
+    const events = [...(r.json.events ?? [])];
+    await drainChoices(roomId, events);
+    const st = await http.fullState(roomId);
+    // Oráculo literal: la carta que estaba en el tope pasa al Desgaste.
+    // (No se cuenta el desgaste total: cartas con END_ATTACK pueden sumar
+    //  más pérdidas por el ataque de la Horda en el mismo comando.)
+    const lostTop = st.players.p1.wearPile.some(
+      c => c.instanceId === topCard.instanceId);
+    assert.ok(lostTop,
+      `la carta perdida debe ser el tope (${topCard.definitionId}/${topCard.instanceId})`);
+    assert.equal(deckCount(st, 'p1'), deckCount(before, 'p1') - 1,
+      '«Pierdes 1 carta»: el mazo pierde exactamente 1');
+    await del(roomId);
+  });
+}
+
+// «Previenes 2 puntos de Daño» — dos cartas con la misma cláusula.
+// Se juegan en PLAYER_ATTACK y luego END_ATTACK dispara la Horda: el
+// HORDE_ATTACKED total debe ser el daño bruto del campo menos 2.
+const hordeTotal = (bf: any[]) =>
+  bf.reduce((n, e) => n + Math.max(0, (e.baseFortitude ?? 0) - (e.wounds ?? 0)) *
+    (e.damageDisabled ? 0 : 1), 0);
+
+for (const cardId of ['explorer.companion-wolf', 'rogue.in-the-shadows']) {
+  test(`«Previenes 2» — ${cardId}: el daño de la Horda baja en 2`, async () => {
+    const { roomId, card } = await seededPlay(cardId, (s) => {
+      // p1 como pícaro sería Feldon (mitiga a la mitad las cartas perdidas)
+      // y p2 (Valèrys) interceptaría el daño: ambas pericias se neutralizan
+      // para observar solo la prevención impresa.
+      s.players.p1 = { ...s.players.p1, heroId: 'hero.neddia' as any, heroUsesRemaining: 0 };
+      s.players.p2 = { ...s.players.p2, heroId: 'hero.aranel' as any, heroUsesRemaining: 0 };
+    });
+    const before = await http.fullState(roomId);
+    // Tienen printedAttack: requieren objetivo (D441). Apuntamos al
+    // enemigo medio para no derrotarlo y distorsionar el daño de la Horda.
+    const target = before.battlefield[1]?.instanceId ?? before.battlefield[0].instanceId;
+    const r = await send(roomId, 'p1', {
+      type: 'PLAY_CARD', cardInstanceId: card.instanceId, targetEnemyId: target,
+    });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.ok(r.json.accepted !== false, `${cardId} rechazada: ${r.json.reason}`);
+    const events = [...(r.json.events ?? [])];
+    await drainChoices(roomId, events);
+    // Oráculo post-jugada: el daño bruto lo fija el campo actual
+    const mid = await http.fullState(roomId);
+    const raw = hordeTotal(mid.battlefield as any[]);
+    const atk = await send(roomId, 'p1', { type: 'END_ATTACK' });
+    events.push(...(atk.json.events ?? []));
+    await drainChoices(roomId, events);
+    const hordeEv = events.find(e => e.type === 'HORDE_ATTACKED' && e.playerId === 'p1');
+    assert.ok(hordeEv, 'sin HORDE_ATTACKED tras END_ATTACK');
+    assert.equal(hordeEv.totalDamage, Math.max(0, raw - 2),
+      `daño de Horda ${hordeEv.totalDamage} ≠ ${raw}-2`);
+    await del(roomId);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Límites de uso impresos — «Una vez por partida» / «Dos veces por partida»
+// ---------------------------------------------------------------------------
+
+// Pericias ACTIVAS: se ejercita USE_HERO_ABILITY tantas veces como dice la
+// carta; la siguiente activación debe ser rechazada por el runner.
+const ACTIVE_USES: { hero: string; uses: number }[] = [
+  { hero: 'hero.aranel', uses: 1 },   // «1 vez por partida»
+  { hero: 'hero.neddia', uses: 1 },   // «Una vez por partida»
+  { hero: 'hero.idril', uses: 2 },    // «Dos veces por partida»
+];
+
+for (const { hero, uses } of ACTIVE_USES) {
+  test(`límite impreso — ${hero}: ${uses} uso(s) aceptados, el siguiente rechazado`, async () => {
+    const { roomId } = await seededHero(hero, uses, '-active-uses');
+    for (let i = 0; i < uses; i++) {
+      const r = await send(roomId, 'p1', { type: 'USE_HERO_ABILITY' });
+      assert.equal(r.status, 200);
+      assert.ok(r.json.accepted, `${hero}: uso ${i + 1}/${uses} rechazado: ${r.json.reason}`);
+      const events = [...(r.json.events ?? [])];
+      await drainChoices(roomId, events);
+      const st = await http.fullState(roomId);
+      assert.equal((st.players.p1 as any).heroUsesRemaining, uses - i - 1,
+        `uso ${i + 1} no decrementó heroUsesRemaining`);
+    }
+    const r = await send(roomId, 'p1', { type: 'USE_HERO_ABILITY' });
+    assert.ok(r.json.accepted === false || r.status !== 200,
+      `${hero}: el uso ${uses + 1} debe ser rechazado («${uses === 1 ? 'una' : 'dos'} veces por partida»)`);
+    await del(roomId);
+  });
+}
+
+// Pericias PASIVAS/REACTIVAS: el texto las dispara en un evento concreto
+// (Horda, Evasión, Disparo Rápido). Aquí se verifica que una elección
+// residual con 0 usos restantes NO consume ni emite HERO_ABILITY_USED —
+// el guarda `heroUsesRemaining > 0` debe interceptarla.
+const REACTIVE: { hero: string; uses: number; choiceId: string }[] = [
+  { hero: 'hero.feldon', uses: 1, choiceId: 'feldon-reduce-1-p1' },
+  { hero: 'hero.valerys', uses: 2, choiceId: 'reaction-p1-stale' },
+  { hero: 'hero.lisavette', uses: 2, choiceId: 'reaction-p1-stale' },
+  { hero: 'hero.beleth-il', uses: 2, choiceId: 'beleth-recover-p1-stale' },
+  { hero: 'hero.taheral', uses: 1, choiceId: 'reaction-p1-stale' },
+];
+
+for (const { hero, uses, choiceId } of REACTIVE) {
+  test(`límite impreso — ${hero}: con 0 usos una elección residual no dispara nada`, async () => {
+    const { roomId } = await seededHero(hero, uses, '-reactive-uses', (s) => {
+      s.players.p1 = { ...s.players.p1, heroUsesRemaining: 0 };
+      s.phase = 'HORDE_ATTACK';
+      s.pendingChoices = [{
+        choiceId, playerId: 'p1', type: 'CONFIRM',
+        prompt: 'opt-in residual', options: ['yes', 'no'],
+        minSelections: 1, maxSelections: 1,
+      } as any];
+    });
+    const r = await send(roomId, 'p1', {
+      type: 'RESOLVE_CHOICE', choiceId, selectedIds: ['yes'],
+    });
+    const events = [...(r.json.events ?? [])];
+    await drainChoices(roomId, events);
+    assert.ok(!events.some(e => e.type === 'HERO_ABILITY_USED' && e.playerId === 'p1'),
+      `${hero}: HERO_ABILITY_USED emitido con 0 usos restantes`);
+    const st = await http.fullState(roomId);
+    assert.equal((st.players.p1 as any).heroUsesRemaining, 0,
+      'heroUsesRemaining no debe bajar de 0');
+    await del(roomId);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Casos negativos / condiciones de disparo literales
+// ---------------------------------------------------------------------------
+
+test('Feldon — «Al resolver el Ataque de la Horda»: sin daño entrante no hay oferta', async () => {
+  // Campo sin enemigos: daño entrante = 0 → no hay decisión que ofrecer.
+  const { roomId } = await seededHero('hero.feldon', 1, '-nodmg', (s) => {
+    s.battlefield = [];
+    s.phase = 'HORDE_ATTACK';
+  });
+  const events: any[] = [];
+  await drainChoices(roomId, events);
+  const st = await http.fullState(roomId);
+  const offered = (st.pendingChoices ?? []).some((c: any) =>
+    String(c.choiceId).includes('feldon'));
+  assert.ok(!offered, 'con 0 daño entrante no debe ofrecerse el opt-in de Feldon');
+  assert.equal((st.players.p1 as any).heroUsesRemaining, 1,
+    'el uso no se consume sin oferta');
+  await del(roomId);
+});
+
+test('Feldon — cuando el daño de la Horda cae sobre OTRO héroe, Feldon no interviene', async () => {
+  // Texto impreso: «tan solo pierde la mitad de cartas…» — el sujeto es el
+  // propio Feldon; el opt-in solo debe ofrecerse al héroe que recibe daño.
+  const { roomId } = await seededHero('hero.feldon', 1, '-other', (s) => {
+    // p2 (Valèrys) es el jugador activo y recibe el daño de la Horda
+    s.activePlayerId = 'p2';
+    s.phase = 'HORDE_ATTACK';
+    s.players.p2 = { ...s.players.p2, heroUsesRemaining: 0 }; // sin reactivas
+  });
+  const events: any[] = [];
+  await drainChoices(roomId, events);
+  const st = await http.fullState(roomId);
+  const feldonOffered = (st.pendingChoices ?? []).some((c: any) =>
+    c.playerId === 'p1' && String(c.choiceId).includes('feldon'));
+  assert.ok(!feldonOffered,
+    'Feldon no debe recibir opt-in cuando el daño cae sobre otro héroe');
+  assert.equal((st.players.p1 as any).heroUsesRemaining, 1,
+    'la pericia de Feldon no se consume por daño ajeno');
+  await del(roomId);
+});
+
+test('«Lluvia de Flechas» — empate a menos Heridas → el jugador elige (SELECT_HERO)', async () => {
+  const { roomId, card } = await seededPlay('explorer.arrow-volley', (s) => {
+    // p1 y p2 con las mismas heridas → empate literal «tú eliges»
+    s.players.p1 = { ...s.players.p1, wounds: 2 };
+    s.players.p2 = { ...s.players.p2, wounds: 2 };
+  });
+  const r = await send(roomId, 'p1', { type: 'PLAY_CARD', cardInstanceId: card.instanceId });
+  assert.equal(r.status, 200);
+  const events = [...(r.json.events ?? [])];
+  await drainChoices(roomId, events);
+  const offeredHeroChoice = events.some(e =>
+    e.type === 'PENDING_CHOICE_CREATED' && e.choice?.type === 'SELECT_HERO');
+  assert.ok(offeredHeroChoice,
+    '«en caso de empate, tú eliges» exige SELECT_HERO');
+  await del(roomId);
+});
+
+test('«Golpe de Bastón» — mismo enemigo dos veces: 1º daño 1, 2º daño 2 (literal)', async () => {
+  // Objetivo robusto sembrado: debe sobrevivir al primer golpe (1) para
+  // que el segundo (2) también pueda resolverse contra él.
+  const { roomId, state } = await seededPlay('mage.staff-strike', (s) => {
+    const extra = inst('mage.staff-strike', 'p1', 'HAND', 'Golpe de Bastón');
+    s.players.p1.hand = [...s.players.p1.hand, extra];
+    // Hueste normal con fortaleza alta (Gurdrug costaría 1 carta por golpe)
+    const tank = enemyFromDef('horde.001', 'lit-tank');
+    (tank as any).baseFortitude = 10;
+    s.battlefield = [tank];
+  });
+  const strikes = state.players.p1.hand.filter(
+    c => c.definitionId === 'mage.staff-strike').slice(0, 2);
+  assert.equal(strikes.length, 2, 'se necesitan 2 copias en mano');
+  const amounts: number[] = [];
+  for (const c of strikes) {
+    const r = await send(roomId, 'p1', {
+      type: 'PLAY_CARD', cardInstanceId: c.instanceId, targetEnemyId: 'lit-tank',
+    });
+    assert.ok(r.json.accepted !== false, `jugada rechazada: ${r.json.reason}`);
+    const events = [...(r.json.events ?? [])];
+    await drainChoices(roomId, events);
+    const dmg = events
+      .filter(e => e.type === 'DAMAGE_DEALT' && e.targetId === 'lit-tank')
+      .reduce((n, e) => n + (e.amount ?? 0), 0);
+    amounts.push(dmg);
+  }
+  assert.deepEqual(amounts, [1, 2],
+    'primera=1, segunda contra el MISMO enemigo=2 (texto literal)');
+  await del(roomId);
+});

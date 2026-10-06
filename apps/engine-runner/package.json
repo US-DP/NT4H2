@@ -8,7 +8,7 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "tsx server.ts",
     "lint": "tsc --noEmit",
-    "test": "tsx --test server.test.ts server-negative.test.ts server-positive.test.ts server-audit.test.ts server-effects.test.ts server-cards.test.ts",
+    "test": "tsx --test server.test.ts server-negative.test.ts server-positive.test.ts server-audit.test.ts server-effects.test.ts server-clauses.test.ts server-cards.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -188,7 +188,7 @@
       "destinationAfterUse": "WEAR_PILE",
       "verificationStatus": "CONFIRMED",
       "_peritiaText": "En cualquier momento, puedes mirar las 3 cartas inferiores del mazo de la Horda y devolverlas en el orden que prefieras.",
-      "altText": "En cualquier momento, mira las 3 primeras cartas del mazo de la Horda y reordénalas. Dos veces por partida.",
+      "altText": "En cualquier momento, puedes mirar las 3 cartas inferiores del mazo de la Horda y devolverlas en el orden que prefieras. Dos veces por partida.",
       "heroClass": "EXPLORER",
       "penaltyCapabilities": [
         {
@@ -214,7 +214,7 @@
       "verificationStatus": "CONFIRMED",
       "_peritiaText": "Al resolver el Ataque de la Horda, tan solo pierde la mitad de cartas (redondeando hacia abajo) de las indicadas por el Dano.",
       "_peritiaTrigger": "HORDE_ATTACK",
-      "altText": "Mientras otro Héroe se enfrenta a la Horda, tan solo pierde la mitad de cartas (redondeando hacia abajo) de las indicadas por el Daño.",
+      "altText": "Al resolver el Ataque de la Horda, tan solo pierde la mitad de cartas (redondeando hacia abajo) de las indicadas por el Daño. Una vez por partida.",
       "heroClass": "ROGUE",
       "penaltyCapabilities": [
         {
