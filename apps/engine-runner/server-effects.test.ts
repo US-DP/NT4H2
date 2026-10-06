@@ -91,6 +91,20 @@ async function checkReplay(roomId: string, pre: GameState, events: any[], failur
   if (hLive !== hReplay) {
     failures.push(`${label}: replay diverge (live ${hLive} ≠ fold ${hReplay})`);
   }
+  // Equivalencia de snapshot (event sourcing): foldar la primera mitad y
+  // CONTINUAR desde ese estado debe dar el mismo resultado que el fold
+  // completo. Es la garantía de que un snapshot a mitad de partida + los
+  // eventos restantes reproduce el final bit a bit — la base de la
+  // persistencia por snapshots del runner (ENGINE_RUNNER_STATE_DIR).
+  const mid = Math.floor(events.length / 2);
+  if (mid > 0 && mid < events.length) {
+    const midState = replayEvents(JSON.parse(JSON.stringify(pre)), events.slice(0, mid));
+    const continued = replayEvents(midState, events.slice(mid));
+    const hSplit = stateHash(norm(continued));
+    if (hSplit !== hLive) {
+      failures.push(`${label}: snapshot+continuación diverge (live ${hLive} ≠ split ${hSplit})`);
+    }
+  }
 }
 
 /** Ejecuta un comando, drena elecciones y verifica replay. */

@@ -730,3 +730,191 @@ test('«Lisavette»: tras usar el Escudo roba hasta 2 Monedas del héroe protegi
   assert.equal(st.players.p1.coins, p1CoinsBefore - 2);
   await del(roomId);
 });
+
+// ===========================================================================
+// Reglamento oficial (manual-no-time-for-heroes-es.pdf, Holocubierta 2015)
+// — mecánicas que no son texto de carta: daño de la Horda, Evasión,
+//   Restablecimiento y reposición de enemigos. Cada test cita su página.
+// ===========================================================================
+
+test('Reglamento p.5 — ejemplo literal del Ataque de la Horda: Σ(fortaleza − heridas)', async () => {
+  // «3 por la fortaleza del primero + 4 por la del segundo − 2 heridas
+  // que tiene este último» → el héroe pierde exactamente 5 cartas.
+  const def = catalog.byId.get('warrior.sword-strike')!;
+  const { state, rng } = buildStateFor(def);
+  // Héroes sin opt-ins defensivos: Neddia en ambos lados (0 usos) — si
+  // no, Valèrys (p2) interceptaría el daño a p1 y falsearía el total.
+  for (const pid of ['p1', 'p2'] as const) {
+    state.players[pid] = {
+      ...state.players[pid],
+      heroId: 'hero.neddia', heroUsesRemaining: 0, heroMaxUses: 0,
+    } as any;
+  }
+  const intact = enemyFromDef('horde.006', 'svr-manual-intact');   // fortaleza 3, intacto
+  const wounded = enemyFromDef('horde.013', 'svr-manual-wounded'); // fortaleza 4
+  wounded.wounds = 2;                                            // con 2 heridas
+  state.battlefield = [intact, wounded];
+  const deckBefore = state.players.p1.abilityDeck.length;
+  const wearBefore = state.players.p1.wearPile.length;
+
+  const roomId = roomIdFor('manual-horde-example', '-clause');
+  await http.restore(roomId, state, rng);
+  const events: any[] = [];
+  const r = await send(roomId, 'p1', { type: 'END_ATTACK' });
+  events.push(...(r.json.events ?? []));
+  await drainChoices(roomId, events);
+
+  const attack = events.find(e => e.type === 'HORDE_ATTACKED');
+  assert.ok(attack, 'sin HORDE_ATTACKED');
+  assert.equal(attack.totalDamage, 5, '3 + (4−2) = 5 — literal del manual');
+  const st = await http.fullState(roomId);
+  assert.equal(
+    deckBefore - st.players.p1.abilityDeck.length, 5,
+    '«descartará el número indicado de cartas de la parte superior de su mazo»',
+  );
+  assert.equal(st.players.p1.wearPile.length - wearBefore, 5, 'caen al Desgaste');
+  await del(roomId);
+});
+
+test('Reglamento p.5 — Evasión: mínimo 2 descartes, sin daño, ficha una vez por partida', async () => {
+  const def = catalog.byId.get('warrior.sword-strike')!;
+  // Caso rechazo: 1 sola carta no basta («un mínimo de 2 cartas»)
+  {
+    const { state, rng } = buildStateFor(def);
+    state.phase = 'ATTACK_CHOICE';
+    const roomId = roomIdFor('manual-evasion-1', '-clause');
+    await http.restore(roomId, state, rng);
+    const one = state.players.p1.hand[0];
+    const r = await send(roomId, 'p1', {
+      type: 'EVASION', discardedCardInstanceIds: [one.instanceId],
+    });
+    assert.equal(r.json.accepted, false, 'la Evasión con 1 carta debe rechazarse');
+    await del(roomId);
+  }
+  // Caso ficha gastada: aunque haya cartas suficientes, se rechaza
+  {
+    const { state, rng } = buildStateFor(def);
+    state.phase = 'ATTACK_CHOICE';
+    state.players.p1 = { ...state.players.p1, evasionTokenUsed: true } as any;
+    const roomId = roomIdFor('manual-evasion-token', '-clause');
+    await http.restore(roomId, state, rng);
+    const two = state.players.p1.hand.slice(0, 2).map(c => c.instanceId);
+    const r = await send(roomId, 'p1', { type: 'EVASION', discardedCardInstanceIds: two });
+    assert.equal(r.json.accepted, false, '«descarta su Ficha de Evasión» — solo hay una');
+    await del(roomId);
+  }
+  // Caso válido: 2 descartes, cero daño de la Horda, las cartas van al Desgaste
+  {
+    const { state, rng } = buildStateFor(def);
+    state.phase = 'ATTACK_CHOICE';
+    state.battlefield = [enemyFromDef('horde.006', 'svr-evade-foe')];
+    const roomId = roomIdFor('manual-evasion-ok', '-clause');
+    await http.restore(roomId, state, rng);
+    const two = state.players.p1.hand.slice(0, 2).map(c => c.instanceId);
+    const r = await send(roomId, 'p1', { type: 'EVASION', discardedCardInstanceIds: two });
+    assert.equal(r.json.accepted, true, JSON.stringify(r.json));
+    const events = [...(r.json.events ?? [])];
+    await drainChoices(roomId, events);
+    assert.ok(events.some(e => e.type === 'EVASION_PERFORMED'), 'sin EVASION_PERFORMED');
+    assert.ok(!events.some(e => e.type === 'HORDE_ATTACKED'),
+      '«NO recibirá daño este turno» — no hay Ataque de la Horda');
+    const st = await http.fullState(roomId);
+    for (const id of two) {
+      assert.ok(st.players.p1.wearPile.some(c => c.instanceId === id),
+        'los descartes de la Evasión van a la pila de Desgaste');
+    }
+    assert.equal(st.players.p1.evasionTokenUsed, true, 'la ficha queda gastada');
+    await del(roomId);
+  }
+});
+
+test('Reglamento p.7 — «Recuperar» toma las cartas MÁS ANTIGUAS del Desgaste y las pone al fondo del mazo', async () => {
+  // El manual: «colocando el número de cartas indicado de la parte inferior
+  // de la pila de Desgaste, en la parte inferior del mazo de Habilidades».
+  // wearPile[0] = la primera descartada = fondo de la pila.
+  const oldest = inst('mage.fire-bolt', 'p1', 'WEAR_PILE', 'Bola de Fuego');
+  const second = inst('mage.ice-shot', 'p1', 'WEAR_PILE', 'Disparo Gélido');
+  const { roomId } = await seededPlay('mage.reconstitution', (s) => {
+    s.players.p1 = {
+      ...s.players.p1,
+      wearPile: [
+        oldest, second, // fondo → más antiguas: deben salir estas
+        inst('mage.reconstitution', 'p1', 'WEAR_PILE', 'Reconstitución'),
+        inst('mage.staff-strike', 'p1', 'WEAR_PILE', 'Bastón'),
+      ],
+    };
+  });
+  const r = await send(roomId, 'p1', { type: 'PLAY_CARD', cardInstanceId: (await http.fullState(roomId)).players.p1.hand.find(c => c.definitionId === 'mage.reconstitution')!.instanceId });
+  assert.equal(r.json.accepted, true, JSON.stringify(r.json));
+  const events = [...(r.json.events ?? [])];
+  const recovered = events.find(e => e.type === 'CARDS_RECOVERED' && e.playerId === 'p1');
+  assert.ok(recovered, 'sin CARDS_RECOVERED');
+  assert.equal(recovered.count, 2, '«Recuperas 2 cartas»');
+  assert.deepEqual(recovered.cardInstanceIds, [oldest.instanceId, second.instanceId],
+    'se recuperan las 2 más antiguas (fondo del Desgaste), no las recientes');
+  const st = await http.fullState(roomId);
+  const deck = st.players.p1.abilityDeck.map(c => c.instanceId);
+  assert.deepEqual(deck.slice(-2), [oldest.instanceId, second.instanceId],
+    'y quedan en la parte inferior del mazo, en el mismo orden');
+  await del(roomId);
+});
+
+for (const [standing, expected] of [[0, 3], [1, 1], [3, 0]] as const) {
+  test(`Reglamento p.6 — Restablecimiento: ${standing} enemigos en mesa → ${expected} nuevos desde el fondo`, async () => {
+    const def = catalog.byId.get('warrior.sword-strike')!;
+    const { state, rng } = buildStateFor(def);
+    // Mazo de Horda conocido: [A,B,C,D,E] con E en el fondo — la reposición
+    // debe sacar primero E, luego D, luego C («parte inferior del mazo»).
+    const stock = ['horde.001', 'horde.002', 'horde.003', 'horde.004', 'horde.005']
+      .map((id, i) => inst(id, 'horde', 'HORDE_DECK', `H${i}`));
+    state.hordeDeck = stock;
+    state.battlefield = ['horde.006', 'horde.007', 'horde.008']
+      .slice(0, standing)
+      .map((id, i) => enemyFromDef(id, `svr-restock-${i}`));
+    state.phase = 'MARKET';
+
+    const roomId = roomIdFor(`manual-restock-${standing}`, '-clause');
+    await http.restore(roomId, state, rng);
+    const events: any[] = [];
+    const r = await send(roomId, 'p1', { type: 'END_TURN' });
+    events.push(...(r.json.events ?? []));
+    await drainChoices(roomId, events);
+
+    const revealed = events.filter(e => e.type === 'ENEMY_REVEALED');
+    assert.equal(revealed.length, expected,
+      `${standing} enemigos → roba ${expected} (0→3, 1-2→1, 3→0)`);
+    // El fondo del mazo (último elemento) sale primero
+    const expectedOrder = [...stock].reverse().slice(0, expected).map(c => c.instanceId);
+    assert.deepEqual(revealed.map(e => e.enemyInstanceId), expectedOrder,
+      'los nuevos enemigos salen del FONDO del mazo de la Horda');
+    await del(roomId);
+  });
+}
+
+test('Reglamento p.6 — Restablecimiento: la mano se repone hasta tener exactamente 4 cartas', async () => {
+  // «roba de su mazo de Habilidades o se descarta en su pila de Desgaste,
+  // hasta tener 4 cartas en su mano». Dirección robar: Evasión gasta 2
+  // (mano 4→2), Restablecimiento repone a 4.
+  const def = catalog.byId.get('warrior.sword-strike')!;
+  const { state, rng } = buildStateFor(def);
+  state.phase = 'ATTACK_CHOICE';
+  const roomId = roomIdFor('manual-hand4-draw', '-clause');
+  await http.restore(roomId, state, rng);
+  const two = state.players.p1.hand.slice(0, 2).map(c => c.instanceId);
+  const ev = await send(roomId, 'p1', { type: 'EVASION', discardedCardInstanceIds: two });
+  assert.equal(ev.json.accepted, true, JSON.stringify(ev.json));
+  let st = await http.fullState(roomId);
+  assert.equal(st.players.p1.hand.length, 2, 'la Evasión deja la mano en 2');
+  const events: any[] = [];
+  const et = await send(roomId, 'p1', { type: 'END_TURN' });
+  events.push(...(et.json.events ?? []));
+  await drainChoices(roomId, events);
+  st = await http.fullState(roomId);
+  assert.equal(st.players.p1.hand.length, 4,
+    'tras Restablecimiento la mano vuelve a 4 («roba… hasta tener 4»)');
+  const drawn = events
+    .filter(e => e.type === 'CARDS_DRAWN' && e.playerId === 'p1')
+    .reduce((n, e) => n + (e.count ?? e.cardInstanceIds?.length ?? 0), 0);
+  assert.equal(drawn, 2, 'roba exactamente las 2 que faltaban');
+  await del(roomId);
+});
