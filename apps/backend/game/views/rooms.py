@@ -581,6 +581,18 @@ def join_room(request, room_id):
         return JsonResponse({"error": "Join failed"}, status=500)
     session = result
 
+    # Con el socket del lobby abierto el polling está desactivado: sin
+    # este broadcast el roster de los demás clientes no crecía nunca.
+    # Rejoins también llegan aquí (el cliente hace upsert por playerId).
+    _broadcast_room(
+        room_id,
+        {
+            "type": "room.player_joined",
+            "player": player.to_dict(),
+            "roomRevision": session.revision,
+        },
+    )
+
     return JsonResponse(
         {
             "joined": True,
@@ -847,6 +859,14 @@ def start_room(request, room_id):
 
     with transaction.atomic():
         session = _for_update(session)
+        # Escritura temprana: en WAL la transacción nace como lectura con
+        # un snapshot; si el primer write se aplaza hasta session.save
+        # (después de la llamada HTTP al runner), cualquier escritura
+        # concurrente —p. ej. mark_player_connected de un socket— convierte
+        # el UPDATE en SQLITE_BUSY_SNAPSHOT, que el busy_timeout NO
+        # reintenta («database is locked»). Escribir primero toma el write
+        # lock y convierte el conflicto en un BUSY reintentable.
+        _bump_revision(session)
         if session.host_id != player_id:
             return JsonResponse({"error": "Only the host can start"}, status=403)
         if session.status != "WAITING":
@@ -873,8 +893,13 @@ def start_room(request, room_id):
 
         session.status = "PLAYING"
         session.save(update_fields=["status", "updated_at"])
-        _bump_revision(session)
 
+    # Con el socket del lobby abierto el polling está apagado: sin este
+    # broadcast el invitado nunca ve PLAYING ni el botón «Ir a la partida».
+    _broadcast_room(
+        room_id,
+        {"type": "room.started", "roomRevision": session.revision},
+    )
     return JsonResponse({"started": True, "room": session.to_dict()})
 
 

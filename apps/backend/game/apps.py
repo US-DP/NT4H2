@@ -11,7 +11,13 @@ class GameConfig(AppConfig):
     name = "game"
 
     def ready(self) -> None:
-        """Resetea is_connected/connection_count al arrancar.
+        """Activa WAL en SQLite y resetea la presencia residual.
+
+        SQLite + Channels: con journal DELETE un lector con transacción
+        abierta (SHARED) bloquea el COMMIT del escritor (EXCLUSIVE) y el
+        escritor bloquea el upgrade del lector → «database is locked»
+        inmediato (p. ej. start_room vs consumers). WAL separa lectores
+        de escritores; el busy_timeout de settings cubre escritor↔escritor.
 
         Si el proceso muere de golpe (kill, crash, deploy), disconnect()
         nunca corre y los flags quedan en True para siempre: las salas
@@ -19,6 +25,14 @@ class GameConfig(AppConfig):
         transfer_host posterior creía que el host seguía vivo. Al
         arrancar no hay sockets abiertos — todo contador es residual.
         """
+        from django.db.backends.signals import connection_created
+
+        def _enable_wal(sender, connection, **kwargs):
+            if connection.vendor == "sqlite":
+                with connection.cursor() as cur:
+                    cur.execute("PRAGMA journal_mode=WAL")
+
+        connection_created.connect(_enable_wal, dispatch_uid="game.sqlite_wal")
         # Solo en el proceso servidor real: ni autoreload (RUN_MAIN
         # ausente = proceso watcher), ni migraciones/tests/shell, que no
         # levantan sockets y tocar la tabla puede antes de que exista.

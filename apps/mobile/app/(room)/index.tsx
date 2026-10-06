@@ -335,7 +335,7 @@ export default function RoomScreen() {
     ws.onclose = () => setSocketOpen(false);
     ws.onmessage = (event) => {
       lastMsgAtRef.current = Date.now();
-      let msg: { type?: string; sender?: string; text?: string; timestamp?: number; command?: string; playerId?: string; ready?: boolean; roomRevision?: number; revision?: number };
+      let msg: { type?: string; sender?: string; text?: string; timestamp?: number; command?: string; playerId?: string; ready?: boolean; roomRevision?: number; revision?: number; player?: RoomInfo['players'][number] };
       try {
         msg = JSON.parse(event.data);
       } catch {
@@ -382,6 +382,18 @@ export default function RoomScreen() {
             p.playerId === msg.playerId ? { ...p, connected } : p
           ),
         } : prev);
+      } else if (msg.type === 'room.player_joined') {
+        // Alta en vivo: con el socket abierto el polling está apagado —
+        // sin este handler el roster de los demás nunca crecía.
+        const joined = msg.player;
+        if (joined?.playerId) {
+          setRoom((prev) => prev ? {
+            ...prev,
+            players: prev.players.some((p) => p.playerId === joined.playerId)
+              ? prev.players.map((p) => (p.playerId === joined.playerId ? { ...p, ...joined } : p))
+              : [...prev.players, joined],
+          } : prev);
+        }
       } else if (msg.type === 'room.player_ready') {
         // Broadcast del backend: actualizar el flag sin esperar al polling
         setRoom((prev) => prev ? {
@@ -440,6 +452,11 @@ export default function RoomScreen() {
           ...prev,
           kickedIds: (prev.kickedIds ?? []).filter((k) => k !== msg.playerId),
         } : prev);
+      } else if (msg.type === 'room.started') {
+        // El host inició la partida: con el socket abierto el polling
+        // está apagado — sin este handler el invitado nunca ve PLAYING
+        // ni el botón «Ir a la partida».
+        setRoom((prev) => prev ? { ...prev, status: 'PLAYING' } : prev);
       } else if (msg.type === 'room.closed') {
         // El anfitrión cerró la sala — desmontar y limpiar sesión
         setRoom(null);

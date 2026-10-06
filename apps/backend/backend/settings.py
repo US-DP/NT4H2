@@ -85,6 +85,11 @@ DATABASES: dict[str, dict[str, str | int]] = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": os.environ.get("SQLITE_PATH", str(BASE_DIR / "db.sqlite3")),
+        # SQLite serializa escritores: con Channels los consumers ASGI y
+        # las vistas sync escriben a la vez (eventos + session.save) y el
+        # busy_timeout por defecto (~0 s) devolvía «database is locked»
+        # en operaciones legítimas como start_room. 30 s de espera.
+        "OPTIONS": {"timeout": 30},
     }
 }
 
@@ -114,6 +119,12 @@ _cors_env = os.environ.get("CORS_ALLOWED_ORIGINS", "")
 CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_env.split(",") if o.strip()]
 if DEBUG and not CORS_ALLOWED_ORIGINS:
     CORS_ALLOWED_ORIGINS = ["http://localhost:8081", "http://127.0.0.1:8081"]
+# X-Player-Token viaja por header en /rooms/<id>/?playerId= y /engine/:
+# sin declararlo aquí el preflight del navegador lo rechaza y la
+# proyección por jugador jamás llega al cliente web.
+from corsheaders.defaults import default_headers  # noqa: E402
+
+CORS_ALLOW_HEADERS = (*default_headers, "x-player-token")
 
 # D437: capa de canales — Redis en producción (REDIS_URL), memoria en dev.
 REDIS_URL = os.environ.get("REDIS_URL", "")

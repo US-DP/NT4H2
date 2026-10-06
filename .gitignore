@@ -50,5 +50,7 @@ Thumbs.db
 db.sqlite3
 *.sqlite3
 db.sqlite3.bak
+db.sqlite3-shm
+db.sqlite3-wal
 media/
 staticfiles/
