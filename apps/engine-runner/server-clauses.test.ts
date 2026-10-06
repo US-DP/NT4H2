@@ -11,11 +11,12 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Server } from 'node:http';
+import { applyScenarioEffects, onTurnStart } from '@nt4h/engine';
 import {
   bootServer, makeHttp, catalog, roomIdFor, inst, enemyFromDef,
   moveFromDeck, buildStateFor, resetInstSeq, type Http,
 } from './test-harness.js';
-import type { CardInstance, GameState } from '@nt4h/schema';
+import type { CardDefinition, CardInstance, GameState } from '@nt4h/schema';
 
 let server: Server;
 let http: Http;
@@ -466,5 +467,266 @@ test('«Golpe de Bastón» — mismo enemigo dos veces: 1º daño 1, 2º daño 2
   }
   assert.deepEqual(amounts, [1, 2],
     'primera=1, segunda contra el MISMO enemigo=2 (texto literal)');
+  await del(roomId);
+});
+
+// ---------------------------------------------------------------------------
+// Escenarios — cláusulas del texto impreso
+// ---------------------------------------------------------------------------
+
+/** Estado con escenario activo (auras aplicadas) y oferta de inicio de turno. */
+async function seededScenario(scenarioId: string, tweak?: (s: GameState) => void) {
+  resetInstSeq();
+  const def = catalog.byId.get(scenarioId)! as CardDefinition;
+  const { state: base, rng } = buildStateFor(def);
+  const applied = applyScenarioEffects(base, scenarioId, catalog).state;
+  applied.scenario = inst(scenarioId, 'scenario', 'SCENARIO_ACTIVE', def.name) as any;
+  tweak?.(applied);
+  const offer = onTurnStart(applied, scenarioId);
+  if (offer) {
+    applied.pendingChoices = [{
+      choiceId: `turn-start-${applied.turnNumber}`, playerId: 'p1', type: 'CONFIRM',
+      prompt: offer.prompt, options: [], minSelections: 0, maxSelections: 1,
+    } as any];
+  }
+  const roomId = roomIdFor(scenarioId, '-clause');
+  await http.restore(roomId, applied, rng);
+  return { roomId };
+}
+
+test('«Pantano Umbrío»: +1 Moneda solo si el enemigo vencido tiene Fortaleza ≥3', async () => {
+  // Rama positiva: horde.008 (fortaleza ≥3)
+  const { roomId: r1 } = await seededScenario('scenario.umbrous-swamp', (s) => {
+    const e = enemyFromDef('horde.008', 'swamp-strong');
+    e.wounds = Math.max(0, (catalog.byId.get('horde.008')!.printedFortitude ?? 3) - 1);
+    s.battlefield = [e];
+    moveFromDeck(s, 'p1', 'warrior.sword-strike');
+  });
+  const b1 = await http.fullState(r1);
+  const strike1 = b1.players.p1.hand.find(c => c.definitionId === 'warrior.sword-strike')!;
+  const rStrong = await send(r1, 'p1', { type: 'PLAY_CARD', cardInstanceId: strike1.instanceId, targetEnemyId: 'swamp-strong' });
+  const evs1 = [...(rStrong.json.events ?? [])];
+  await drainChoices(r1, evs1);
+  assert.ok(evs1.some(e => e.type === 'ENEMY_DEFEATED'), 'el enemigo fuerte debe caer');
+  // El escenario emite su propio COINS_GAINED; el botín viaja en
+  // ENEMY_DEFEATED.reward (lo paga el reducer).
+  const scenarioCoin = evs1
+    .filter(e => e.type === 'COINS_GAINED' && e.playerId === 'p1')
+    .reduce((n, e) => n + (e.amount ?? 0), 0);
+  assert.equal(scenarioCoin, 1,
+    `fort≥3 → exactamente +1 del escenario (got ${scenarioCoin})`);
+  await del(r1);
+
+  // Rama negativa: horde.001 (fortaleza 2 <3) → sin la moneda del escenario
+  const { roomId: r2 } = await seededScenario('scenario.umbrous-swamp', (s) => {
+    const e = enemyFromDef('horde.001', 'swamp-weak');
+    e.wounds = Math.max(0, (catalog.byId.get('horde.001')!.printedFortitude ?? 2) - 1);
+    s.battlefield = [e];
+    moveFromDeck(s, 'p1', 'warrior.sword-strike');
+  });
+  const b2 = await http.fullState(r2);
+  const strike2 = b2.players.p1.hand.find(c => c.definitionId === 'warrior.sword-strike')!;
+  const rWeak = await send(r2, 'p1', { type: 'PLAY_CARD', cardInstanceId: strike2.instanceId, targetEnemyId: 'swamp-weak' });
+  const evs2 = [...(rWeak.json.events ?? [])];
+  await drainChoices(r2, evs2);
+  const defeated2 = evs2.find(e => e.type === 'ENEMY_DEFEATED');
+  assert.ok(defeated2, 'el enemigo débil debe caer');
+  // Botín intacto en el evento de derrota, pero SIN la moneda del escenario
+  const lootWeak = catalog.byId.get('horde.001')!.reward?.coins ?? 0;
+  assert.equal(defeated2.reward?.coins, lootWeak,
+    'el botín del enemigo se cobra igual');
+  const gained = evs2
+    .filter(e => e.type === 'COINS_GAINED' && e.playerId === 'p1')
+    .reduce((n, e) => n + (e.amount ?? 0), 0);
+  assert.equal(gained, 0,
+    `fort<3 → sin +1 del escenario (got ${gained})`);
+  await del(r2);
+});
+
+test('«Puerto de Eque»: descarta 1, roba 1 — y CADA enemigo +1 de Daño', async () => {
+  const { roomId } = await seededScenario('scenario.eque-port');
+  const events: any[] = [];
+  await drainChoices(roomId, events); // acepta la oferta + elige carta a descartar
+  // «A cambio, cada enemigo causa 1 más de Daño»: un modificador por enemigo
+  const dmgMods = events.filter(e =>
+    e.type === 'MODIFIER_ADDED' && e.layer === 'ENEMY_OUTGOING_DAMAGE' && e.amount === 1);
+  assert.equal(dmgMods.length, 3, 'un +1 de daño por cada enemigo del campo');
+  const discards = events.filter(e => e.type === 'CARD_MOVED' && e.from === 'HAND' && e.to === 'WEAR_PILE');
+  assert.equal(discards.length, 1, 'exactamente 1 carta descartada');
+  const draws = events.filter(e => e.type === 'CARDS_DRAWN' && e.playerId === 'p1');
+  assert.equal(draws.reduce((n, e) => n + (e.count ?? 0), 0), 1, 'roba exactamente 1');
+  await del(roomId);
+});
+
+test('«Yacimientos de Jade»: descarta TODA la mano, roba 4, gana 3 Monedas', async () => {
+  const { roomId } = await seededScenario('scenario.jade-deposits');
+  const before = await http.fullState(roomId);
+  const handBefore = (before.players.p1 as any).hand.length;
+  const coinsBefore = before.players.p1.coins;
+  const events: any[] = [];
+  await drainChoices(roomId, events);
+  const st = await http.fullState(roomId);
+  const handIds = new Set(before.players.p1.hand.map(c => c.instanceId));
+  const discarded = events.filter(e =>
+    e.type === 'CARD_MOVED' && e.from === 'HAND' && handIds.has(e.cardInstanceId));
+  assert.equal(discarded.length, handBefore, '«descarta toda su mano» literal');
+  const drawn = events.filter(e => e.type === 'CARDS_DRAWN' && e.playerId === 'p1');
+  assert.equal(drawn.reduce((n, e) => n + (e.count ?? 0), 0), 4, 'roba 4 nuevas');
+  assert.equal(st.players.p1.coins, coinsBefore + 3, 'consigue 3 Monedas');
+  await del(roomId);
+});
+
+test('«Lodazal de Kalern»: el enemigo devuelto al fondo pierde sus Heridas', async () => {
+  const { roomId } = await seededScenario('scenario.kalern-mud', (s) => {
+    const wounded = enemyFromDef('horde.001', 'kalern-wounded');
+    wounded.wounds = 1; // «si tuviera Heridas, se descartan»
+    s.battlefield = [wounded, enemyFromDef('horde.002', 'kalern-extra')];
+  });
+  const deckBefore = (await http.fullState(roomId)).hordeDeck.length;
+  const events: any[] = [];
+  await drainChoices(roomId, events); // SELECT_ENEMY del jugador a la izquierda
+  const st = await http.fullState(roomId);
+  const returned = st.hordeDeck[st.hordeDeck.length - 1];
+  assert.equal(returned?.instanceId, 'kalern-wounded',
+    'el elegido va al FONDO del mazo de la Horda');
+  assert.equal(st.hordeDeck.length, deckBefore + 1);
+  // La carta devuelta es una CardInstance fresca: sin heridas residuales
+  assert.ok(!(returned as any)?.wounds, 'las Heridas se descartan al volver al mazo');
+  await del(roomId);
+});
+
+test('«Yermo de Cemenmar»: a lo sumo 3 Monedas en total y máx. 2 al mismo héroe', async () => {
+  const { roomId } = await seededScenario('scenario.cemenmar-wastes', (s) => {
+    s.phase = 'ATTACK_CHOICE';
+    s.players.p2 = { ...s.players.p2, coins: 5 };
+  });
+  const discards = (await http.fullState(roomId)).players.p1.hand
+    .slice(0, 2).map(c => c.instanceId);
+  const r = await send(roomId, 'p1', { type: 'EVASION', discardedCardInstanceIds: discards });
+  assert.equal(r.status, 200);
+  const events = [...(r.json.events ?? [])];
+  const st = await http.fullState(roomId);
+  const stealChoice = (st.pendingChoices ?? []).find(
+    (c: any) => c.type === 'SELECT_COINS_TO_STEAL');
+  assert.ok(stealChoice, 'sin elección de robo tras evadir en Cemenmar');
+  assert.ok(stealChoice.maxSelections <= 3,
+    `«hasta 3 Monedas en total»: maxSelections=${stealChoice.maxSelections}`);
+  // «máximo 2 al mismo jugador»: ningún héroe puede aportar más de 2 opciones
+  const perHero: Record<string, number> = {};
+  for (const opt of stealChoice.options) {
+    const pid = String(opt).split('#')[0];
+    perHero[pid] = (perHero[pid] ?? 0) + 1;
+  }
+  for (const [pid, n] of Object.entries(perHero)) {
+    assert.ok(n <= 2, `${pid} ofrece ${n} monedas — «máximo 2 al mismo jugador»`);
+  }
+  await drainChoices(roomId, events);
+  await del(roomId);
+});
+
+test('«Lágrimas de Aradiel»: paga 1 Gloria al dueño, su carta se juega y él roba 1', async () => {
+  const { roomId } = await seededScenario('scenario.tears-of-aradiel', (s) => {
+    s.players.p1 = { ...s.players.p1, glory: 3 };
+  });
+  const before = await http.fullState(roomId);
+  const p2HandIds = new Set(before.players.p2.hand.map(c => c.instanceId));
+  const events: any[] = [];
+  await drainChoices(roomId, events); // CONFIRM oferta → SELECT_HERO (elige p2)
+  assert.ok(events.some(e => e.type === 'GLORY_LOST' && e.playerId === 'p1' && e.amount === 1),
+    '«deberá entregarle 1 ficha de Gloria» — p1 la paga');
+  assert.ok(events.some(e => e.type === 'GLORY_GAINED' && e.playerId === 'p2' && e.amount === 1),
+    'el propietario recibe esa Gloria');
+  // «se descarta de la mano del propietario»: una carta de p2 sale de su mano
+  const st = await http.fullState(roomId);
+  const p2HandAfter = st.players.p2.hand.map(c => c.instanceId);
+  const leftP2Hand = [...p2HandIds].filter(id => !p2HandAfter.includes(id));
+  assert.ok(leftP2Hand.length >= 1, 'la carta prestada salió de la mano de p2');
+  // «este roba una nueva»: p2 roba 1
+  assert.ok(events.some(e => e.type === 'CARDS_DRAWN' && e.playerId === 'p2'),
+    'el propietario roba una carta nueva');
+  await del(roomId);
+});
+
+test('«Portal de Ulthar»: la vía Monedas cobra exactamente 2', async () => {
+  const { roomId } = await seededScenario('scenario.ulthar-portal', (s) => {
+    s.players.p1 = { ...s.players.p1, glory: 5, coins: 10, trophies: ['lit-trophy'] };
+    s.eventLog = [{
+      type: 'ENEMY_DEFEATED', enemyInstanceId: 'lit-trophy',
+      enemyDefinitionId: 'horde.001', playerId: 'p1', seq: 1,
+    } as any];
+  });
+  const events: any[] = [];
+  // Drenar la oferta → elección de pago: elegir 'coins' explícitamente
+  for (let i = 0; i < 30; i++) {
+    const st = await http.fullState(roomId);
+    const pc = (st.pendingChoices ?? [])[0] as any;
+    if (!pc) break;
+    if (String(pc.choiceId).startsWith('turn-start-')) {
+      const r = await send(roomId, pc.playerId, { type: 'ACCEPT_TURN_START_EFFECT', accepted: true });
+      events.push(...(r.json.events ?? []));
+      continue;
+    }
+    const selectedIds = (pc.type === 'CONFIRM' && (pc.options ?? []).includes('coins'))
+      ? ['coins']
+      : (pc.options ?? []).slice(0, Math.max(1, pc.minSelections ?? 1));
+    const r = await send(roomId, pc.playerId, { type: 'RESOLVE_CHOICE', choiceId: pc.choiceId, selectedIds });
+    events.push(...(r.json.events ?? []));
+  }
+  assert.ok(events.some(e => e.type === 'COINS_LOST' && e.playerId === 'p1' && e.amount === 2),
+    '«2 Monedas» — la vía monedas cobra exactamente 2');
+  assert.ok(!events.some(e => e.type === 'GLORY_LOST' && e.playerId === 'p1'),
+    'pagando con monedas no se cobra Gloria');
+  assert.ok(events.some(e => e.type === 'ENEMY_RETURNED_TO_HORDE'),
+    'la Hueste vuelve al fondo del mazo');
+  assert.ok(events.some(e => e.type === 'ENEMY_REVEALED'),
+    'el trofeo entra en juego');
+  await del(roomId);
+});
+
+// ---------------------------------------------------------------------------
+// Pericias — cláusulas de cantidad del texto impreso
+// ---------------------------------------------------------------------------
+
+test('«Taheral»: 2 Monedas por CADA carta descartada en la Evasión', async () => {
+  const { roomId } = await seededHero('hero.taheral', 1, '-coins', (s) => {
+    s.phase = 'ATTACK_CHOICE';
+  });
+  const before = await http.fullState(roomId);
+  const discards = before.players.p1.hand.slice(0, 2).map(c => c.instanceId);
+  const coinsBefore = before.players.p1.coins;
+  const r = await send(roomId, 'p1', { type: 'EVASION', discardedCardInstanceIds: discards });
+  const events = [...(r.json.events ?? [])];
+  await drainChoices(roomId, events); // acepta el CONFIRM opt-in
+  const st = await http.fullState(roomId);
+  const gained = events
+    .filter(e => e.type === 'COINS_GAINED' && e.playerId === 'p1')
+    .reduce((n, e) => n + (e.amount ?? 0), 0);
+  assert.equal(gained, 4, '«dos Monedas por cada carta» — 2 descartes → 4');
+  assert.equal(st.players.p1.coins, coinsBefore + 4);
+  await del(roomId);
+});
+
+test('«Lisavette»: tras usar el Escudo roba hasta 2 Monedas del héroe protegido', async () => {
+  const { roomId } = await seededHero('hero.lisavette', 2, '-steal', (s) => {
+    // Lisavette es p2 (la pericia actúa sobre «otro héroe» = p1 enfrentado)
+    s.players.p1 = { ...s.players.p1, heroId: 'hero.aranel' as any, heroUsesRemaining: 0, coins: 5 };
+    s.players.p2 = { ...s.players.p2, heroId: 'hero.lisavette' as any, heroUsesRemaining: 2 };
+    moveFromDeck(s, 'p2', 'warrior.shield');
+    s.phase = 'HORDE_ATTACK';
+    s.pendingChoices = [{
+      choiceId: 'reaction-p2-lis', playerId: 'p2', type: 'REACTION_WINDOW',
+      prompt: 'Reacción', options: ['USE_ABILITY', 'PASS'],
+      minSelections: 1, maxSelections: 1,
+    } as any];
+  });
+  const p1CoinsBefore = (await http.fullState(roomId)).players.p1.coins;
+  const events: any[] = [];
+  await drainChoices(roomId, events);
+  const stolen = events.find(e =>
+    e.type === 'COINS_STOLEN' && e.toPlayerId === 'p2');
+  assert.ok(stolen, '«Roba hasta 2 Monedas de ese Héroe» — sin COINS_STOLEN');
+  assert.equal(stolen.amount, 2, 'p1 tiene 5 ≥ 2 → roba el máximo 2');
+  const st = await http.fullState(roomId);
+  assert.equal(st.players.p1.coins, p1CoinsBefore - 2);
   await del(roomId);
 });
