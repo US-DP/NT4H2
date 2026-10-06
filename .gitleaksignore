@@ -1,0 +1,4 @@
+# Falsos positivos: 'nt4h.collection.v1' es la clave de localStorage de la
+# colección de cartas del usuario, no un secreto (regla generic-api-key).
+4df522c063c88892aaf1a9fe83b5ca39f786b65b:apps/mobile/tests/collection.test.ts:generic-api-key:17
+0a118a1593e61b810c9ce015c27ce57fb81d8d41:apps/mobile/store/collectionStore.ts:generic-api-key:13

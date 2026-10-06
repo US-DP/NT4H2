@@ -6,3 +6,36 @@ allowBuilds:
   esbuild: true
 patchedDependencies:
   expo-image@2.0.7: patches/expo-image@2.0.7.patch
+# Dependencias transitivas con CVE parcheada (audit npm --prod).
+overrides:
+  proxy-addr: ^2.0.8
+  shell-quote: ^1.11.0
+  "@xmldom/xmldom@<0.9.0": ^0.8.15
+  postcss: ^8.5.18
+  undici: ^6.28.1
+  fast-uri: ^3.1.7
+  source-map-js: ^1.2.2
+  compression: ^1.8.2
+  brace-expansion@<2.0.0: ^1.1.20
+  brace-expansion@2.x: ^2.1.6
+# Advisories sin parche aplicable, justificadas:
+# - node-forge GHSA-86w9-cpqp-85rv: no existe release corregida (dev: cert.
+#   autofirmado del dev-server).
+# - braces GHSA-vfj7-8cjw-p6xm: no existe release corregida (DoS por patrón
+#   glob anidado; solo tooling de build/test).
+# - linkify-it GHSA-22p9-wv53-3rq4 / GHSA-v245-v573-v5vm: la línea 2.x no
+#   tiene backport y markdown-it@10 (react-native-markdown-display) fija
+#   ^2; el markdown renderizado es contenido propio, no de usuarios.
+# - image-size GHSA-5p2g-fcmc-qvqq / GHSA-w3rx-r6r6-pgpr: el único parche es
+#   la v2, que elimina `getImageSize` y rompe metro@0.82 (verificado: el
+#   bundle falla con «getImageSize is not a function»). DoS al parsear
+#   JXL/HEIF/ICNS con un asset malicioso; solo alcanza al bundler de
+#   desarrollo y requiere que el atacante aporte el fichero.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-86w9-cpqp-85rv
+    - GHSA-vfj7-8cjw-p6xm
+    - GHSA-22p9-wv53-3rq4
+    - GHSA-v245-v573-v5vm
+    - GHSA-5p2g-fcmc-qvqq
+    - GHSA-w3rx-r6r6-pgpr
