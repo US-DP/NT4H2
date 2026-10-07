@@ -87,7 +87,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: engine-runner-image
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           body: ${{ steps.notes.outputs.notes }}
           files: |
