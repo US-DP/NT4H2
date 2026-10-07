@@ -55,3 +55,16 @@ jobs:
       - name: pip-audit
         working-directory: apps/backend
         run: pip-audit -r requirements.txt
+
+  # Solo en PR: compara el grafo de dependencias del PR contra main y
+  # bloquea si el diff introduce paquetes con CVEs conocidas.
+  dependency-review:
+    name: 'Revisión de dependencias (PR)'
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      # SHA pineado (v5.0.0) — mismo pin que en vnc-remote-secure
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
