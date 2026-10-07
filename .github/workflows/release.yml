@@ -49,7 +49,7 @@ jobs:
           format: cyclonedx-json
           output-file: sbom-runner.cdx.json
       - name: Attestation SLSA del tarball
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: runner-image.tar
       - uses: actions/upload-artifact@v7
