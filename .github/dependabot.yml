@@ -12,6 +12,10 @@ updates:
     open-pull-requests-limit: 10
     groups:
       pnpm-workspace:
+        # Solo minor+patch agrupados: un major de toolchain (typescript 7,
+        # eslint 10, expo SDK…) envenenaba los ~60 bumps sanos del grupo —
+        # los majors llegan como PRs individuales evaluables (PR #18).
+        update-types: ["minor", "patch"]
         patterns: ["*"]
 
   - package-ecosystem: pip
