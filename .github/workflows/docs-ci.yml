@@ -10,6 +10,8 @@ on:
     branches: [main]
     paths:
       - "**/*.md"
+      - ".github/workflows/docs-ci.yml"
+      - ".markdownlint-cli2.jsonc"
 
 permissions:
   contents: read
