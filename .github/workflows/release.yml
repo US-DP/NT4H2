@@ -43,7 +43,7 @@ jobs:
       - name: Checksum del artefacto
         run: sha256sum runner-image.tar > runner-image.tar.sha256
       - name: SBOM (CycloneDX) de la imagen
-        uses: anchore/sbom-action@v0.17.3
+        uses: anchore/sbom-action@v0.24.3
         with:
           image: nt4h-engine-runner:${{ github.ref_name }}
           format: cyclonedx-json
