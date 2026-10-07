@@ -11,7 +11,7 @@ jobs:
     name: 'Gate pre-release'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v4
         with:
@@ -37,7 +37,7 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: docker build -f apps/engine-runner/Dockerfile -t "nt4h-engine-runner:${GITHUB_REF_NAME#v}" .
       - run: docker save "nt4h-engine-runner:${GITHUB_REF_NAME#v}" -o runner-image.tar
       - name: Checksum del artefacto
@@ -68,7 +68,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Extraer sección del changelog
         id: notes
         env:
