@@ -11,10 +11,11 @@
 #   docker run -p 3001:3001 -e ENGINE_RUNNER_TOKEN=$TOKEN nt4h-engine-runner
 # Persistencia opt-in de salas:
 #   docker run -e ENGINE_RUNNER_STATE_DIR=/state -v nt4h-state:/state ...
-FROM node:22-alpine
+FROM node:26-alpine
 
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@11.24.0 --activate
+# Node ≥25 ya no empaqueta corepack — pnpm se instala por npm con versión pineada.
+RUN npm install -g pnpm@11.24.0
 
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 # patchedDependencies (expo-image) referencia ./patches — sin este COPY
