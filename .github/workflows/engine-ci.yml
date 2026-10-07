@@ -41,6 +41,24 @@ jobs:
       - run: pnpm --filter @nt4h/catalog typecheck
 
   # ===========================================================================
+  # Capa 0b: ESLint (seguridad + calidad TS — ratchet de warnings en scripts)
+  # ===========================================================================
+  lint:
+    name: 'Capa 0b: ESLint engine/catalog/schema'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nt4h/engine lint
+      - run: pnpm --filter @nt4h/schema lint
+      - run: pnpm --filter @nt4h/catalog lint
+
+  # ===========================================================================
   # Capa 1: Validacion estatica del catalogo (Nivel 0)
   # ===========================================================================
   catalog-validation:

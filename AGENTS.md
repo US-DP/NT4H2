@@ -69,7 +69,7 @@ bandit -r .                 # Análisis de seguridad Python
 cd packages/engine && pnpm lint    # 290 warnings (object-injection falsos positivos, any, prefer-const)
 
 # UI (TypeScript + ESLint + react-hooks + security)
-cd apps/mobile && pnpm lint                    # eslint . (0 errores, 261 warnings; --max-warnings 270)
+cd apps/mobile && pnpm lint                    # eslint . (0 errores, 288 warnings; --max-warnings 300)
 
 # Catalog / Schema (TypeScript + ESLint)
 cd packages/catalog && pnpm eslint src   # 1 warning

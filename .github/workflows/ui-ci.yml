@@ -37,6 +37,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nt4h/mobile typecheck
+      # ESLint con ratchet de warnings (--max-warnings en el script lint)
+      - run: pnpm --filter @nt4h/mobile lint
 
   # ===========================================================================
   # Capa 1: Pruebas de componentes (Nivel 9)

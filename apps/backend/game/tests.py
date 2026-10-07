@@ -80,8 +80,11 @@ class RoomApiTests(TestCase):
 
     @patch("game.views.EngineRunnerClient.create_room")
     def test_create_room_csrf_exempt(self, mock_create):
-        """Regresión: create_room debe ser csrf_exempt — el SPA no envía
-        token CSRF y sin el decorador la creación de salas devolvía 403."""
+        """Regresión: create_room debe ser csrf_exempt.
+
+        El SPA no envía token CSRF y sin el decorador la creación de
+        salas devolvía 403.
+        """
         from django.test import Client
 
         mock_create.return_value = {"ok": True}
@@ -1159,9 +1162,11 @@ class RoomApiTests(TestCase):
     @patch("game.views.EngineRunnerClient.execute_command")
     @patch("game.views.EngineRunnerClient.get_state")
     def test_skip_turn_game_ended_closes_room(self, mock_state, mock_cmd):
-        """Auditoría: si el END_TURN forzado termina la partida, el path
-        REST debe cerrar la sesión igual que el consumer WS — antes el
-        GAME_ENDED se descartaba y la sala quedaba PLAYING zombi."""
+        """Auditoría: el path REST cierra la sesión si END_TURN termina la partida.
+
+        Debe cerrar la sesión igual que el consumer WS — antes el
+        GAME_ENDED se descartaba y la sala quedaba PLAYING zombi.
+        """
         mock_state.return_value = {"state": {"activePlayerId": "p2"}}
         mock_cmd.return_value = {
             "accepted": True,
@@ -1191,9 +1196,10 @@ class RoomApiTests(TestCase):
     @patch("game.views.EngineRunnerClient.execute_command")
     @patch("game.views.EngineRunnerClient.get_state")
     def test_skip_turn_too_early_rejected(self, mock_state, mock_cmd):
-        """El host no puede cortar el turno de un jugador conectado que
-        acaba de empezar — el endpoint es anti-AFK, no un botón de
-        veto universal."""
+        """El host no puede cortar el turno de un jugador conectado que acaba de empezar.
+
+        El endpoint es anti-AFK, no un botón de veto universal.
+        """
         from django.utils import timezone
 
         mock_state.return_value = {"state": {"activePlayerId": "p2"}}
@@ -1220,8 +1226,10 @@ class RoomApiTests(TestCase):
     @patch("game.views.EngineRunnerClient.execute_command")
     @patch("game.views.EngineRunnerClient.get_state")
     def test_skip_turn_allowed_when_afk_disconnected(self, mock_state, mock_cmd):
-        """Un jugador desconectado puede ser saltado sin esperar el
-        umbral — es exactamente el caso AFK que el endpoint cubre."""
+        """Un jugador desconectado puede ser saltado sin esperar el umbral.
+
+        Es exactamente el caso AFK que el endpoint cubre.
+        """
         from django.utils import timezone
 
         mock_state.return_value = {"state": {"activePlayerId": "p2"}}
@@ -2034,7 +2042,7 @@ class PersistencePhase2Tests(TestCase):
         async_to_sync(flow)()
 
     def test_ws_command_cid_control_chars_rejected(self):
-        """Un cid con caracteres de control (\\n, \\t) se rechaza en backend.
+        r"""Un cid con caracteres de control (\\n, \\t) se rechaza en backend.
 
         R-1 simétrico: el runner valida SAFE_ID; el consumer debe rechazar
         antes de persistir — un cid con \\n en GameEvent.cid sería
@@ -2203,8 +2211,10 @@ class MetricsTests(TestCase):
 
 @override_settings(ROOM_RATE_LIMIT_MAX=10000)
 class RestoreDrillTests(TestCase):
-    """Simulacro de recuperación: restaurar una sala PLAYING desde su
-    último GameSnapshot (cubre B-10 — 409 del runner = éxito)."""
+    """Simulacro de recuperación: restaurar una sala PLAYING.
+
+    Restaura desde su último GameSnapshot (cubre B-10 — 409 del runner = éxito).
+    """
 
     def setUp(self):
         from django.core.cache import cache

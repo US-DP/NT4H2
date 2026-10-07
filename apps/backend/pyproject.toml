@@ -5,7 +5,16 @@
 # (INSTALLED_APPS, MIDDLEWARE, motor de BD, channel layer) no son
 # importables desde el código y deptry las marcaría como DEP002.
 [tool.deptry.per_rule_ignores]
+# En requirements.txt deptry no dispone de metadatos de wheel para mapear
+# módulo↔paquete: los imports reales salen como DEP001 y los paquetes como DEP002.
+DEP001 = [
+  "rest_framework",          # djangorestframework
+  "rest_framework_simplejwt",# djangorestframework-simplejwt
+  "corsheaders",             # django-cors-headers
+]
 DEP002 = [
+  "djangorestframework",          # importado como rest_framework
+  "djangorestframework-simplejwt",# importado como rest_framework_simplejwt
   "django-cors-headers",  # corsheaders en INSTALLED_APPS + CorsMiddleware
   "daphne",               # INSTALLED_APPS + servidor ASGI de entrada
   "channels-redis",       # CHANNEL_LAYERS backend 'channels_redis'
@@ -17,7 +26,7 @@ DEP002 = [
 # imports: sin esta lista vulture reporta solo falsos positivos.
 [tool.vulture]
 min_confidence = 60
-paths = ["backend", "game"]
+paths = ["backend", "game", "accounts"]
 exclude = ["migrations/", "db.sqlite3", ".pytest_cache/", ".ruff_cache/", ".turbo/"]
 ignore_names = [
   # settings.py
@@ -29,14 +38,16 @@ ignore_names = [
   "SECURE_CONTENT_TYPE_NOSNIFF", "SECURE_HSTS_SECONDS",
   "SECURE_HSTS_INCLUDE_SUBDOMAINS", "X_FRAME_OPTIONS", "SECURE_PROXY_SSL_HEADER",
   "SECURE_SSL_REDIRECT", "SECRET_KEY", "DATABASES", "AUTH_PASSWORD_VALIDATORS",
-  "LOGGING", "CACHES", "DEBUG",
+  "LOGGING", "CACHES", "DEBUG", "CORS_ALLOW_HEADERS",
   # urls.py / routing.py
   "urlpatterns", "websocket_urlpatterns", "app_name",
   # models.py / admin.py / serializers.py / migraciones / views
   "Meta", "list_display", "list_filter", "search_fields", "ordering",
   "app_label", "unique_together", "indexes", "constraints",
   "model", "fields", "read_only_fields", "csrf_exempt",
-  "initial", "dependencies", "operations",
+  "initial", "dependencies", "operations", "id",
+  # API de señales Django (sender llega por el dispatcher, no por imports)
+  "sender",
   # Django model fields (assignments leídos por el ORM, no por Python)
   "*_id", "card_type", "hero_class", "printed_*", "effects", "token_hash",
   "connection_count", "state",

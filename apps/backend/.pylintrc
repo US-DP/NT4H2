@@ -30,6 +30,15 @@ disable =
     # tests.py crece con la suite; dividir clases de test no aporta
     too-many-lines,
     too-many-public-methods,
+    # consumers/vistas REST con guard clauses: los umbrales de complejidad
+    # ya los gobierna scripts/check-complexity.py (WARN >800 / FAIL >1500 LOC)
+    too-many-instance-attributes,
+    too-many-boolean-expressions,
+    too-many-branches,
+    too-many-statements,
+    # imports locales deliberados en tests (django.test.Client/patch por test)
+    reimported,
+    redefined-outer-name,
 
 [FORMAT]
 max-line-length = 120

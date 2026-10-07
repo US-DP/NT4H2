@@ -26,6 +26,11 @@ jobs:
       - name: Ruff
         working-directory: apps/backend
         run: ruff check .
+      - name: Migraciones pendientes
+        working-directory: apps/backend
+        env:
+          DJANGO_DEBUG: 'true'
+        run: python manage.py makemigrations --check --dry-run
       - name: Tests Django
         working-directory: apps/backend
         env:
@@ -33,3 +38,41 @@ jobs:
           # los tests usan SQLite en memoria y Channels in-memory.
           DJANGO_DEBUG: 'true'
         run: python manage.py test
+
+  # Los gates de calidad documentados en AGENTS.md (black/flake8/pydocstyle/
+  # pylint/deptry/vulture/bandit) — antes no corrían en CI y el código driftó.
+  quality:
+    name: 'Calidad: format + lint + seguridad'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Dependencias
+        run: >-
+          pip install -r apps/backend/requirements.txt
+          black flake8 pydocstyle pylint pylint-django deptry vulture bandit
+      - name: Black (formato)
+        working-directory: apps/backend
+        run: black --check -l 120 .
+      - name: Flake8
+        working-directory: apps/backend
+        run: flake8 .
+      - name: Pydocstyle (Google convention)
+        working-directory: apps/backend
+        run: pydocstyle --convention=google --add-ignore=D1 .
+      - name: Pylint
+        working-directory: apps/backend
+        env:
+          DJANGO_DEBUG: 'true'
+        run: pylint backend game accounts
+      - name: Deptry (dependencias)
+        working-directory: apps/backend
+        run: deptry .
+      - name: Vulture (código muerto)
+        working-directory: apps/backend
+        run: vulture backend game accounts
+      - name: Bandit (SAST)
+        working-directory: apps/backend
+        run: bandit -r -ll backend game accounts

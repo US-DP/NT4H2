@@ -65,4 +65,15 @@ export default tseslint.config(
       react: { version: '19.0' },
     },
   },
+  {
+    // Specs E2E de Playwright: `new RegExp(esc(nombre))` usa un helper de
+    // escape, `({}, testInfo)` es el idiom de fixtures y existsSync verifica
+    // el arte de las cartas — las reglas security/* aplican al código app.
+    files: ['e2e/**'],
+    rules: {
+      'security/detect-non-literal-regexp': 'off',
+      'security/detect-non-literal-fs-filename': 'off',
+      'no-empty-pattern': 'off',
+    },
+  },
 );

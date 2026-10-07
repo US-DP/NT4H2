@@ -28,7 +28,7 @@ from ..store import rate_hit as _rate_hit
 
 
 def _get_session(room_id: str) -> GameSession:
-    """GameSession con prefetch de players__user__profile.
+    """Devuelve la GameSession con prefetch de players__user__profile.
 
     ``to_dict()`` lee ``player.user.profile`` por jugador — sin el
     prefetch eran ~2 queries extra por jugador (N+1) en cada respuesta
@@ -90,7 +90,8 @@ def _trusted_proxies() -> set[str]:
     ignora siempre — cualquier cliente podría falsificar su IP de
     rate-limit simplemente enviando la cabecera.
     """
-    global _TRUSTED_PROXIES_CACHE
+    # caché lazy de env: se fija en la primera lectura y ya no cambia
+    global _TRUSTED_PROXIES_CACHE  # pylint: disable=global-statement
     if _TRUSTED_PROXIES_CACHE is None:
         raw = os.environ.get("TRUSTED_PROXY_IPS", "")
         _TRUSTED_PROXIES_CACHE = {ip.strip() for ip in raw.split(",") if ip.strip()}
@@ -453,7 +454,7 @@ def reap_stale_rooms(now=None) -> list[str]:
         # transición va por mark_finished — el status a pelo perdía el
         # evento terminal GAME_ENDED, el snapshot final (replay) y las
         # estadísticas de cuenta de los jugadores.
-        from .engine import mark_finished  # import perezoso: engine ya importa _common
+        from .engine import mark_finished  # pylint: disable=cyclic-import
 
         with transaction.atomic():
             locked = GameSession.objects.select_for_update().get(pk=session.pk)

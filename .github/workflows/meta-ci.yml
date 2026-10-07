@@ -1,0 +1,35 @@
+name: CI - Meta (workflows + YAML)
+
+# Gate de higiene del propio CI: actionlint valida sintaxis/semántica de los
+# workflows (action inexistente, shell inválido, expresiones mal formadas) y
+# yamllint el estilo YAML del repo. Documentados en AGENTS.md — antes no
+# corrían en CI, así que los fallos de workflow solo se descubrían al fallar.
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - '.github/workflows/**'
+      - '.yamllint.yml'
+      - '**/*.yml'
+      - '**/*.yaml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - '.github/workflows/**'
+      - '.yamllint.yml'
+      - '**/*.yml'
+      - '**/*.yaml'
+
+jobs:
+  workflow-lint:
+    name: 'actionlint + yamllint'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: actionlint (viene preinstalado en ubuntu-latest)
+        run: actionlint .github/workflows/*.yml
+      - name: yamllint
+        run: pip install yamllint && yamllint .

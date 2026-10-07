@@ -145,6 +145,7 @@ itGen('partida pasiva hasta FINISHED → SavedGame JSON', () => {
       stateHash: stateHash(state, rng.serialize().state),
     },
   };
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- SAVE_OUT es env del runner de tests
   writeFileSync(
     process.env.SAVE_OUT || '../../tools/game-end-save.json',
     JSON.stringify(saved),

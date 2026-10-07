@@ -127,9 +127,7 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
             # Difundir la presencia DESPUÉS del handshake: sin esto el roster
             # seguía mostrando "Desconectado" al recién conectado. Va tras
             # `connected` para no romper el orden del primer frame.
-            await self.broadcast(
-                {"type": "room.player_connected", "playerId": self.player_id}
-            )
+            await self.broadcast({"type": "room.player_connected", "playerId": self.player_id})
 
     async def disconnect(self, code):
         if getattr(self, "_spectator_counted", False):
@@ -140,9 +138,7 @@ class GameConsumer(AsyncJsonWebsocketConsumer):
             # un close temprano (4403) no debe decrementar ni difundir baja.
             if getattr(self, "_presence_counted", False) and getattr(self, "player_id", None):
                 await self.mark_player_disconnected(self.player_id)
-                await self.broadcast(
-                    {"type": "room.player_disconnected", "playerId": self.player_id}
-                )
+                await self.broadcast({"type": "room.player_disconnected", "playerId": self.player_id})
                 # Si quien se fue era el host y la sala sigue en espera, el
                 # anfitrión pasa al jugador conectado más antiguo.
                 result = await self.transfer_host_if_disconnected(self.player_id)
