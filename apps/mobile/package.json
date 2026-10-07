@@ -52,7 +52,7 @@
     "react-dom": "19.0.0",
     "react-error-boundary": "5.0.0",
     "react-hook-form": "7.54.0",
-    "react-i18next": "15.5.0",
+    "react-i18next": "17.0.15",
     "react-native": "0.79.0",
     "react-native-confetti-cannon": "1.5.2",
     "react-native-gesture-handler": "2.24.0",
