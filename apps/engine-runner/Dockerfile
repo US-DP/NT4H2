@@ -14,7 +14,8 @@
 FROM node:26-alpine
 
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@11.24.0 --activate
+# Node ≥25 ya no empaqueta corepack — pnpm se instala por npm con versión pineada.
+RUN npm install -g pnpm@11.24.0
 
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 # patchedDependencies (expo-image) referencia ./patches — sin este COPY
