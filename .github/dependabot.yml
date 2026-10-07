@@ -17,6 +17,19 @@ updates:
         # los majors llegan como PRs individuales evaluables (PR #18).
         update-types: ["minor", "patch"]
         patterns: ["*"]
+    ignore:
+      # Los paquetes expo-* / react-native* van acoplados a la versión del
+      # Expo SDK (~53): sus majors sueltos instalan APIs de SDKs futuros
+      # y rompen la app en runtime aunque typecheck pase. Se actualizan
+      # juntos en una migración de SDK dedicada.
+      - dependency-name: "expo-*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-native*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@react-native*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@shopify/react-native-skia"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: pip
     directory: /apps/backend
