@@ -31,7 +31,8 @@ jobs:
           python-version: '3.11'
       - name: actionlint (binario pineado)
         run: |
-          curl -fsSL https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz | tar xz actionlint
+          URL=https://github.com/rhysd/actionlint/releases/download/v1.7.12
+          curl -fsSL "$URL/actionlint_1.7.12_linux_amd64.tar.gz" | tar xz actionlint
           ./actionlint .github/workflows/*.yml
       - name: yamllint
         run: pip install yamllint && yamllint .
