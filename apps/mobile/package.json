@@ -44,7 +44,7 @@
     "expo-screen-orientation": "~8.1.7",
     "expo-secure-store": "~14.2.4",
     "expo-sharing": "~13.1.5",
-    "expo-splash-screen": "~57.0.9",
+    "expo-splash-screen": "~0.30.10",
     "i18next": "25.0.0",
     "immer": "^10.0.0",
     "lucide-react-native": "0.510.0",
