@@ -179,11 +179,12 @@ test.describe('Recorrido 8: Accesibilidad E2E (UI-360..369)', () => {
     // El título debe ser visible (contraste suficiente)
     const title = page.getByText('No Time for Heroes').first();
     await expect(title).toBeVisible({ timeout: 15000 });
-    const color = await title.evaluate((el) => {
-      const style = window.getComputedStyle(el);
-      return { color: style.color, backgroundColor: style.backgroundColor };
-    });
-    // El color debe estar definido (no vacío)
-    expect(color.color).not.toBe('');
+    // La hidratación reemplaza nodos → getComputedStyle sobre un elemento
+    // desconectado devuelve ''. Re-resuelve el locator en cada intento.
+    await expect(async () => {
+      const color = await page.getByText('No Time for Heroes').first()
+        .evaluate((el) => window.getComputedStyle(el).color);
+      expect(color).not.toBe('');
+    }).toPass({ timeout: 15000 });
   });
 });
