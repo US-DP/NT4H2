@@ -38,8 +38,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -f apps/engine-runner/Dockerfile -t nt4h-engine-runner:${GITHUB_REF_NAME#v} .
-      - run: docker save nt4h-engine-runner:${GITHUB_REF_NAME#v} -o runner-image.tar
+      - run: docker build -f apps/engine-runner/Dockerfile -t "nt4h-engine-runner:${GITHUB_REF_NAME#v}" .
+      - run: docker save "nt4h-engine-runner:${GITHUB_REF_NAME#v}" -o runner-image.tar
       - name: Checksum del artefacto
         run: sha256sum runner-image.tar > runner-image.tar.sha256
       - name: SBOM (CycloneDX) de la imagen

@@ -29,7 +29,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: actionlint (viene preinstalado en ubuntu-latest)
-        run: actionlint .github/workflows/*.yml
+      - name: actionlint (binario pineado)
+        run: |
+          curl -fsSL https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz | tar xz actionlint
+          ./actionlint .github/workflows/*.yml
       - name: yamllint
         run: pip install yamllint && yamllint .
