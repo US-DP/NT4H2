@@ -84,7 +84,7 @@ jobs:
           print(body)
           print("EOF")
           PYEOF
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: engine-runner-image
       - uses: softprops/action-gh-release@v3
