@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@gorhom/bottom-sheet": "^5.2.14",
-    "@hookform/resolvers": "3.9.1",
+    "@hookform/resolvers": "5.9.1",
     "@nt4h/catalog": "workspace:*",
     "@nt4h/engine": "workspace:*",
     "@nt4h/schema": "workspace:*",
