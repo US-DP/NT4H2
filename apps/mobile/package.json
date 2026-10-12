@@ -52,7 +52,7 @@
     "react-dom": "19.3.0",
     "react-error-boundary": "5.0.0",
     "react-hook-form": "7.89.0",
-    "react-i18next": "17.0.15",
+    "react-i18next": "17.0.16",
     "react-native": "0.79.0",
     "react-native-confetti-cannon": "1.5.2",
     "react-native-gesture-handler": "2.24.0",
@@ -70,7 +70,7 @@
   },
   "devDependencies": {
     "@eslint/js": "9.18.0",
-    "@playwright/test": "^1.63.0",
+    "@playwright/test": "^1.64.0",
     "@types/react": "~19.3.0",
     "eslint": "9.18.0",
     "eslint-plugin-react": "7.37.5",
@@ -78,7 +78,7 @@
     "eslint-plugin-security": "4.2.0",
     "eslint-plugin-unused-imports": "4.4.1",
     "typescript": "^5.7.0",
-    "typescript-eslint": "8.71.0",
+    "typescript-eslint": "8.71.1",
     "vitest": "^2.1.9"
   }
 }
