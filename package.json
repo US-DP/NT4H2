@@ -13,8 +13,8 @@
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
-    "playwright": "1.63.0",
-    "turbo": "^2.11.7",
+    "playwright": "1.65.0",
+    "turbo": "^2.11.10",
     "typescript": "^5.7.0"
   }
 }
